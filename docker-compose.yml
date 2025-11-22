@@ -1,0 +1,124 @@
+version: '3.8'
+
+services:
+  # Frontend React Application
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+      - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+      - VITE_OKTA_CLIENT_ID=${VITE_OKTA_CLIENT_ID}
+      - VITE_OKTA_ISSUER=${VITE_OKTA_ISSUER}
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+    depends_on:
+      - backend
+    networks:
+      - agentic-pm-network
+
+  # Backend FastAPI/Python Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - OKTA_CLIENT_ID=${OKTA_CLIENT_ID}
+      - OKTA_CLIENT_SECRET=${OKTA_CLIENT_SECRET}
+      - OKTA_ISSUER=${OKTA_ISSUER}
+      - JIRA_URL=${JIRA_URL}
+      - JIRA_EMAIL=${JIRA_EMAIL}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+      - CONFLUENCE_URL=${CONFLUENCE_URL}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    volumes:
+      - ./backend:/app/backend
+      - ./mcp-servers:/app/mcp-servers
+    networks:
+      - agentic-pm-network
+
+  # MCP Server - GitHub Integration
+  mcp-github:
+    build:
+      context: ./mcp-servers/github
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - MCP_SERVER_PORT=8001
+    networks:
+      - agentic-pm-network
+
+  # MCP Server - Jira Integration
+  mcp-jira:
+    build:
+      context: ./mcp-servers/jira
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - JIRA_URL=${JIRA_URL}
+      - JIRA_EMAIL=${JIRA_EMAIL}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+      - MCP_SERVER_PORT=8002
+    networks:
+      - agentic-pm-network
+
+  # MCP Server - Confluence Integration
+  mcp-confluence:
+    build:
+      context: ./mcp-servers/confluence
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - CONFLUENCE_URL=${CONFLUENCE_URL}
+      - CONFLUENCE_EMAIL=${CONFLUENCE_EMAIL}
+      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
+      - MCP_SERVER_PORT=8003
+    networks:
+      - agentic-pm-network
+
+  # Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - agentic-pm-network
+
+  # PostgreSQL for local development (optional if using Supabase)
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=agentic_pm
+      - POSTGRES_PASSWORD=devpassword
+      - POSTGRES_DB=agentic_pm_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - agentic-pm-network
+
+networks:
+  agentic-pm-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+  postgres-data:
