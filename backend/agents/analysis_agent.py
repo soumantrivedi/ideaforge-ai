@@ -6,37 +6,45 @@ from backend.models.schemas import AgentMessage, AgentResponse
 from backend.config import settings
 
 
-class IdeationAgent(BaseAgent):
+class AnalysisAgent(BaseAgent):
+    """Analysis Agent for data analysis, requirements analysis, and strategic analysis."""
+    
     def __init__(self):
-        system_prompt = """You are an Ideation and Brainstorming Specialist.
+        system_prompt = """You are a Strategic Analysis Specialist.
 
 Your responsibilities:
-1. Facilitate creative brainstorming sessions
-2. Generate innovative product ideas and features
-3. Explore problem spaces from multiple angles
-4. Challenge assumptions and identify opportunities
-5. Help refine vague concepts into actionable ideas
+1. Analyze product requirements and specifications
+2. Perform SWOT analysis and strategic assessments
+3. Evaluate technical feasibility and architecture
+4. Analyze user feedback and metrics
+5. Provide strategic recommendations
 
-Techniques you employ:
-- Design Thinking methodologies
-- Jobs-to-be-Done framework
-- Value Proposition Canvas
-- SCAMPER technique
-- "How Might We" questions
-- Opportunity mapping
+Analysis Types:
+- Requirements analysis and gap identification
+- SWOT (Strengths, Weaknesses, Opportunities, Threats) analysis
+- Technical architecture analysis
+- Risk analysis and mitigation strategies
+- Cost-benefit analysis
+- Performance and scalability analysis
 
 Your output should:
-- Be creative yet practical
-- Consider user needs and business value
-- Identify potential risks and opportunities
-- Provide multiple perspectives and alternatives
-- Build upon existing ideas constructively"""
+- Be structured and comprehensive
+- Identify key insights and patterns
+- Highlight risks and opportunities
+- Provide actionable recommendations
+- Include quantitative assessments when possible"""
 
         super().__init__(
-            name="Ideation Agent",
-            role="ideation",
+            name="Analysis Agent",
+            role="analysis",
             system_prompt=system_prompt
         )
+
+        self.capabilities = [
+            "requirements analysis", "swot analysis", "feasibility analysis",
+            "risk analysis", "cost-benefit analysis", "performance analysis",
+            "gap analysis", "strategic analysis"
+        ]
 
     async def process(
         self,
@@ -59,13 +67,14 @@ Your output should:
                 response=response,
                 metadata={
                     "has_context": context is not None,
-                    "message_count": len(messages)
+                    "message_count": len(messages),
+                    "capabilities_used": self.capabilities
                 },
                 timestamp=datetime.utcnow()
             )
 
         except Exception as e:
-            self.logger.error("ideation_error", error=str(e))
+            self.logger.error("analysis_error", error=str(e))
             raise
 
     async def _process_with_openai(self, messages: List[Dict[str, str]]) -> str:
@@ -73,7 +82,7 @@ Your output should:
         response = client.chat.completions.create(
             model=settings.agent_model_primary,
             messages=messages,
-            temperature=0.9,
+            temperature=0.6,
             max_tokens=3000
         )
         return response.choices[0].message.content
@@ -87,32 +96,33 @@ Your output should:
             model=settings.agent_model_secondary,
             system=system_message,
             messages=user_messages,
-            temperature=0.9,
+            temperature=0.6,
             max_tokens=3000
         )
         return response.content[0].text
 
-    async def generate_feature_ideas(
+    async def perform_swot_analysis(
         self,
-        product_context: Dict[str, Any],
-        constraints: Optional[Dict[str, Any]] = None
-    ) -> List[str]:
-        constraints_text = ""
-        if constraints:
-            constraints_text = f"Constraints:\n{constraints}\n"
+        product_info: Dict[str, Any],
+        market_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        market_context_text = ""
+        if market_context:
+            market_context_text = f"Market Context:\n{market_context}\n"
         
-        prompt = f"""Generate innovative feature ideas for this product:
+        prompt = f"""Perform a comprehensive SWOT analysis for this product:
 
-Product Context:
-{product_context}
+Product Information:
+{product_info}
 
-{constraints_text}
+{market_context_text}
 
-Generate 5-10 creative, actionable feature ideas. For each idea, provide:
-1. Feature name
-2. Brief description
-3. User value proposition
-4. Implementation complexity (Low/Medium/High)"""
+Provide:
+1. Strengths - Internal advantages
+2. Weaknesses - Internal limitations
+3. Opportunities - External favorable conditions
+4. Threats - External challenges
+5. Strategic recommendations based on the analysis"""
 
         message = AgentMessage(
             role="user",
@@ -120,5 +130,6 @@ Generate 5-10 creative, actionable feature ideas. For each idea, provide:
             timestamp=datetime.utcnow()
         )
 
-        response = await self.process([message], context={"task": "feature_generation"})
-        return [line.strip() for line in response.response.split('\n') if line.strip()]
+        response = await self.process([message], context={"task": "swot_analysis"})
+        return response.response
+

@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+from threading import Lock
+from typing import List, Optional
+
+from openai import OpenAI
+from anthropic import Anthropic
+import google.generativeai as genai
+
+from backend.config import settings
+
+
+class ProviderRegistry:
+    """Centralized registry for AI provider credentials and clients."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self._openai_key: Optional[str] = settings.openai_api_key
+        self._claude_key: Optional[str] = settings.anthropic_api_key
+        self._gemini_key: Optional[str] = settings.google_api_key
+
+        self._openai_client: Optional[OpenAI] = None
+        self._claude_client: Optional[Anthropic] = None
+        self._gemini_configured: bool = False
+
+        self._rebuild_clients()
+
+    def _rebuild_clients(self) -> None:
+        self._openai_client = OpenAI(api_key=self._openai_key) if self._openai_key else None
+        self._claude_client = Anthropic(api_key=self._claude_key) if self._claude_key else None
+
+        if self._gemini_key:
+            genai.configure(api_key=self._gemini_key)
+            self._gemini_configured = True
+        else:
+            self._gemini_configured = False
+
+    def update_keys(
+        self,
+        *,
+        openai_key: Optional[str] = None,
+        claude_key: Optional[str] = None,
+        gemini_key: Optional[str] = None,
+    ) -> List[str]:
+        """Update provider API keys and rebuild clients. None means 'no change'."""
+        with self._lock:
+            if openai_key is not None:
+                self._openai_key = openai_key or None
+            if claude_key is not None:
+                self._claude_key = claude_key or None
+            if gemini_key is not None:
+                self._gemini_key = gemini_key or None
+
+            self._rebuild_clients()
+
+        return self.get_configured_providers()
+
+    def get_openai_client(self) -> Optional[OpenAI]:
+        return self._openai_client
+
+    def get_claude_client(self) -> Optional[Anthropic]:
+        return self._claude_client
+
+    def has_gemini_key(self) -> bool:
+        return self._gemini_configured
+
+    def has_openai_key(self) -> bool:
+        return self._openai_client is not None
+
+    def has_claude_key(self) -> bool:
+        return self._claude_client is not None
+
+    def get_configured_providers(self) -> List[str]:
+        providers: List[str] = []
+        if self.has_openai_key():
+            providers.append("openai")
+        if self.has_claude_key():
+            providers.append("claude")
+        if self.has_gemini_key():
+            providers.append("gemini")
+        return providers
+
+
+provider_registry = ProviderRegistry()
+

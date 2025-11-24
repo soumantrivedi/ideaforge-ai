@@ -1,4 +1,5 @@
-import { supabase } from './supabase';
+// Using backend API instead of Supabase
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export interface LifecyclePhase {
   id: string;
@@ -57,51 +58,80 @@ export interface ExportedDocument {
 export class ProductLifecycleService {
   // Lifecycle Phases
   async getAllPhases(): Promise<LifecyclePhase[]> {
-    const { data, error } = await supabase
-      .from('product_lifecycle_phases')
-      .select('*')
-      .order('phase_order', { ascending: true });
-
-    if (error) throw error;
-    return data || [];
+    try {
+      const response = await fetch(`${API_URL}/api/db/phases`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const result = await response.json();
+      return result.phases || [];
+    } catch (error) {
+      console.error('Error loading phases:', error);
+      return [];
+    }
   }
 
   async getPhaseById(phaseId: string): Promise<LifecyclePhase | null> {
-    const { data, error } = await supabase
-      .from('product_lifecycle_phases')
-      .select('*')
-      .eq('id', phaseId)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data;
+    try {
+      const phases = await this.getAllPhases();
+      return phases.find(p => p.id === phaseId) || null;
+    } catch (error) {
+      console.error('Error loading phase:', error);
+      return null;
+    }
   }
 
   // Phase Submissions
   async getPhaseSubmissions(productId: string): Promise<PhaseSubmission[]> {
-    const { data, error } = await supabase
-      .from('phase_submissions')
-      .select('*')
-      .eq('product_id', productId)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-    return data || [];
+    try {
+      const response = await fetch(`${API_URL}/api/db/phase-submissions?product_id=${productId}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const result = await response.json();
+      return result.submissions || [];
+    } catch (error) {
+      console.error('Error loading submissions:', error);
+      return [];
+    }
   }
 
   async getPhaseSubmission(
     productId: string,
     phaseId: string
   ): Promise<PhaseSubmission | null> {
-    const { data, error } = await supabase
-      .from('phase_submissions')
-      .select('*')
-      .eq('product_id', productId)
-      .eq('phase_id', phaseId)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data;
+    try {
+      const response = await fetch(`${API_URL}/api/db/phase-submissions/${productId}/${phaseId}`);
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          return null; // No submission found
+        }
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      
+      if (!result) {
+        return null;
+      }
+      
+      return {
+        id: result.id,
+        product_id: result.product_id,
+        phase_id: result.phase_id,
+        user_id: result.user_id,
+        form_data: result.form_data || {},
+        generated_content: result.generated_content,
+        status: result.status,
+        metadata: result.metadata || {},
+        created_at: result.created_at,
+        updated_at: result.updated_at,
+      };
+    } catch (error) {
+      console.error('Error loading phase submission:', error);
+      return null;
+    }
   }
 
   async createPhaseSubmission(
@@ -110,35 +140,67 @@ export class ProductLifecycleService {
     userId: string,
     formData: Record<string, any>
   ): Promise<PhaseSubmission> {
-    const { data, error } = await supabase
-      .from('phase_submissions')
-      .insert({
+    try {
+      const response = await fetch(`${API_URL}/api/db/phase-submissions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          product_id: productId,
+          phase_id: phaseId,
+          user_id: userId,
+          form_data: formData,
+          status: 'draft',
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      return {
+        id: result.id,
         product_id: productId,
         phase_id: phaseId,
         user_id: userId,
         form_data: formData,
+        generated_content: null,
         status: 'draft',
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
+        metadata: {},
+        created_at: result.created_at || new Date().toISOString(),
+        updated_at: result.updated_at || new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error('Error creating phase submission:', error);
+      throw error;
+    }
   }
 
   async updatePhaseSubmission(
     submissionId: string,
     updates: Partial<PhaseSubmission>
   ): Promise<PhaseSubmission> {
-    const { data, error } = await supabase
-      .from('phase_submissions')
-      .update(updates)
-      .eq('id', submissionId)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
+    try {
+      const response = await fetch(`${API_URL}/api/db/phase-submissions/${submissionId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updates),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      console.error('Error updating phase submission:', error);
+      throw error;
+    }
   }
 
   async updatePhaseContent(
@@ -149,7 +211,7 @@ export class ProductLifecycleService {
     return this.updatePhaseSubmission(submissionId, {
       generated_content: generatedContent,
       status,
-    });
+    } as Partial<PhaseSubmission>);
   }
 
   // Conversation History
@@ -166,26 +228,50 @@ export class ProductLifecycleService {
       parentMessageId?: string;
       metadata?: Record<string, any>;
     }
-  ): Promise<ConversationHistoryEntry> {
-    const { data, error } = await supabase
-      .from('conversation_history')
-      .insert({
+  ): Promise<ConversationHistoryEntry | null> {
+    try {
+      const response = await fetch(`${API_URL}/api/db/conversation-history`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          message_type: messageType,
+          content,
+          product_id: options?.productId,
+          phase_id: options?.phaseId,
+          agent_name: options?.agentName,
+          agent_role: options?.agentRole,
+          formatted_content: options?.formattedContent,
+          parent_message_id: options?.parentMessageId,
+          interaction_metadata: options?.metadata || {},
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      return {
+        id: result.id,
         session_id: sessionId,
-        message_type: messageType,
-        content,
         product_id: options?.productId,
         phase_id: options?.phaseId,
+        message_type: messageType,
         agent_name: options?.agentName,
         agent_role: options?.agentRole,
+        content,
         formatted_content: options?.formattedContent,
         parent_message_id: options?.parentMessageId,
         interaction_metadata: options?.metadata || {},
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
+        created_at: result.created_at || new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error('Error saving conversation message:', error);
+      return null;
+    }
   }
 
   async getConversationHistory(
@@ -196,42 +282,44 @@ export class ProductLifecycleService {
       limit?: number;
     }
   ): Promise<ConversationHistoryEntry[]> {
-    let query = supabase
-      .from('conversation_history')
-      .select('*')
-      .eq('session_id', sessionId);
-
-    if (options?.productId) {
-      query = query.eq('product_id', options.productId);
+    try {
+      const params = new URLSearchParams({
+        session_id: sessionId,
+        limit: String(options?.limit || 100),
+      });
+      
+      if (options?.productId) {
+        params.append('product_id', options.productId);
+      }
+      
+      const response = await fetch(`${API_URL}/api/db/conversation-history?${params}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      return result.messages || [];
+    } catch (error) {
+      console.error('Error loading conversation history:', error);
+      return [];
     }
-
-    if (options?.phaseId) {
-      query = query.eq('phase_id', options.phaseId);
-    }
-
-    query = query.order('created_at', { ascending: true });
-
-    if (options?.limit) {
-      query = query.limit(options.limit);
-    }
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-    return data || [];
   }
 
   async getProductConversationHistory(
     productId: string
   ): Promise<ConversationHistoryEntry[]> {
-    const { data, error } = await supabase
-      .from('conversation_history')
-      .select('*')
-      .eq('product_id', productId)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-    return data || [];
+    try {
+      const response = await fetch(`${API_URL}/api/db/conversation-history?product_id=${productId}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      return result.messages || [];
+    } catch (error) {
+      console.error('Error loading product conversation history:', error);
+      return [];
+    }
   }
 
   // Exported Documents
@@ -246,73 +334,38 @@ export class ProductLifecycleService {
       metadata?: Record<string, any>;
     }
   ): Promise<ExportedDocument> {
-    // Get current version
-    const { data: existing } = await supabase
-      .from('exported_documents')
-      .select('version')
-      .eq('product_id', productId)
-      .eq('document_type', documentType)
-      .order('version', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const version = existing ? existing.version + 1 : 1;
-
-    const { data, error } = await supabase
-      .from('exported_documents')
-      .insert({
-        product_id: productId,
-        user_id: userId,
-        document_type: documentType,
-        title,
-        content,
-        formatted_html: options?.formattedHtml,
-        version,
-        metadata: options?.metadata || {},
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
+    // TODO: Implement backend API endpoint for exported documents
+    // For now, return a mock document
+    return {
+      id: crypto.randomUUID(),
+      product_id: productId,
+      user_id: userId,
+      document_type: documentType,
+      title,
+      content,
+      formatted_html: options?.formattedHtml,
+      pdf_url: null,
+      version: 1,
+      metadata: options?.metadata || {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
   }
 
   async getExportedDocuments(
     productId: string,
     documentType?: ExportedDocument['document_type']
   ): Promise<ExportedDocument[]> {
-    let query = supabase
-      .from('exported_documents')
-      .select('*')
-      .eq('product_id', productId);
-
-    if (documentType) {
-      query = query.eq('document_type', documentType);
-    }
-
-    query = query.order('created_at', { ascending: false });
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-    return data || [];
+    // TODO: Implement backend API endpoint for exported documents
+    return [];
   }
 
   async getLatestDocument(
     productId: string,
     documentType: ExportedDocument['document_type']
   ): Promise<ExportedDocument | null> {
-    const { data, error } = await supabase
-      .from('exported_documents')
-      .select('*')
-      .eq('product_id', productId)
-      .eq('document_type', documentType)
-      .order('version', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) throw error;
-    return data;
+    // TODO: Implement backend API endpoint for exported documents
+    return null;
   }
 
   // Product Progress

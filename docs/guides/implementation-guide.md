@@ -54,8 +54,8 @@ This is an enterprise-grade, multi-agent platform for Product Managers following
 ┌──────────────────────────────┴──────────────────────────────────┐
 │              Data & Storage Layer                                │
 │  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐       │
-│  │  Supabase    │  │    Redis     │  │   Vector DB    │       │
-│  │  PostgreSQL  │  │   Cache      │  │   (pgvector)   │       │
+│  │ PostgreSQL   │  │    Redis     │  │   Vector DB    │       │
+│  │ (pgvector)   │  │   Cache      │  │   extension    │       │
 │  └──────────────┘  └──────────────┘  └────────────────┘       │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -94,149 +94,70 @@ docker-compose logs -f
 
 ## Database Schema & Multi-User Architecture
 
-### Core Tables (Supabase PostgreSQL)
+The legacy Supabase dependency has been replaced with an in-container PostgreSQL 15 instance (with pgvector). The schema is initialized automatically from `init-db/01-init-schema.sql` whenever a new volume is created, which keeps local development and deployed containers in sync.
+
+### Highlights
+
+- **User Profiles**: `user_profiles` stores personas and preferences independent of any external auth provider.
+- **Products & Lifecycle**: `products`, `product_lifecycle_phases`, and `phase_submissions` capture the multi-step workflow with JSONB `form_data`, generated content, and metadata.
+- **Conversation Memory**: `conversation_sessions`, `agent_messages`, and `conversation_history` persist chat transcripts and agent metadata.
+- **Knowledge Base**: `knowledge_articles` contains pgvector embeddings (`vector(1536)`) plus metadata for RAG.
+- **Exports & Activity Logs**: `exported_documents`, `agent_activity_log`, and `feedback_entries` store artifacts the agents generate at each step.
 
 ```sql
--- User profiles with persona mapping
-CREATE TABLE user_profiles (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES auth.users(id),
-  email TEXT UNIQUE NOT NULL,
-  full_name TEXT,
-  persona TEXT CHECK (persona IN ('product_manager', 'tech_lead', 'leadership', 'developer')),
-  org_id UUID REFERENCES organizations(id),
-  preferences JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+-- Lifecycle submissions
+CREATE TABLE phase_submissions (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  phase_id uuid NOT NULL REFERENCES product_lifecycle_phases(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+  form_data jsonb NOT NULL DEFAULT '{}',
+  generated_content text,
+  status text DEFAULT 'draft'
+      CHECK (status IN ('draft','in_progress','completed','reviewed')),
+  metadata jsonb DEFAULT '{}',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(product_id, phase_id)
 );
 
--- Organizations (multi-tenant)
-CREATE TABLE organizations (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL,
-  slug TEXT UNIQUE NOT NULL,
-  settings JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Products (portfolio management)
-CREATE TABLE products (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  org_id UUID REFERENCES organizations(id),
-  owner_id UUID REFERENCES user_profiles(id),
-  name TEXT NOT NULL,
-  description TEXT,
-  status TEXT CHECK (status IN ('ideation', 'planning', 'building', 'operating', 'learning', 'sunset')),
-  phase TEXT,
-  okrs JSONB DEFAULT '[]',
-  metadata JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- PRDs and requirements
-CREATE TABLE prds (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID REFERENCES products(id),
-  version INTEGER DEFAULT 1,
-  content JSONB NOT NULL,
-  status TEXT CHECK (status IN ('draft', 'review', 'approved', 'archived')),
-  created_by UUID REFERENCES user_profiles(id),
-  approved_by UUID REFERENCES user_profiles(id),
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Agent interactions and learning
-CREATE TABLE agent_interactions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID REFERENCES products(id),
-  agent_name TEXT NOT NULL,
-  input JSONB,
-  output JSONB,
-  feedback JSONB,
-  performance_metrics JSONB,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Jira integration mapping
-CREATE TABLE jira_sync (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID REFERENCES products(id),
-  jira_project_key TEXT,
-  epic_id TEXT,
-  story_ids JSONB DEFAULT '[]',
-  last_sync TIMESTAMPTZ,
-  sync_status JSONB
-);
-
--- GitHub integration mapping
-CREATE TABLE github_sync (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID REFERENCES products(id),
-  repo_url TEXT,
-  branch TEXT DEFAULT 'main',
-  last_commit_sha TEXT,
-  ci_status TEXT,
-  last_sync TIMESTAMPTZ
-);
-
--- Sprint planning and tracking
-CREATE TABLE sprints (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID REFERENCES products(id),
-  sprint_number INTEGER,
-  start_date DATE,
-  end_date DATE,
-  velocity_target INTEGER,
-  velocity_actual INTEGER,
-  status TEXT CHECK (status IN ('planned', 'active', 'completed')),
-  team_health_score DECIMAL(3,2),
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Team capacity and health
-CREATE TABLE team_members (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES user_profiles(id),
-  product_id UUID REFERENCES products(id),
-  role TEXT,
-  capacity_hours INTEGER DEFAULT 40,
-  skills JSONB DEFAULT '[]',
-  timezone TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Knowledge graph for self-learning
-CREATE TABLE knowledge_graph (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  entity_type TEXT,
-  entity_id UUID,
-  relationships JSONB DEFAULT '{}',
-  patterns JSONB DEFAULT '{}',
-  confidence_score DECIMAL(3,2),
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+-- Knowledge articles with pgvector embeddings
+CREATE TABLE knowledge_articles (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  title text NOT NULL,
+  content text NOT NULL,
+  source text NOT NULL,
+  embedding vector(1536),
+  metadata jsonb DEFAULT '{}',
+  created_at timestamptz DEFAULT now()
 );
 ```
 
-### Row Level Security (RLS)
+> Need more detail? Open `init-db/01-init-schema.sql` for the complete definitions (indexes, helper functions, vector search stored procedure, etc.).
 
-```sql
--- Enable RLS on all tables
-ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE products ENABLE ROW LEVEL SECURITY;
--- ... (enable for all tables)
+### Access Control
 
--- Example policy: Users see only their organization's data
-CREATE POLICY "Users view own org products"
-  ON products FOR SELECT
-  TO authenticated
-  USING (
-    org_id IN (
-      SELECT org_id FROM user_profiles
-      WHERE user_id = auth.uid()
-    )
-  );
+- Row filtering is handled at the application layer using the authenticated `user_id` on every request.
+- Each table includes `user_id` or `product_id` columns that constrain SQL queries and enforce per-product histories.
+- Future multi-tenant support can layer on Postgres RLS policies; persona metadata already exists for that path.
+
+### Data Flow
+
+```mermaid
+sequenceDiagram
+    participant UI as React UI
+    participant API as FastAPI Backend
+    participant DB as PostgreSQL + pgvector
+    participant Redis as Redis Cache
+    participant Agents as Coordinator & Agents
+
+    UI->>API: REST requests (phases, submissions, conversations)
+    API->>DB: SQL (asyncpg + SQLAlchemy)
+    API->>Redis: cache knowledge search metadata
+    API->>Agents: multi-agent coordination
+    Agents->>DB: store interaction history
+    Agents->>UI: streaming responses
 ```
 
 ## Okta OAuth/SSO Integration

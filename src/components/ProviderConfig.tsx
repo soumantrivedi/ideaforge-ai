@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Settings, Key, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
+import { Settings, Key, Eye, EyeOff, CheckCircle2, XCircle, Loader2, AlertCircle } from 'lucide-react';
 import type { AIProvider } from '../lib/ai-providers';
 
 interface ProviderConfigProps {
@@ -11,19 +11,119 @@ interface ProviderConfigProps {
   configuredProviders: AIProvider[];
 }
 
+type VerificationState = 'idle' | 'verifying' | 'success' | 'error';
+
+interface VerificationStatus {
+  status: VerificationState;
+  message?: string;
+}
+
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderConfigProps) {
   const [openaiKey, setOpenaiKey] = useState('');
   const [claudeKey, setClaudeKey] = useState('');
   const [geminiKey, setGeminiKey] = useState('');
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
+  const [verificationStatus, setVerificationStatus] = useState<Record<AIProvider, VerificationStatus>>({
+    openai: { status: 'idle' },
+    claude: { status: 'idle' },
+    gemini: { status: 'idle' },
+  });
+  const [verificationInfoVisible, setVerificationInfoVisible] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSaveConfig({
-      openaiKey: openaiKey.trim() || undefined,
-      claudeKey: claudeKey.trim() || undefined,
-      geminiKey: geminiKey.trim() || undefined,
-    });
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveSuccess(null);
+
+    const payload = {
+      openaiKey: openaiKey.trim() || null,
+      claudeKey: claudeKey.trim() || null,
+      geminiKey: geminiKey.trim() || null,
+    };
+
+    try {
+      const response = await fetch(`${API_URL}/api/providers/configure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.detail || 'Failed to save provider configuration.');
+      }
+
+      onSaveConfig({
+        openaiKey: payload.openaiKey || undefined,
+        claudeKey: payload.claudeKey || undefined,
+        geminiKey: payload.geminiKey || undefined,
+      });
+
+      setSaveSuccess('Provider configuration updated successfully.');
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Failed to save configuration.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const updateVerificationStatus = (provider: AIProvider, status: VerificationStatus) => {
+    setVerificationStatus((prev) => ({
+      ...prev,
+      [provider]: status,
+    }));
+  };
+
+  const verifyProviderKey = async (provider: AIProvider) => {
+    const key =
+      provider === 'openai'
+        ? openaiKey.trim()
+        : provider === 'claude'
+        ? claudeKey.trim()
+        : geminiKey.trim();
+
+    if (!key) {
+      updateVerificationStatus(provider, {
+        status: 'error',
+        message: 'Enter an API key before verifying.',
+      });
+      return;
+    }
+
+    updateVerificationStatus(provider, { status: 'verifying' });
+    setVerificationInfoVisible(true);
+
+    try {
+      const response = await fetch(`${API_URL}/api/providers/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, api_key: key }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.detail || 'Verification failed');
+      }
+
+      updateVerificationStatus(provider, {
+        status: 'success',
+        message: result?.message || 'API key verified successfully.',
+      });
+    } catch (error) {
+      updateVerificationStatus(provider, {
+        status: 'error',
+        message:
+          error instanceof Error ? error.message : 'Verification failed. Please try again.',
+      });
+    }
   };
 
   const toggleShowKey = (provider: string) => {
@@ -31,6 +131,36 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
   };
 
   const isConfigured = (provider: AIProvider) => configuredProviders.includes(provider);
+
+  const renderVerificationFeedback = (provider: AIProvider) => {
+    const status = verificationStatus[provider];
+    if (!status || status.status === 'idle') return null;
+
+    if (status.status === 'verifying') {
+      return (
+        <span className="text-xs text-blue-600 flex items-center gap-1">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          Verifying with {provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'OpenAI'}...
+        </span>
+      );
+    }
+
+    if (status.status === 'success') {
+      return (
+        <span className="text-xs text-green-600 flex items-center gap-1">
+          <CheckCircle2 className="w-3 h-3" />
+          {status.message || 'API key verified successfully.'}
+        </span>
+      );
+    }
+
+    return (
+      <span className="text-xs text-red-600 flex items-center gap-1">
+        <XCircle className="w-3 h-3" />
+        {status.message || 'Verification failed'}
+      </span>
+    );
+  };
 
   return (
     <div className="bg-white rounded-xl shadow-lg p-6">
@@ -85,6 +215,18 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               OpenAI Platform
             </a>
           </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => verifyProviderKey('openai')}
+              className="px-3 py-2 text-xs font-medium text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-50 disabled:opacity-50 flex items-center gap-2"
+              disabled={!openaiKey.trim() || verificationStatus.openai.status === 'verifying'}
+            >
+              {verificationStatus.openai.status === 'verifying' && <Loader2 className="w-3 h-3 animate-spin" />}
+              Verify Key
+            </button>
+            {renderVerificationFeedback('openai')}
+          </div>
         </div>
 
         <div>
@@ -132,6 +274,18 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               Anthropic Console
             </a>
           </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => verifyProviderKey('claude')}
+              className="px-3 py-2 text-xs font-medium text-purple-700 border border-purple-200 rounded-lg hover:bg-purple-50 disabled:opacity-50 flex items-center gap-2"
+              disabled={!claudeKey.trim() || verificationStatus.claude.status === 'verifying'}
+            >
+              {verificationStatus.claude.status === 'verifying' && <Loader2 className="w-3 h-3 animate-spin" />}
+              Verify Key
+            </button>
+            {renderVerificationFeedback('claude')}
+          </div>
         </div>
 
         <div>
@@ -179,14 +333,50 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               Google AI Studio
             </a>
           </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => verifyProviderKey('gemini')}
+              className="px-3 py-2 text-xs font-medium text-emerald-700 border border-emerald-200 rounded-lg hover:bg-emerald-50 disabled:opacity-50 flex items-center gap-2"
+              disabled={!geminiKey.trim() || verificationStatus.gemini.status === 'verifying'}
+            >
+              {verificationStatus.gemini.status === 'verifying' && <Loader2 className="w-3 h-3 animate-spin" />}
+              Verify Key
+            </button>
+            {renderVerificationFeedback('gemini')}
+          </div>
         </div>
 
         <button
           type="submit"
-          className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold rounded-lg hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition"
+          className="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white font-semibold rounded-lg hover:from-blue-700 hover:to-blue-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          disabled={isSaving}
         >
+          {isSaving && <Loader2 className="w-5 h-5 animate-spin" />}
           Save Configuration
         </button>
+
+        {saveError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
+            {saveError}
+          </div>
+        )}
+
+        {saveSuccess && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm text-green-800">
+            {saveSuccess}
+          </div>
+        )}
+
+        {verificationInfoVisible && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex gap-3 text-sm text-yellow-900">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <p>
+              Verification temporarily sends your API key to the backend so it can call the selected
+              provider and confirm the key is valid. Keys are never stored or logged.
+            </p>
+          </div>
+        )}
 
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <p className="text-sm text-blue-900">

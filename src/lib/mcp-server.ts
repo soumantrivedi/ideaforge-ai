@@ -6,7 +6,8 @@ import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { supabase } from './supabase';
+// MCP Server - using backend API instead of Supabase
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export class MCPServer {
   private server: Server;
@@ -56,13 +57,10 @@ export class MCPServer {
       const uri = request.params.uri;
 
       if (uri === 'chat://history') {
-        const { data, error } = await supabase
-          .from('chat_messages')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(50);
-
-        if (error) throw new Error(error.message);
+        const response = await fetch(`${API_URL}/api/db/conversation-history?limit=50`);
+        if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+        const result = await response.json();
+        const data = result.messages || [];
 
         return {
           contents: [
@@ -76,12 +74,10 @@ export class MCPServer {
       }
 
       if (uri === 'knowledge://documents') {
-        const { data, error } = await supabase
-          .from('knowledge_base')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (error) throw new Error(error.message);
+        const response = await fetch(`${API_URL}/api/db/knowledge-articles?limit=100`);
+        if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+        const result = await response.json();
+        const data = result.articles || [];
 
         return {
           contents: [
@@ -95,12 +91,10 @@ export class MCPServer {
       }
 
       if (uri === 'projects://list') {
-        const { data, error } = await supabase
-          .from('projects')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (error) throw new Error(error.message);
+        const response = await fetch(`${API_URL}/api/db/products`);
+        if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+        const result = await response.json();
+        const data = result.products || [];
 
         return {
           contents: [
@@ -187,19 +181,22 @@ export class MCPServer {
       if (name === 'search_knowledge_base') {
         const { query, limit = 5 } = args as { query: string; limit?: number };
 
-        const { data, error } = await supabase
-          .from('knowledge_base')
-          .select('*')
-          .textSearch('content', query)
-          .limit(limit);
-
-        if (error) throw new Error(error.message);
+        const response = await fetch(`${API_URL}/api/db/knowledge-articles?limit=${limit}`);
+        if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+        const result = await response.json();
+        const articles = result.articles || [];
+        
+        // Client-side filtering (backend should implement proper search)
+        const filtered = articles.filter((a: any) => 
+          a.content.toLowerCase().includes(query.toLowerCase()) ||
+          a.title.toLowerCase().includes(query.toLowerCase())
+        ).slice(0, limit);
 
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify(data, null, 2),
+              text: JSON.stringify(filtered, null, 2),
             },
           ],
         };
@@ -212,23 +209,29 @@ export class MCPServer {
           metadata?: Record<string, unknown>;
         };
 
-        const { data, error } = await supabase
-          .from('knowledge_base')
-          .insert({
+        const response = await fetch(`${API_URL}/api/db/knowledge-articles`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
             title,
             content,
+            source: 'mcp',
             metadata,
-          })
-          .select()
-          .single();
-
-        if (error) throw new Error(error.message);
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP error: ${response.status} - ${errorText}`);
+        }
+        
+        const result = await response.json();
 
         return {
           content: [
             {
               type: 'text',
-              text: `Saved document: ${data.title}`,
+              text: `Saved document: ${title}`,
             },
           ],
         };
@@ -240,14 +243,10 @@ export class MCPServer {
           limit?: number;
         };
 
-        const { data, error } = await supabase
-          .from('chat_messages')
-          .select('*')
-          .eq('conversation_id', conversationId)
-          .order('created_at', { ascending: false })
-          .limit(limit);
-
-        if (error) throw new Error(error.message);
+        const response = await fetch(`${API_URL}/api/db/conversation-history?session_id=${conversationId}&limit=${limit}`);
+        if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+        const result = await response.json();
+        const data = result.messages || [];
 
         return {
           content: [

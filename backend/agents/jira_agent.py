@@ -1,6 +1,5 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import openai
 from jira import JIRA
 
 from backend.agents.base_agent import BaseAgent
@@ -39,8 +38,6 @@ Ticket Structure:
             system_prompt=system_prompt
         )
 
-        self.openai_client = openai.OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
-
         if settings.jira_url and settings.jira_email and settings.jira_api_token:
             self.jira_client = JIRA(
                 server=settings.jira_url,
@@ -58,7 +55,7 @@ Ticket Structure:
         formatted_messages = self._add_context(formatted_messages, context)
 
         try:
-            if self.openai_client:
+            if self._has_openai():
                 response = await self._process_with_openai(formatted_messages)
             else:
                 raise ValueError("No AI provider configured")
@@ -78,7 +75,8 @@ Ticket Structure:
             raise
 
     async def _process_with_openai(self, messages: List[Dict[str, str]]) -> str:
-        response = self.openai_client.chat.completions.create(
+        client = self._get_openai_client()
+        response = client.chat.completions.create(
             model=settings.agent_model_primary,
             messages=messages,
             temperature=0.5,

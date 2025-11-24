@@ -13,7 +13,7 @@ import { type AgentRole } from './agents/chatbot-agents';
 import { lifecycleService, type LifecyclePhase, type PhaseSubmission } from './lib/product-lifecycle-service';
 import { ContentFormatter } from './lib/content-formatter';
 import { v4 as uuidv4 } from 'uuid';
-import { supabase } from './lib/supabase';
+// Supabase removed - using backend API only
 
 type View = 'chat' | 'settings' | 'knowledge';
 
@@ -147,19 +147,52 @@ function App() {
 
   const createProduct = async (id: string) => {
     try {
-      await supabase.from('products').insert({
-        id,
-        user_id: 'anonymous-user',
-        name: `Product ${id.substring(0, 8)}`,
-        description: 'Product created via lifecycle wizard',
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${API_URL}/api/db/products`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id,
+          user_id: '00000000-0000-0000-0000-000000000000',
+          name: `Product ${id.substring(0, 8)}`,
+          description: 'Product created via lifecycle wizard',
+          status: 'ideation',
+        }),
       });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
     } catch (error) {
       console.error('Error creating product:', error);
     }
   };
 
   const handleFormSubmit = async (formData: Record<string, string>) => {
-    if (!currentPhase || !productId || !orchestrator) return;
+    console.log('handleFormSubmit called with:', { currentPhase, productId, formData });
+    
+    if (!currentPhase) {
+      console.error('No current phase selected');
+      alert('Please select a phase first.');
+      return;
+    }
+    
+    if (!productId) {
+      console.error('No product ID');
+      alert('Product ID is missing. Please try again.');
+      return;
+    }
+    
+    // Note: We use backend API directly, so orchestrator is not required
+    // But we still need API keys configured for the backend to work
+    if (!aiManager) {
+      console.error('No AI manager configured');
+      alert('Please configure at least one AI provider API key in Settings first.');
+      setView('settings');
+      return;
+    }
 
     try {
       setIsLoading(true);
@@ -177,28 +210,51 @@ function App() {
         submission = await lifecycleService.createPhaseSubmission(
           productId,
           currentPhase.id,
-          'anonymous-user',
+          '00000000-0000-0000-0000-000000000000',
           formData
         );
       }
 
-      // Build comprehensive prompt for agents
+      // Build comprehensive prompt for agents with ALL form data from all pages
       const promptParts = [
         `I'm working on the "${currentPhase.phase_name}" phase of my product lifecycle.`,
-        `Here is the information I've provided:`,
+        `Here is ALL the information I've provided across all form pages:`,
+        '',
+        '## Form Data Summary',
         '',
       ];
 
-      Object.entries(formData).forEach(([key, value]) => {
-        const fieldName = key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-        promptParts.push(`**${fieldName}:**`);
-        promptParts.push(value);
-        promptParts.push('');
+      // Include all fields from all pages
+      const allFields = currentPhase.required_fields;
+      allFields.forEach((field, index) => {
+        const fieldValue = formData[field] || '';
+        if (fieldValue.trim()) {
+          const fieldName = field.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+          const promptIndex = index + 1;
+          promptParts.push(`### Question ${promptIndex}: ${fieldName}`);
+          promptParts.push('');
+          promptParts.push(fieldValue);
+          promptParts.push('');
+        }
       });
 
-      promptParts.push(`Please help me create a comprehensive ${currentPhase.phase_name} document based on this information. Include detailed sections, actionable insights, and professional formatting.`);
+      promptParts.push('---');
+      promptParts.push('');
+      promptParts.push(`Please help me create a comprehensive ${currentPhase.phase_name} document based on ALL the information provided above. Include:`);
+      promptParts.push('');
+      promptParts.push('- Detailed sections covering all aspects');
+      promptParts.push('- Actionable insights and recommendations');
+      promptParts.push('- Professional formatting with proper markdown');
+      promptParts.push('- Clear structure with headers, lists, and emphasis');
+      promptParts.push('- Integration of all provided information');
 
       const prompt = promptParts.join('\n');
+      
+      console.log('Complete form data being sent:', {
+        totalFields: allFields.length,
+        filledFields: Object.keys(formData).filter(k => formData[k]?.trim()).length,
+        formData,
+      });
 
       // Save conversation to history
       await lifecycleService.saveConversationMessage(sessionId, 'user', prompt, {
@@ -207,7 +263,7 @@ function App() {
         metadata: { formData, phaseName: currentPhase.phase_name },
       });
 
-      // Send to multi-agent system
+      // Send to multi-agent system via backend API
       const userMessage: MultiAgentMessage = {
         role: 'user',
         content: prompt,
@@ -216,8 +272,80 @@ function App() {
 
       setMessages((prev) => [...prev, userMessage]);
 
-      // Process with agents
-      const responses = await orchestrator.processMessage(prompt, messages);
+      // Determine which agents to use based on phase
+      let primaryAgent = 'ideation';
+      let supportingAgents: string[] = ['research', 'analysis'];
+      
+      if (currentPhase.phase_name.toLowerCase().includes('research')) {
+        primaryAgent = 'research';
+        supportingAgents = ['analysis', 'strategy'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('requirement')) {
+        primaryAgent = 'analysis';
+        supportingAgents = ['research', 'validation'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('design')) {
+        primaryAgent = 'strategy';
+        supportingAgents = ['analysis', 'ideation'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('development')) {
+        primaryAgent = 'prd_authoring';
+        supportingAgents = ['analysis', 'validation'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('market')) {
+        primaryAgent = 'strategy';
+        supportingAgents = ['research', 'analysis'];
+      }
+
+      // Call backend multi-agent API
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      
+      console.log('Calling multi-agent API:', {
+        primaryAgent,
+        supportingAgents,
+        promptLength: prompt.length,
+      });
+      
+      const multiAgentResponse = await fetch(`${API_URL}/api/multi-agent/process`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: '00000000-0000-0000-0000-000000000000',
+          query: prompt,
+          coordination_mode: 'collaborative',
+          primary_agent: primaryAgent,
+          supporting_agents: supportingAgents,
+          context: {
+            product_id: productId,
+            phase_id: currentPhase.id,
+            phase_name: currentPhase.phase_name,
+            form_data: formData,
+          },
+        }),
+      });
+
+      if (!multiAgentResponse.ok) {
+        const errorText = await multiAgentResponse.text();
+        console.error('Backend API error:', multiAgentResponse.status, errorText);
+        throw new Error(`Backend API error: ${multiAgentResponse.status} - ${errorText}`);
+      }
+
+      const multiAgentResult = await multiAgentResponse.json();
+      console.log('Multi-agent response received:', multiAgentResult);
+      
+      // Convert backend response to frontend format
+      const responses: MultiAgentMessage[] = [
+        {
+          role: 'assistant',
+          content: multiAgentResult.response || 'No response from agents',
+          agentName: multiAgentResult.primary_agent || primaryAgent,
+          agentType: (multiAgentResult.primary_agent || primaryAgent) as any,
+          timestamp: new Date().toISOString(),
+        },
+      ];
+      
+      // Also include agent interactions if available
+      if (multiAgentResult.agent_interactions && multiAgentResult.agent_interactions.length > 0) {
+        console.log('Agent interactions:', multiAgentResult.agent_interactions);
+      }
 
       // Combine all agent responses
       const combinedContent = responses
@@ -247,19 +375,28 @@ function App() {
 
       // Reload submissions
       await loadSubmissions();
+      
+      // Close the modal after successful generation
+      setIsFormModalOpen(false);
 
-      // Update agent statuses
-      const { agent, allAgents } = await orchestrator.routeMessage(prompt, messages);
-      if (allAgents) {
-        setAgentStatuses(
-          allAgents.map((a) => ({
-            role: a.config.role,
-            name: a.config.name,
-            isActive: true,
-            confidence: a.getConfidence(prompt),
-            interactions: a.getInteractions().length,
-          }))
-        );
+      // Update agent statuses if orchestrator is available
+      if (orchestrator) {
+        try {
+          const { agent, allAgents } = await orchestrator.routeMessage(prompt, messages);
+          if (allAgents) {
+            setAgentStatuses(
+              allAgents.map((a) => ({
+                role: a.config.role,
+                name: a.config.name,
+                isActive: true,
+                confidence: a.getConfidence(prompt),
+                interactions: a.getInteractions().length,
+              }))
+            );
+          }
+        } catch (error) {
+          console.warn('Error updating agent statuses:', error);
+        }
       }
 
     } catch (error) {
@@ -363,7 +500,7 @@ function App() {
       // Create exported document record
       await lifecycleService.createExportedDocument(
         productId,
-        'anonymous-user',
+        '00000000-0000-0000-0000-000000000000',
         'full_lifecycle',
         'Full Product Lifecycle',
         content,

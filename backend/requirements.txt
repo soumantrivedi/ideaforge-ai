@@ -18,7 +18,8 @@ fastmcp==0.2.0
 # Database
 psycopg2-binary==2.9.10
 asyncpg==0.30.0
-supabase==2.11.0
+sqlalchemy[asyncio]==2.0.36
+pgvector==0.3.6
 
 # Redis for Caching
 redis==5.2.1

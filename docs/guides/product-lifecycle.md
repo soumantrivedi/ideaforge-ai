@@ -42,7 +42,7 @@ IdeaForge AI now features a comprehensive Product Lifecycle Management system th
 - ✅ Document metadata
 
 ### 7. **Layered Architecture**
-- ✅ **Data Layer**: Supabase database with RLS
+- ✅ **Data Layer**: In-container PostgreSQL + pgvector (persistent volume)
 - ✅ **Business Logic Layer**: Service classes for data operations
 - ✅ **UI Layer**: React components with clear separation
 
@@ -457,7 +457,7 @@ All tables have comprehensive RLS policies:
 
 - **React 18**: Modern hooks and state management
 - **TypeScript**: Full type safety
-- **Supabase**: Database, RLS, real-time
+- **PostgreSQL + pgvector**: Persistent data + semantic search
 - **Tailwind CSS**: Utility-first styling
 - **Vite**: Fast build tool
 - **Multi-Agent System**: Collaborative AI
@@ -579,7 +579,7 @@ const points = ContentFormatter.extractKeyPoints(content);
 ## 🚀 Production Deployment
 
 ### Prerequisites
-1. ✅ Supabase project configured
+1. ✅ PostgreSQL service reachable (local Docker by default)
 2. ✅ All migrations applied
 3. ✅ Environment variables set
 4. ✅ API keys configured

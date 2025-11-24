@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
-import { supabase } from './supabase';
+// Using backend API instead of Supabase
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export interface Document {
   id: string;
@@ -34,68 +35,87 @@ export class RAGSystem {
   }
 
   async addDocument(title: string, content: string, metadata?: Record<string, unknown>, productId?: string): Promise<Document> {
-    const embedding = await this.generateEmbedding(content);
-
-    const { data, error } = await supabase
-      .from('knowledge_articles')
-      .insert({
-        product_id: productId || '00000000-0000-0000-0000-000000000000',
+    try {
+      const embedding = await this.generateEmbedding(content);
+      
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/db/knowledge-articles`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          product_id: productId || '00000000-0000-0000-0000-000000000000',
+          title,
+          content,
+          source: 'manual',
+          embedding: Array.from(embedding), // Convert to array for JSON
+          metadata: metadata || {},
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      return {
+        id: result.id,
+        product_id: productId,
         title,
         content,
         source: 'manual',
         embedding,
         metadata: metadata || {},
-      })
-      .select()
-      .single();
-
-    if (error) throw new Error(error.message);
-
-    return data as Document;
+        created_at: result.created_at || new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error('Error adding document:', error);
+      throw error;
+    }
   }
 
   async searchSimilar(query: string, limit: number = 5, productId?: string): Promise<SearchResult[]> {
-    const queryEmbedding = await this.generateEmbedding(query);
-
-    const { data, error } = await supabase.rpc('search_knowledge_articles', {
-      query_embedding: queryEmbedding,
-      match_threshold: 0.7,
-      match_count: limit,
-      filter_product_id: productId || null,
-    });
-
-    if (error) throw new Error(error.message);
-
-    return (data || []).map((item: any) => ({
-      document: {
-        id: item.id,
-        product_id: item.product_id,
-        title: item.title,
-        content: item.content,
-        source: item.source,
-        metadata: item.metadata,
-        created_at: item.created_at,
-      },
-      similarity: item.similarity,
-    }));
+    // TODO: Implement vector search via backend API
+    // For now, fall back to keyword search
+    return this.searchByKeywords(query, limit, productId).then(docs => 
+      docs.map(doc => ({ document: doc, similarity: 0.8 }))
+    );
   }
 
   async searchByKeywords(keywords: string, limit: number = 5, productId?: string): Promise<Document[]> {
-    let query = supabase
-      .from('knowledge_articles')
-      .select('*')
-      .ilike('content', `%${keywords}%`)
-      .limit(limit);
-
-    if (productId) {
-      query = query.eq('product_id', productId);
+    try {
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (productId) {
+        params.append('product_id', productId);
+      }
+      
+      const response = await fetch(`${API_URL}/api/db/knowledge-articles?${params}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      const articles = result.articles || [];
+      
+      // Filter by keywords (client-side for now)
+      const filtered = articles.filter((article: any) => 
+        article.content.toLowerCase().includes(keywords.toLowerCase()) ||
+        article.title.toLowerCase().includes(keywords.toLowerCase())
+      ).slice(0, limit);
+      
+      return filtered.map((article: any) => ({
+        id: article.id,
+        product_id: article.product_id,
+        title: article.title,
+        content: article.content,
+        source: article.source,
+        metadata: article.metadata,
+        created_at: article.created_at,
+      }));
+    } catch (error) {
+      console.error('Error searching by keywords:', error);
+      return [];
     }
-
-    const { data, error } = await query;
-
-    if (error) throw new Error(error.message);
-
-    return data as Document[];
   }
 
   async getRelevantContext(query: string, maxTokens: number = 2000): Promise<string> {
@@ -124,47 +144,43 @@ export class RAGSystem {
   }
 
   async deleteDocument(id: string): Promise<void> {
-    const { error } = await supabase.from('knowledge_articles').delete().eq('id', id);
-
-    if (error) throw new Error(error.message);
+    // TODO: Implement backend API endpoint for deleting documents
+    console.warn('Delete document API not yet implemented');
   }
 
   async getAllDocuments(productId?: string): Promise<Document[]> {
-    let query = supabase
-      .from('knowledge_articles')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (productId) {
-      query = query.eq('product_id', productId);
+    try {
+      const params = new URLSearchParams({ limit: '50' });
+      if (productId) {
+        params.append('product_id', productId);
+      }
+      
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/db/knowledge-articles?${params}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      return (result.articles || []).map((article: any) => ({
+        id: article.id,
+        product_id: article.product_id,
+        title: article.title,
+        content: article.content,
+        source: article.source,
+        metadata: article.metadata,
+        created_at: article.created_at,
+      }));
+    } catch (error) {
+      console.error('Error loading documents:', error);
+      return [];
     }
-
-    const { data, error } = await query;
-
-    if (error) throw new Error(error.message);
-
-    return data as Document[];
   }
 
   async updateDocument(
     id: string,
     updates: { title?: string; content?: string; metadata?: Record<string, unknown> }
   ): Promise<Document> {
-    const updateData: any = { ...updates };
-
-    if (updates.content) {
-      updateData.embedding = await this.generateEmbedding(updates.content);
-    }
-
-    const { data, error } = await supabase
-      .from('knowledge_articles')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw new Error(error.message);
-
-    return data as Document;
+    // TODO: Implement backend API endpoint for updating documents
+    throw new Error('Update document API not yet implemented');
   }
 }

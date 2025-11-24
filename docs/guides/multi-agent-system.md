@@ -361,7 +361,7 @@ VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 1. Check API keys are configured
 2. Verify database connection
 3. Check browser console for errors
-4. Ensure Supabase migrations applied
+4. Ensure the PostgreSQL initialization script (`init-db/01-init-schema.sql`) has run
 
 ### Slow Response Times
 1. Check network connection
@@ -370,8 +370,8 @@ VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 4. Check API rate limits
 
 ### Missing Agent Interactions
-1. Verify RLS policies allow access
-2. Check agent_interactions table
+1. Verify the relevant `product_id` exists and the request includes it
+2. Check `agent_activity_log` / `conversation_history` tables for entries
 3. Ensure coordination mode supports interactions
 4. Look for console warnings
 

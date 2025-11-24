@@ -6,21 +6,26 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+        - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+        - VITE_OKTA_CLIENT_ID=${VITE_OKTA_CLIENT_ID}
+        - VITE_OKTA_ISSUER=${VITE_OKTA_ISSUER}
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
       - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
       - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
       - VITE_OKTA_CLIENT_ID=${VITE_OKTA_CLIENT_ID}
       - VITE_OKTA_ISSUER=${VITE_OKTA_ISSUER}
-    volumes:
-      - ./src:/app/src
-      - ./public:/app/public
     depends_on:
-      - backend
+      postgres:
+        condition: service_healthy
     networks:
       - agentic-pm-network
+    restart: unless-stopped
 
   # Backend FastAPI/Python Service
   backend:
@@ -30,10 +35,18 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://agentic_pm:devpassword@postgres:5432/agentic_pm_db}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=agentic_pm
+      - POSTGRES_PASSWORD=devpassword
+      - POSTGRES_DB=agentic_pm_db
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - AGENT_MODEL_PRIMARY=${AGENT_MODEL_PRIMARY:-gpt-4o}
+      - AGENT_MODEL_SECONDARY=${AGENT_MODEL_SECONDARY:-claude-sonnet-4-5-20250929}
+      - AGENT_MODEL_TERTIARY=${AGENT_MODEL_TERTIARY:-gemini-2.0-flash-exp}
       - OKTA_CLIENT_ID=${OKTA_CLIENT_ID}
       - OKTA_CLIENT_SECRET=${OKTA_CLIENT_SECRET}
       - OKTA_ISSUER=${OKTA_ISSUER}
@@ -41,55 +54,74 @@ services:
       - JIRA_EMAIL=${JIRA_EMAIL}
       - JIRA_API_TOKEN=${JIRA_API_TOKEN}
       - CONFLUENCE_URL=${CONFLUENCE_URL}
+      - CONFLUENCE_EMAIL=${CONFLUENCE_EMAIL}
+      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_ORG=${GITHUB_ORG}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - SESSION_SECRET=${SESSION_SECRET}
+      - SESSION_EXPIRES_IN=${SESSION_EXPIRES_IN:-86400}
+      - BACKEND_PORT=${BACKEND_PORT:-8000}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - ./backend:/app/backend
       - ./mcp-servers:/app/mcp-servers
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - agentic-pm-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  # MCP Server - GitHub Integration
-  mcp-github:
-    build:
-      context: ./mcp-servers/github
-      dockerfile: Dockerfile
-    ports:
-      - "8001:8001"
-    environment:
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - MCP_SERVER_PORT=8001
-    networks:
-      - agentic-pm-network
+  # MCP Server - GitHub Integration (Optional - comment out if not needed)
+  # mcp-github:
+  #   build:
+  #     context: ./mcp-servers/github
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8001:8001"
+  #   environment:
+  #     - GITHUB_TOKEN=${GITHUB_TOKEN}
+  #     - MCP_SERVER_PORT=8001
+  #   networks:
+  #     - agentic-pm-network
 
-  # MCP Server - Jira Integration
-  mcp-jira:
-    build:
-      context: ./mcp-servers/jira
-      dockerfile: Dockerfile
-    ports:
-      - "8002:8002"
-    environment:
-      - JIRA_URL=${JIRA_URL}
-      - JIRA_EMAIL=${JIRA_EMAIL}
-      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
-      - MCP_SERVER_PORT=8002
-    networks:
-      - agentic-pm-network
+  # MCP Server - Jira Integration (Optional - comment out if not needed)
+  # mcp-jira:
+  #   build:
+  #     context: ./mcp-servers/jira
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8002:8002"
+  #   environment:
+  #     - JIRA_URL=${JIRA_URL}
+  #     - JIRA_EMAIL=${JIRA_EMAIL}
+  #     - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+  #     - MCP_SERVER_PORT=8002
+  #   networks:
+  #     - agentic-pm-network
 
-  # MCP Server - Confluence Integration
-  mcp-confluence:
-    build:
-      context: ./mcp-servers/confluence
-      dockerfile: Dockerfile
-    ports:
-      - "8003:8003"
-    environment:
-      - CONFLUENCE_URL=${CONFLUENCE_URL}
-      - CONFLUENCE_EMAIL=${CONFLUENCE_EMAIL}
-      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
-      - MCP_SERVER_PORT=8003
-    networks:
-      - agentic-pm-network
+  # MCP Server - Confluence Integration (Optional - comment out if not needed)
+  # mcp-confluence:
+  #   build:
+  #     context: ./mcp-servers/confluence
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8003:8003"
+  #   environment:
+  #     - CONFLUENCE_URL=${CONFLUENCE_URL}
+  #     - CONFLUENCE_EMAIL=${CONFLUENCE_EMAIL}
+  #     - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
+  #     - MCP_SERVER_PORT=8003
+  #   networks:
+  #     - agentic-pm-network
 
   # Redis for caching and session management
   redis:
@@ -101,19 +133,26 @@ services:
     networks:
       - agentic-pm-network
 
-  # PostgreSQL for local development (optional if using Supabase)
+  # PostgreSQL Database (in-container, persistent)
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     environment:
       - POSTGRES_USER=agentic_pm
       - POSTGRES_PASSWORD=devpassword
       - POSTGRES_DB=agentic_pm_db
     ports:
-      - "5432:5432"
+      - "5433:5432"  # Changed port to avoid conflict
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
     networks:
       - agentic-pm-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentic_pm -d agentic_pm_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 networks:
   agentic-pm-network:

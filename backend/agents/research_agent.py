@@ -6,36 +6,45 @@ from backend.models.schemas import AgentMessage, AgentResponse
 from backend.config import settings
 
 
-class PRDAuthoringAgent(BaseAgent):
+class ResearchAgent(BaseAgent):
+    """Research Agent for market research, competitive analysis, and data gathering."""
+    
     def __init__(self):
-        system_prompt = """You are a Product Requirements Document (PRD) Authoring Specialist following McKinsey CodeBeyond standards.
+        system_prompt = """You are a Research and Market Intelligence Specialist.
 
 Your responsibilities:
-1. Create comprehensive PRDs with clear structure
-2. Define product vision, goals, and success metrics
-3. Document user stories and acceptance criteria
-4. Identify technical requirements and constraints
-5. Ensure alignment with business objectives
+1. Conduct market research and competitive analysis
+2. Gather industry trends and insights
+3. Analyze user needs and market gaps
+4. Research technical feasibility and best practices
+5. Provide data-driven recommendations
 
-PRD Structure:
-- Executive Summary
-- Problem Statement
-- Product Vision & Goals
-- User Personas & Use Cases
-- Functional Requirements
-- Non-Functional Requirements
-- Technical Architecture
-- Success Metrics & KPIs
-- Timeline & Milestones
-- Risks & Mitigations
+Research Areas:
+- Market trends and opportunities
+- Competitive landscape analysis
+- User behavior and preferences
+- Technical feasibility studies
+- Industry benchmarks and standards
+- Regulatory and compliance requirements
 
-Use clear, concise language. Focus on measurable outcomes."""
+Your output should:
+- Be data-driven and evidence-based
+- Include relevant sources and references
+- Highlight key insights and patterns
+- Identify opportunities and risks
+- Provide actionable recommendations"""
 
         super().__init__(
-            name="PRD Authoring Agent",
-            role="prd_authoring",
+            name="Research Agent",
+            role="research",
             system_prompt=system_prompt
         )
+
+        self.capabilities = [
+            "market research", "competitive analysis", "trend analysis",
+            "user research", "feasibility study", "benchmarking",
+            "industry analysis", "data gathering"
+        ]
 
     async def process(
         self,
@@ -46,10 +55,10 @@ Use clear, concise language. Focus on measurable outcomes."""
         formatted_messages = self._add_context(formatted_messages, context)
 
         try:
-            if self._has_openai():
-                response = await self._process_with_openai(formatted_messages)
-            elif self._has_claude():
+            if self._has_claude():
                 response = await self._process_with_claude(formatted_messages)
+            elif self._has_openai():
+                response = await self._process_with_openai(formatted_messages)
             else:
                 raise ValueError("No AI provider configured")
 
@@ -58,13 +67,14 @@ Use clear, concise language. Focus on measurable outcomes."""
                 response=response,
                 metadata={
                     "has_context": context is not None,
-                    "message_count": len(messages)
+                    "message_count": len(messages),
+                    "capabilities_used": self.capabilities
                 },
                 timestamp=datetime.utcnow()
             )
 
         except Exception as e:
-            self.logger.error("prd_authoring_error", error=str(e))
+            self.logger.error("research_error", error=str(e))
             raise
 
     async def _process_with_openai(self, messages: List[Dict[str, str]]) -> str:
@@ -73,7 +83,7 @@ Use clear, concise language. Focus on measurable outcomes."""
             model=settings.agent_model_primary,
             messages=messages,
             temperature=0.7,
-            max_tokens=4000
+            max_tokens=3000
         )
         return response.choices[0].message.content
 
@@ -87,28 +97,26 @@ Use clear, concise language. Focus on measurable outcomes."""
             system=system_message,
             messages=user_messages,
             temperature=0.7,
-            max_tokens=4000
+            max_tokens=3000
         )
         return response.content[0].text
 
-    async def generate_prd_section(
+    async def conduct_market_research(
         self,
-        section: str,
-        product_info: Dict[str, Any],
-        existing_content: Optional[str] = None
+        product_domain: str,
+        target_market: Optional[str] = None
     ) -> str:
-        existing_content_text = ""
-        if existing_content:
-            existing_content_text = f"Existing Content to Build Upon:\n{existing_content}\n"
-        
-        prompt = f"""Generate the '{section}' section for a PRD.
+        prompt = f"""Conduct comprehensive market research for:
+- Product Domain: {product_domain}
+{f"- Target Market: {target_market}" if target_market else ""}
 
-Product Information:
-{product_info}
-
-{existing_content_text}
-
-Generate a comprehensive, well-structured '{section}' section."""
+Provide:
+1. Market size and growth trends
+2. Competitive landscape
+3. Key market players and their strategies
+4. Market gaps and opportunities
+5. User needs and pain points
+6. Regulatory considerations"""
 
         message = AgentMessage(
             role="user",
@@ -116,5 +124,6 @@ Generate a comprehensive, well-structured '{section}' section."""
             timestamp=datetime.utcnow()
         )
 
-        response = await self.process([message], context={"section": section})
+        response = await self.process([message], context={"task": "market_research"})
         return response.response
+

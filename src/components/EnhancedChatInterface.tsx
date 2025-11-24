@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Loader2, Sparkles, Users, Zap } from 'lucide-react';
 import type { MultiAgentMessage, CoordinationMode } from '../agents/multi-agent-system';
+import { ContentFormatter } from '../lib/content-formatter';
 
 interface EnhancedChatInterfaceProps {
   messages: MultiAgentMessage[];
@@ -220,9 +221,18 @@ export function EnhancedChatInterface({
                         : 'bg-gray-50 text-gray-900 border border-gray-100'
                     }`}
                   >
-                    <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                      {message.content}
-                    </div>
+                    {message.role === 'user' ? (
+                      <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                        {message.content}
+                      </div>
+                    ) : (
+                      <div
+                        className="prose prose-sm max-w-none break-words text-sm leading-relaxed"
+                        dangerouslySetInnerHTML={{
+                          __html: ContentFormatter.markdownToHtml(message.content),
+                        }}
+                      />
+                    )}
                   </div>
 
                   {message.timestamp && (

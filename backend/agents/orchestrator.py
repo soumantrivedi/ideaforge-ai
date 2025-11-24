@@ -4,16 +4,18 @@ from uuid import UUID
 import structlog
 
 from backend.agents.base_agent import BaseAgent
+from backend.agents.coordinator_agent import CoordinatorAgent
 from backend.agents.prd_authoring_agent import PRDAuthoringAgent
 from backend.agents.ideation_agent import IdeationAgent
 from backend.agents.jira_agent import JiraAgent
-from backend.models.schemas import AgentMessage, AgentResponse
+from backend.models.schemas import AgentMessage, AgentResponse, MultiAgentRequest, MultiAgentResponse, AgentInteraction
 
 logger = structlog.get_logger()
 
 
 class AgenticOrchestrator:
     def __init__(self):
+        self.coordinator = CoordinatorAgent()
         self.agents: Dict[str, BaseAgent] = {
             "prd_authoring": PRDAuthoringAgent(),
             "ideation": IdeationAgent(),
@@ -169,7 +171,8 @@ class AgenticOrchestrator:
         return results
 
     def get_available_agents(self) -> List[Dict[str, str]]:
-        return [
+        """Get all available agents including coordinator agents."""
+        agents = [
             {
                 "type": agent_type,
                 "name": agent.name,
@@ -177,3 +180,64 @@ class AgenticOrchestrator:
             }
             for agent_type, agent in self.agents.items()
         ]
+        
+        # Add coordinator agents
+        coordinator_agents = [
+            {
+                "type": agent_type,
+                "name": agent.name,
+                "role": agent.role
+            }
+            for agent_type, agent in self.coordinator.agents.items()
+        ]
+        
+        return agents + coordinator_agents
+    
+    async def process_multi_agent_request(
+        self,
+        user_id: UUID,
+        request: MultiAgentRequest
+    ) -> MultiAgentResponse:
+        """Process a multi-agent coordination request."""
+        self.logger.info(
+            "multi_agent_request",
+            user_id=str(user_id),
+            coordination_mode=request.coordination_mode,
+            primary_agent=request.primary_agent,
+            supporting_agents=request.supporting_agents
+        )
+        
+        try:
+            response = await self.coordinator.route_query(
+                query=request.query,
+                coordination_mode=request.coordination_mode,
+                primary_agent=request.primary_agent,
+                supporting_agents=request.supporting_agents,
+                context=request.context
+            )
+            
+            # Get interaction history
+            interactions = self.coordinator.get_interaction_history()
+            
+            metadata = dict(response.metadata or {})
+            metadata.update({
+                "supporting_agents": request.supporting_agents,
+                "user_id": str(user_id)
+            })
+            
+            return MultiAgentResponse(
+                primary_agent=request.primary_agent or response.agent_type,
+                response=response.response,
+                agent_interactions=interactions[-10:],  # Last 10 interactions
+                coordination_mode=request.coordination_mode,
+                metadata=metadata
+            )
+            
+        except Exception as e:
+            self.logger.error("multi_agent_error", error=str(e), user_id=str(user_id))
+            raise
+    
+    def get_agent_capabilities(self) -> List[Dict[str, Any]]:
+        """Get capabilities of all agents."""
+        capabilities = self.coordinator.get_agent_capabilities()
+        return [cap.dict() for cap in capabilities]

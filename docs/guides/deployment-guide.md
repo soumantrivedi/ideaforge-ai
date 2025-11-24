@@ -9,7 +9,7 @@ This guide covers deploying the complete Enterprise Agentic PM Platform with Doc
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    Frontend (React + Vite)                  │
-│                      Port: 3000                              │
+│                      Port: 3001                              │
 └──────────────────────────┬──────────────────────────────────┘
                            │
 ┌──────────────────────────┴──────────────────────────────────┐
@@ -52,10 +52,9 @@ This guide covers deploying the complete Enterprise Agentic PM Platform with Doc
    - Anthropic API Key: https://console.anthropic.com/
    - Google AI API Key: https://ai.google.dev/
 
-2. **Supabase** (required for database):
-   - Project URL
-   - Anon Key
-   - Create account: https://supabase.com/
+2. **Database**:
+   - Default deployment uses the bundled PostgreSQL 15 + pgvector container (no external service required).
+   - For managed Postgres, supply `DATABASE_URL` in `.env` and ensure the `pgvector` extension is enabled.
 
 3. **Integration Keys** (optional but recommended):
    - **Okta**: Client ID, Client Secret, Issuer URL
@@ -129,11 +128,12 @@ docker-compose ps
 
 ### 4. Apply Database Migrations
 
-The Supabase migrations have already been applied to your database. Verify by checking the Supabase dashboard.
+The Postgres container automatically runs `init-db/01-init-schema.sql` on first start.  
+If you connect to an external Postgres instance, run that script manually to create the product-lifecycle tables and pgvector indexes.
 
 ### 5. Access the Application
 
-- **Frontend**: http://localhost:3000
+- **Frontend**: http://localhost:3001
 - **Backend API**: http://localhost:8000
 - **API Documentation**: http://localhost:8000/docs
 - **Health Check**: http://localhost:8000/health
@@ -141,7 +141,7 @@ The Supabase migrations have already been applied to your database. Verify by ch
 ## Service Details
 
 ### Frontend (React + Vite)
-- **Port**: 3000
+- **Port**: 3001
 - **Technology**: React 18, TypeScript, Tailwind CSS
 - **Features**:
   - Multi-agent chat interface
@@ -214,7 +214,7 @@ All tables have RLS enabled with policies ensuring:
 
 Since Okta integration is optional, the initial setup uses API keys:
 
-1. Open http://localhost:3000
+1. Open http://localhost:3001
 2. Navigate to "Settings" tab
 3. Enter your AI provider API keys
 4. Click "Save Configuration"
@@ -512,7 +512,7 @@ upstream backend {
 ### Database Scaling
 
 - Enable connection pooling (PgBouncer)
-- Set up read replicas for Supabase
+- Use managed Postgres replicas or high-availability clusters when running outside Docker
 - Configure Redis for session management
 - Implement caching layers
 
@@ -556,7 +556,7 @@ services:
 
 ### Documentation
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
-- [Supabase Documentation](https://supabase.com/docs)
+- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 - [Docker Documentation](https://docs.docker.com/)
 

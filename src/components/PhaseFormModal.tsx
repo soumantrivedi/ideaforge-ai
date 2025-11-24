@@ -24,24 +24,56 @@ export function PhaseFormModal({
   useEffect(() => {
     if (isOpen) {
       // Initialize form data with existing data or empty strings
+      // This ensures ALL fields from ALL pages are captured
       const initialData: Record<string, string> = {};
-      phase.required_fields.forEach((field, index) => {
+      phase.required_fields.forEach((field) => {
         initialData[field] = existingData?.[field] || '';
       });
       setFormData(initialData);
       setCurrentPromptIndex(0);
+      console.log('Form initialized with all fields:', {
+        totalFields: phase.required_fields.length,
+        fields: phase.required_fields,
+        initialData,
+      });
     }
   }, [isOpen, phase, existingData]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Collect ALL form data from ALL pages
+    const completeFormData: Record<string, string> = {};
+    phase.required_fields.forEach((field) => {
+      completeFormData[field] = formData[field] || '';
+    });
+    
+    console.log('Form submit triggered', {
+      totalFields: phase.required_fields.length,
+      filledFields: Object.keys(completeFormData).filter(k => completeFormData[k]?.trim()).length,
+      allFieldsFilled: allFieldsFilled(),
+      completeFormData,
+    });
+    
+    // Validate all fields are filled
+    if (!allFieldsFilled()) {
+      const missingFields = phase.required_fields.filter(field => !completeFormData[field]?.trim());
+      alert(`Please fill in all required fields before generating. Missing: ${missingFields.map(f => f.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')).join(', ')}`);
+      return;
+    }
+    
     setIsSubmitting(true);
 
     try {
-      await onSubmit(formData);
-      onClose();
+      console.log('Submitting ALL form data from all pages:', completeFormData);
+      await onSubmit(completeFormData);
+      // Don't close immediately - let the parent handle it after processing
+      // The parent will close the modal after successful generation
     } catch (error) {
       console.error('Error submitting form:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      alert(`Error processing your request: ${errorMessage}. Please check the console for details.`);
+      // Don't close modal on error so user can retry
     } finally {
       setIsSubmitting(false);
     }
@@ -114,8 +146,8 @@ export function PhaseFormModal({
         </div>
 
         {/* Form Content */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
-          <div className="p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
             {/* Current Question */}
             <div className="space-y-4">
               <div className="flex items-start gap-3 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-r-lg">
@@ -172,63 +204,63 @@ export function PhaseFormModal({
               </div>
             </div>
           </div>
-        </form>
 
-        {/* Footer */}
-        <div className="p-6 border-t border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
-          <button
-            type="button"
-            onClick={handlePrevious}
-            disabled={currentPromptIndex === 0 || isSubmitting}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
-          >
-            Previous
-          </button>
-
-          <div className="flex items-center gap-2 text-xs text-gray-600">
-            {phase.required_fields.map((_, index) => (
-              <div
-                key={index}
-                className={`w-2 h-2 rounded-full transition ${
-                  index === currentPromptIndex
-                    ? 'bg-blue-600 w-6'
-                    : index < currentPromptIndex
-                    ? 'bg-green-500'
-                    : 'bg-gray-300'
-                }`}
-              />
-            ))}
-          </div>
-
-          {currentPromptIndex < phase.template_prompts.length - 1 ? (
+          {/* Footer - Now inside form */}
+          <div className="p-6 border-t border-gray-200 bg-gray-50 flex items-center justify-between gap-3">
             <button
               type="button"
-              onClick={handleNext}
-              disabled={!isCurrentFieldFilled() || isSubmitting}
-              className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 rounded-lg hover:from-blue-700 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
+              onClick={handlePrevious}
+              disabled={currentPromptIndex === 0 || isSubmitting}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
             >
-              Next
+              Previous
             </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!allFieldsFilled() || isSubmitting}
-              className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <Send className="w-4 h-4" />
-                  Generate with AI
-                </>
-              )}
-            </button>
-          )}
-        </div>
+
+            <div className="flex items-center gap-2 text-xs text-gray-600">
+              {phase.required_fields.map((_, index) => (
+                <div
+                  key={index}
+                  className={`w-2 h-2 rounded-full transition ${
+                    index === currentPromptIndex
+                      ? 'bg-blue-600 w-6'
+                      : index < currentPromptIndex
+                      ? 'bg-green-500'
+                      : 'bg-gray-300'
+                  }`}
+                />
+              ))}
+            </div>
+
+            {currentPromptIndex < phase.template_prompts.length - 1 ? (
+              <button
+                type="button"
+                onClick={handleNext}
+                disabled={!isCurrentFieldFilled() || isSubmitting}
+                className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 rounded-lg hover:from-blue-700 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
+              >
+                Next
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!allFieldsFilled() || isSubmitting}
+                className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    Generate with AI
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </form>
       </div>
     </div>
   );

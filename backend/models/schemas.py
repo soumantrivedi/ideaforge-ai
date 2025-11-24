@@ -130,3 +130,42 @@ class HealthCheckResponse(BaseModel):
     timestamp: datetime
     version: str
     services: Dict[str, bool]
+
+
+class AgentInteraction(BaseModel):
+    """Represents interaction between agents"""
+    from_agent: str
+    to_agent: str
+    query: str
+    response: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class MultiAgentRequest(BaseModel):
+    """Request for multi-agent coordination"""
+    user_id: UUID
+    product_id: Optional[UUID] = None
+    query: str
+    coordination_mode: Literal["sequential", "parallel", "collaborative", "debate"] = "collaborative"
+    primary_agent: Optional[str] = None
+    supporting_agents: Optional[List[str]] = None
+    context: Optional[Dict[str, Any]] = None
+
+
+class MultiAgentResponse(BaseModel):
+    """Response from multi-agent coordination"""
+    primary_agent: str
+    response: str
+    agent_interactions: List[AgentInteraction] = []
+    coordination_mode: str
+    metadata: Optional[Dict[str, Any]] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AgentCapability(BaseModel):
+    """Agent capability definition"""
+    agent_type: str
+    capabilities: List[str]
+    confidence_scores: Dict[str, float] = {}
+    description: str

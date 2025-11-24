@@ -6,37 +6,45 @@ from backend.models.schemas import AgentMessage, AgentResponse
 from backend.config import settings
 
 
-class IdeationAgent(BaseAgent):
+class StrategyAgent(BaseAgent):
+    """Strategy Agent for strategic planning, roadmap development, and business strategy."""
+    
     def __init__(self):
-        system_prompt = """You are an Ideation and Brainstorming Specialist.
+        system_prompt = """You are a Strategic Planning and Business Strategy Specialist.
 
 Your responsibilities:
-1. Facilitate creative brainstorming sessions
-2. Generate innovative product ideas and features
-3. Explore problem spaces from multiple angles
-4. Challenge assumptions and identify opportunities
-5. Help refine vague concepts into actionable ideas
+1. Develop product strategy and roadmaps
+2. Define go-to-market strategies
+3. Create strategic plans and initiatives
+4. Analyze business models and value propositions
+5. Provide strategic recommendations
 
-Techniques you employ:
-- Design Thinking methodologies
-- Jobs-to-be-Done framework
-- Value Proposition Canvas
-- SCAMPER technique
-- "How Might We" questions
-- Opportunity mapping
+Strategic Areas:
+- Product strategy and vision
+- Go-to-market (GTM) strategy
+- Business model design
+- Roadmap planning and prioritization
+- Competitive positioning
+- Strategic partnerships and alliances
 
 Your output should:
-- Be creative yet practical
-- Consider user needs and business value
-- Identify potential risks and opportunities
-- Provide multiple perspectives and alternatives
-- Build upon existing ideas constructively"""
+- Be strategic and forward-looking
+- Consider market dynamics and competition
+- Align with business objectives
+- Provide clear action plans
+- Include success metrics and KPIs"""
 
         super().__init__(
-            name="Ideation Agent",
-            role="ideation",
+            name="Strategy Agent",
+            role="strategy",
             system_prompt=system_prompt
         )
+
+        self.capabilities = [
+            "strategic planning", "roadmap development", "go-to-market strategy",
+            "business model design", "competitive positioning", "strategic recommendations",
+            "initiative planning", "value proposition"
+        ]
 
     async def process(
         self,
@@ -59,13 +67,14 @@ Your output should:
                 response=response,
                 metadata={
                     "has_context": context is not None,
-                    "message_count": len(messages)
+                    "message_count": len(messages),
+                    "capabilities_used": self.capabilities
                 },
                 timestamp=datetime.utcnow()
             )
 
         except Exception as e:
-            self.logger.error("ideation_error", error=str(e))
+            self.logger.error("strategy_error", error=str(e))
             raise
 
     async def _process_with_openai(self, messages: List[Dict[str, str]]) -> str:
@@ -73,7 +82,7 @@ Your output should:
         response = client.chat.completions.create(
             model=settings.agent_model_primary,
             messages=messages,
-            temperature=0.9,
+            temperature=0.8,
             max_tokens=3000
         )
         return response.choices[0].message.content
@@ -87,32 +96,35 @@ Your output should:
             model=settings.agent_model_secondary,
             system=system_message,
             messages=user_messages,
-            temperature=0.9,
+            temperature=0.8,
             max_tokens=3000
         )
         return response.content[0].text
 
-    async def generate_feature_ideas(
+    async def develop_product_strategy(
         self,
-        product_context: Dict[str, Any],
-        constraints: Optional[Dict[str, Any]] = None
-    ) -> List[str]:
-        constraints_text = ""
-        if constraints:
-            constraints_text = f"Constraints:\n{constraints}\n"
+        product_info: Dict[str, Any],
+        market_context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        market_context_text = ""
+        if market_context:
+            market_context_text = f"Market Context:\n{market_context}\n"
         
-        prompt = f"""Generate innovative feature ideas for this product:
+        prompt = f"""Develop a comprehensive product strategy for:
 
-Product Context:
-{product_context}
+Product Information:
+{product_info}
 
-{constraints_text}
+{market_context_text}
 
-Generate 5-10 creative, actionable feature ideas. For each idea, provide:
-1. Feature name
-2. Brief description
-3. User value proposition
-4. Implementation complexity (Low/Medium/High)"""
+Provide:
+1. Product vision and positioning
+2. Target market and customer segments
+3. Value proposition
+4. Competitive differentiation
+5. Go-to-market strategy
+6. Key success metrics and KPIs
+7. Strategic roadmap (short-term and long-term)"""
 
         message = AgentMessage(
             role="user",
@@ -120,5 +132,6 @@ Generate 5-10 creative, actionable feature ideas. For each idea, provide:
             timestamp=datetime.utcnow()
         )
 
-        response = await self.process([message], context={"task": "feature_generation"})
-        return [line.strip() for line in response.response.split('\n') if line.strip()]
+        response = await self.process([message], context={"task": "strategy_development"})
+        return response.response
+
