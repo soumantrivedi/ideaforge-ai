@@ -1027,6 +1027,15 @@ async def initialize_agno_agents(
             detail="No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) before initializing agents."
         )
     
+    # Get configured providers list
+    configured_providers_list = []
+    if provider_registry.has_openai_key():
+        configured_providers_list.append("openai")
+    if provider_registry.has_claude_key():
+        configured_providers_list.append("claude")
+    if provider_registry.has_gemini_key():
+        configured_providers_list.append("gemini")
+    
     # Initialize orchestrator with Agno
     global orchestrator, agno_enabled
     try:
@@ -1036,7 +1045,7 @@ async def initialize_agno_agents(
             logger.info(
                 "agno_agents_initialized_on_demand",
                 user_id=str(current_user["id"]),
-                providers=configured_providers
+                providers=configured_providers_list
             )
             return InitializeAgentsResponse(
                 success=True,
