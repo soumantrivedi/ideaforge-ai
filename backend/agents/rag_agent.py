@@ -79,12 +79,12 @@ Your responses should be:
             List of relevant documents with metadata
         """
         try:
-            if not hasattr(self.agno_agent, 'knowledge_base') or not self.agno_agent.knowledge_base:
+            if not hasattr(self.agno_agent, 'knowledge') or not self.agno_agent.knowledge:
                 self.logger.warning("knowledge_base_not_available")
                 return []
             
             # Use Agno's knowledge base search
-            results = self.agno_agent.knowledge_base.search(
+            results = self.agno_agent.knowledge.search(
                 query=query,
                 num_documents=top_k,
                 filters=filters

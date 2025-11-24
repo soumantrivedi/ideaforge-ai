@@ -87,16 +87,16 @@ class AgnoBaseAgent(ABC):
         model = self._get_agno_model()
         
         # Setup RAG knowledge base if enabled
-        knowledge_base = None
+        knowledge = None
         if enable_rag:
-            knowledge_base = self._create_knowledge_base(rag_table_name or f"{role}_knowledge")
+            knowledge = self._create_knowledge_base(rag_table_name or f"{role}_knowledge")
         
-        # Create Agno agent
+        # Create Agno agent (use 'knowledge' parameter, not 'knowledge_base')
         self.agno_agent = Agent(
             name=name,
             model=model,
             instructions=system_prompt,
-            knowledge_base=knowledge_base,
+            knowledge=knowledge,  # Agno uses 'knowledge' parameter
             tools=tools or [],
             markdown=True,
             show_tool_calls=True,
@@ -298,9 +298,9 @@ class AgnoBaseAgent(ABC):
     
     def add_to_knowledge_base(self, content: str, metadata: Optional[Dict[str, Any]] = None):
         """Add content to knowledge base (if RAG is enabled)."""
-        if hasattr(self.agno_agent, 'knowledge_base') and self.agno_agent.knowledge_base:
+        if hasattr(self.agno_agent, 'knowledge') and self.agno_agent.knowledge:
             try:
-                self.agno_agent.knowledge_base.load(content=content, metadata=metadata or {})
+                self.agno_agent.knowledge.load(content=content, metadata=metadata or {})
                 self.logger.info("content_added_to_knowledge_base", agent=self.name)
             except Exception as e:
                 self.logger.error("failed_to_add_to_knowledge_base", error=str(e))
