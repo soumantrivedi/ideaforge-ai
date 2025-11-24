@@ -31,6 +31,7 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
   const [geminiKey, setGeminiKey] = useState('');
   const [v0Key, setV0Key] = useState('');
   const [lovableKey, setLovableKey] = useState('');
+  const [verifySsl, setVerifySsl] = useState(false); // Default to false for SSL verification
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [verificationStatus, setVerificationStatus] = useState<Record<AIProvider | 'v0' | 'lovable', VerificationStatus>>({
     openai: { status: 'idle' },
@@ -130,10 +131,16 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
     setVerificationInfoVisible(true);
 
     try {
+      // For V0 provider, include verify_ssl parameter
+      const requestBody: any = { provider, api_key: key };
+      if (provider === 'v0') {
+        requestBody.verify_ssl = verifySsl;
+      }
+
       const response = await fetch(`${API_URL}/api/providers/verify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, api_key: key }),
+        body: JSON.stringify(requestBody),
       });
 
       const result = await response.json();
@@ -458,6 +465,18 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
               V0 Platform
             </a>
           </p>
+          <div className="mt-3 flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="verify-ssl-v0"
+              checked={verifySsl}
+              onChange={(e) => setVerifySsl(e.target.checked)}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="verify-ssl-v0" className="text-xs text-gray-700 cursor-pointer">
+              Verify SSL certificate (recommended for production)
+            </label>
+          </div>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <button
               type="button"

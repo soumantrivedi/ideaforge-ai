@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     feature_leadership_view: bool = os.getenv("FEATURE_LEADERSHIP_VIEW", "true").lower() == "true"
     
     # SSL Verification (for API key verification)
-    verify_ssl: bool = os.getenv("VERIFY_SSL", "true").lower() == "true"
+    verify_ssl: bool = os.getenv("VERIFY_SSL", "false").lower() == "true"
 
     # Enterprise Settings
     tenant_mode: str = os.getenv("TENANT_MODE", "multi")

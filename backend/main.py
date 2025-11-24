@@ -92,6 +92,7 @@ def _map_provider_exception(exc: Exception):
 class APIKeyVerificationRequest(BaseModel):
     provider: Literal["openai", "claude", "gemini", "v0"]
     api_key: str
+    verify_ssl: Optional[bool] = None  # Optional: if not provided, uses settings.verify_ssl
 
 
 class APIKeyVerificationResponse(BaseModel):
@@ -375,8 +376,8 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                         detail="V0 API key format appears invalid. Please check your key."
                     )
                 
-                # Get SSL verification setting from config
-                verify_ssl = settings.verify_ssl
+                # Get SSL verification setting from request or fallback to config
+                verify_ssl = payload.verify_ssl if payload.verify_ssl is not None else settings.verify_ssl
                 
                 # Create httpx client with SSL configuration
                 # SSL verification can be disabled via VERIFY_SSL=false for development/testing
