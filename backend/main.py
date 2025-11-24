@@ -52,17 +52,51 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
-# Initialize orchestrator based on feature flag
-if settings.feature_agno_framework and AGNO_AVAILABLE:
-    try:
-        orchestrator = AgnoAgenticOrchestrator(enable_rag=True)
-        logger.info("agno_orchestrator_initialized", framework="agno", rag_enabled=True)
-    except Exception as e:
-        logger.warning("agno_orchestrator_failed", error=str(e), falling_back="legacy")
-        orchestrator = AgenticOrchestrator()
-else:
-    orchestrator = AgenticOrchestrator()
-    logger.info("legacy_orchestrator_initialized", framework="legacy")
+# Global orchestrator - can be reinitialized dynamically
+orchestrator: Optional[AgenticOrchestrator] = None
+agno_enabled: bool = False
+
+def _initialize_orchestrator(force_agno: Optional[bool] = None) -> tuple[AgenticOrchestrator, bool]:
+    """
+    Initialize orchestrator based on provider availability and feature flag.
+    Returns (orchestrator, agno_enabled)
+    """
+    global orchestrator, agno_enabled
+    
+    # Check if any provider is configured
+    has_provider = (
+        provider_registry.has_openai_key() or
+        provider_registry.has_claude_key() or
+        provider_registry.has_gemini_key()
+    )
+    
+    # Determine if Agno should be enabled
+    should_enable_agno = False
+    if force_agno is not None:
+        should_enable_agno = force_agno
+    elif has_provider and settings.feature_agno_framework and AGNO_AVAILABLE:
+        should_enable_agno = True
+    
+    if should_enable_agno and AGNO_AVAILABLE:
+        try:
+            new_orchestrator = AgnoAgenticOrchestrator(enable_rag=True)
+            logger.info("agno_orchestrator_initialized", framework="agno", rag_enabled=True, has_provider=has_provider)
+            agno_enabled = True
+            return new_orchestrator, True
+        except Exception as e:
+            logger.warning("agno_orchestrator_failed", error=str(e), falling_back="legacy")
+            new_orchestrator = AgenticOrchestrator()
+            agno_enabled = False
+            return new_orchestrator, False
+    else:
+        new_orchestrator = AgenticOrchestrator()
+        agno_enabled = False
+        reason = "no_provider" if not has_provider else "agno_unavailable" if not AGNO_AVAILABLE else "feature_disabled"
+        logger.info("legacy_orchestrator_initialized", framework="legacy", reason=reason)
+        return new_orchestrator, False
+
+# Initialize orchestrator on startup
+orchestrator, agno_enabled = _initialize_orchestrator()
 
 
 def _map_provider_exception(exc: Exception):
@@ -884,10 +918,144 @@ async def configure_provider_keys(
             configured_providers=configured
         )
         
+        # Automatically enable/disable Agno based on provider availability
+        global orchestrator, agno_enabled
+        orchestrator, agno_enabled = _initialize_orchestrator()
+        
         return ProviderConfigureResponse(configured_providers=configured)
     except Exception as e:
         logger.error("provider_configuration_failed", error=str(e), user_id=str(current_user["id"]))
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class AgnoStatusResponse(BaseModel):
+    agno_available: bool
+    agno_enabled: bool
+    providers_configured: bool
+    configured_providers: List[str]
+    can_initialize: bool
+    message: str
+
+
+@app.get("/api/agno/status", response_model=AgnoStatusResponse, tags=["agno"])
+async def get_agno_status(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get Agno framework status and initialization capability."""
+    from backend.services.api_key_loader import load_user_api_keys_from_db
+    
+    # Load user's API keys
+    user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+    
+    # Check if any provider is configured
+    has_openai = bool(user_keys.get("openai"))
+    has_claude = bool(user_keys.get("claude"))
+    has_gemini = bool(user_keys.get("gemini"))
+    providers_configured = has_openai or has_claude or has_gemini
+    
+    configured_providers = []
+    if has_openai:
+        configured_providers.append("openai")
+    if has_claude:
+        configured_providers.append("claude")
+    if has_gemini:
+        configured_providers.append("gemini")
+    
+    can_initialize = AGNO_AVAILABLE and providers_configured
+    
+    message = ""
+    if not AGNO_AVAILABLE:
+        message = "Agno framework is not available. Please ensure agno package is installed."
+    elif not providers_configured:
+        message = "No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) to enable Agno framework."
+    elif not agno_enabled:
+        message = "Agno framework is available and providers are configured. Click 'Initialize Agents' to enable."
+    else:
+        message = "Agno framework is enabled and ready to use."
+    
+    return AgnoStatusResponse(
+        agno_available=AGNO_AVAILABLE,
+        agno_enabled=agno_enabled,
+        providers_configured=providers_configured,
+        configured_providers=configured_providers,
+        can_initialize=can_initialize,
+        message=message
+    )
+
+
+class InitializeAgentsResponse(BaseModel):
+    success: bool
+    agno_enabled: bool
+    message: str
+
+
+@app.post("/api/agno/initialize", response_model=InitializeAgentsResponse, tags=["agno"])
+async def initialize_agno_agents(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Initialize Agno agents on demand."""
+    from backend.services.api_key_loader import load_user_api_keys_from_db
+    
+    if not AGNO_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Agno framework is not available. Please ensure agno package is installed."
+        )
+    
+    # Load user's API keys and update provider registry
+    user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+    
+    # Update provider registry with user's keys
+    provider_registry.update_keys(
+        openai_key=user_keys.get("openai"),
+        claude_key=user_keys.get("claude"),
+        gemini_key=user_keys.get("gemini"),
+    )
+    
+    # Check if any provider is configured
+    has_provider = (
+        provider_registry.has_openai_key() or
+        provider_registry.has_claude_key() or
+        provider_registry.has_gemini_key()
+    )
+    
+    if not has_provider:
+        raise HTTPException(
+            status_code=400,
+            detail="No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) before initializing agents."
+        )
+    
+    # Initialize orchestrator with Agno
+    global orchestrator, agno_enabled
+    try:
+        orchestrator, agno_enabled = _initialize_orchestrator(force_agno=True)
+        
+        if agno_enabled:
+            logger.info(
+                "agno_agents_initialized_on_demand",
+                user_id=str(current_user["id"]),
+                providers=configured_providers
+            )
+            return InitializeAgentsResponse(
+                success=True,
+                agno_enabled=True,
+                message="Agno agents initialized successfully!"
+            )
+        else:
+            return InitializeAgentsResponse(
+                success=False,
+                agno_enabled=False,
+                message="Failed to initialize Agno agents. Falling back to legacy orchestrator."
+            )
+    except Exception as e:
+        logger.error("agno_initialization_failed", error=str(e), user_id=str(current_user["id"]))
+        orchestrator, agno_enabled = _initialize_orchestrator(force_agno=False)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initialize Agno agents: {str(e)}"
+        )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Palette, Bell, Globe, Save, Loader2, Moon, Sun, Sparkles } from 'lucide-react';
+import { Settings, Palette, Bell, Globe, Save, Loader2, Moon, Sun, Sparkles, Bot, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
 import { ProviderConfig } from './ProviderConfig';
@@ -17,16 +17,27 @@ export function EnhancedSettings() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [configuredProviders, setConfiguredProviders] = useState<string[]>([]);
   const [apiKeysStatus, setApiKeysStatus] = useState<Record<string, boolean>>({});
+  const [agnoStatus, setAgnoStatus] = useState<{
+    agno_available: boolean;
+    agno_enabled: boolean;
+    providers_configured: boolean;
+    configured_providers: string[];
+    can_initialize: boolean;
+    message: string;
+  } | null>(null);
+  const [isInitializing, setIsInitializing] = useState(false);
 
   useEffect(() => {
     if (token) {
       loadPreferences();
       loadAPIKeysStatus();
+      loadAgnoStatus();
     }
     
     // Listen for API keys updates
     const handleApiKeysUpdate = () => {
       loadAPIKeysStatus();
+      loadAgnoStatus(); // Reload Agno status when keys are updated
     };
     
     window.addEventListener('apiKeysUpdated', handleApiKeysUpdate);
@@ -81,6 +92,53 @@ export function EnhancedSettings() {
       }
     } catch (error) {
       console.error('Failed to load API keys status:', error);
+    }
+  };
+
+  const loadAgnoStatus = async () => {
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/agno/status`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setAgnoStatus(data);
+      }
+    } catch (error) {
+      console.error('Failed to load Agno status:', error);
+    }
+  };
+
+  const handleInitializeAgents = async () => {
+    if (!token) return;
+
+    setIsInitializing(true);
+    try {
+      const response = await fetch(`${API_URL}/api/agno/initialize`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include',
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setMessage({ type: 'success', text: data.message || 'Agno agents initialized successfully!' });
+        await loadAgnoStatus(); // Reload status
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Failed to initialize agents' });
+      }
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Failed to initialize agents',
+      });
+    } finally {
+      setIsInitializing(false);
     }
   };
 
@@ -255,13 +313,117 @@ export function EnhancedSettings() {
           onSaveConfig={(config) => {
             // Provider config is handled by ProviderConfig component
             console.log('Config saved:', config);
-            // Reload API keys status after saving
+            // Reload API keys status and Agno status after saving
             loadAPIKeysStatus();
+            loadAgnoStatus();
           }}
           configuredProviders={configuredProviders}
           apiKeysStatus={apiKeysStatus}
         />
       </div>
+
+      {/* Agno Framework Status */}
+      {agnoStatus && (
+        <div className="bg-white rounded-xl shadow-lg p-6">
+          <div className="flex items-center gap-3 mb-6">
+            <Bot className="w-6 h-6 text-purple-600" />
+            <div>
+              <h3 className="text-lg font-bold text-gray-900">Agno Framework Status</h3>
+              <p className="text-sm text-gray-500">Multi-agent system status</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {/* Status Indicators */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  {agnoStatus.agno_available ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-red-600" />
+                  )}
+                  <span className="font-medium text-gray-900">Framework Available</span>
+                </div>
+                <p className="text-sm text-gray-600">
+                  {agnoStatus.agno_available ? 'Agno framework is installed' : 'Agno framework not available'}
+                </p>
+              </div>
+
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  {agnoStatus.agno_enabled ? (
+                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                  ) : (
+                    <AlertCircle className="w-5 h-5 text-yellow-600" />
+                  )}
+                  <span className="font-medium text-gray-900">Framework Enabled</span>
+                </div>
+                <p className="text-sm text-gray-600">
+                  {agnoStatus.agno_enabled ? 'Agno agents are active' : 'Agno agents are not initialized'}
+                </p>
+              </div>
+            </div>
+
+            {/* Status Message */}
+            <div className={`p-4 rounded-lg ${
+              agnoStatus.agno_enabled 
+                ? 'bg-green-50 border border-green-200' 
+                : agnoStatus.can_initialize
+                ? 'bg-blue-50 border border-blue-200'
+                : 'bg-yellow-50 border border-yellow-200'
+            }`}>
+              <p className={`text-sm ${
+                agnoStatus.agno_enabled 
+                  ? 'text-green-700' 
+                  : agnoStatus.can_initialize
+                  ? 'text-blue-700'
+                  : 'text-yellow-700'
+              }`}>
+                {agnoStatus.message}
+              </p>
+            </div>
+
+            {/* Configured Providers */}
+            {agnoStatus.configured_providers.length > 0 && (
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm font-medium text-gray-900 mb-2">Configured Providers:</p>
+                <div className="flex flex-wrap gap-2">
+                  {agnoStatus.configured_providers.map((provider) => (
+                    <span
+                      key={provider}
+                      className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium"
+                    >
+                      {provider.charAt(0).toUpperCase() + provider.slice(1)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Initialize Button */}
+            {agnoStatus.can_initialize && !agnoStatus.agno_enabled && (
+              <button
+                onClick={handleInitializeAgents}
+                disabled={isInitializing}
+                className="w-full py-3 px-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-semibold rounded-lg hover:from-purple-700 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isInitializing ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Initializing...
+                  </>
+                ) : (
+                  <>
+                    <Bot className="w-5 h-5" />
+                    Initialize Agents
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Save Button */}
       {message && (
