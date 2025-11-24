@@ -27,6 +27,31 @@ export function EnhancedSettings() {
   } | null>(null);
   const [isInitializing, setIsInitializing] = useState(false);
 
+  const saveIntegrationConfig = async (provider: 'github' | 'atlassian', config: Record<string, string>) => {
+    if (!token) return;
+    
+    try {
+      const response = await fetch(`${API_URL}/api/integrations/configure`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ provider, config }),
+      });
+      
+      if (response.ok) {
+        setMessage({ type: 'success', text: `${provider === 'github' ? 'GitHub' : 'Atlassian'} configuration saved successfully.` });
+      } else {
+        setMessage({ type: 'error', text: `Failed to save ${provider} configuration.` });
+      }
+    } catch (error) {
+      console.error(`Failed to save ${provider} config:`, error);
+      setMessage({ type: 'error', text: `Failed to save ${provider} configuration.` });
+    }
+  };
+
   useEffect(() => {
     if (token) {
       loadPreferences();
@@ -320,6 +345,93 @@ export function EnhancedSettings() {
           configuredProviders={configuredProviders}
           apiKeysStatus={apiKeysStatus}
         />
+      </div>
+
+      {/* Integration Configuration */}
+      <div className="bg-white rounded-xl shadow-lg p-6">
+        <div className="flex items-center gap-3 mb-6">
+          <Settings className="w-6 h-6 text-indigo-600" />
+          <div>
+            <h3 className="text-lg font-bold text-gray-900">Integration Configuration</h3>
+            <p className="text-sm text-gray-500">Configure GitHub and Atlassian integrations</p>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          {/* GitHub PAT */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              GitHub Personal Access Token (PAT)
+            </label>
+            <input
+              type="password"
+              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              onChange={(e) => {
+                // Store in state for saving
+                const githubPat = e.target.value;
+                if (githubPat.trim()) {
+                  // Save to backend
+                  saveIntegrationConfig('github', { pat: githubPat.trim() });
+                }
+              }}
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Used for accessing GitHub repositories and files. Create a token at{' '}
+              <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                GitHub Settings
+              </a>
+            </p>
+          </div>
+
+          {/* Atlassian SSO */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Atlassian SSO Configuration
+            </label>
+            <div className="space-y-3">
+              <input
+                type="text"
+                placeholder="Atlassian Cloud URL (e.g., https://your-domain.atlassian.net)"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => {
+                  const url = e.target.value;
+                  if (url.trim()) {
+                    saveIntegrationConfig('atlassian', { url: url.trim() });
+                  }
+                }}
+              />
+              <input
+                type="email"
+                placeholder="Email address"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => {
+                  const email = e.target.value;
+                  if (email.trim()) {
+                    saveIntegrationConfig('atlassian', { email: email.trim() });
+                  }
+                }}
+              />
+              <input
+                type="password"
+                placeholder="API Token"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                onChange={(e) => {
+                  const token = e.target.value;
+                  if (token.trim()) {
+                    saveIntegrationConfig('atlassian', { api_token: token.trim() });
+                  }
+                }}
+              />
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Used for accessing Confluence documents via Atlassian MCP server. Get your API token from{' '}
+              <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                Atlassian Account Settings
+              </a>
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Agno Framework Status */}

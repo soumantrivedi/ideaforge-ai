@@ -164,6 +164,53 @@ class AgnoBaseAgent(ABC):
             self.logger.error("failed_to_create_knowledge_base", error=str(e))
             return None
     
+    def _update_model_api_key(self):
+        """Update the model's API key from provider registry if available.
+        Recreates the model if necessary to ensure API key is properly set.
+        """
+        try:
+            if not hasattr(self.agno_agent, 'model') or not self.agno_agent.model:
+                return
+            
+            # Get the current model type and ID
+            current_model = self.agno_agent.model
+            model_id = None
+            if hasattr(current_model, 'id'):
+                model_id = current_model.id
+            elif hasattr(current_model, 'model'):
+                model_id = current_model.model
+            
+            # Determine which provider to use and get API key
+            new_model = None
+            if provider_registry.has_openai_key():
+                api_key = provider_registry.get_openai_key()
+                if api_key:
+                    new_model = OpenAIChat(
+                        id=model_id or settings.agent_model_primary,
+                        api_key=api_key
+                    )
+            elif provider_registry.has_claude_key():
+                api_key = provider_registry.get_claude_key()
+                if api_key:
+                    new_model = Claude(
+                        id=model_id or settings.agent_model_secondary,
+                        api_key=api_key
+                    )
+            elif provider_registry.has_gemini_key():
+                api_key = provider_registry.get_gemini_key()
+                if api_key:
+                    new_model = Gemini(
+                        id=model_id or settings.agent_model_tertiary,
+                        api_key=api_key
+                    )
+            
+            # Update the agent's model if we created a new one
+            if new_model:
+                self.agno_agent.model = new_model
+                self.logger.debug("model_api_key_updated", agent=self.name, provider=type(new_model).__name__)
+        except Exception as e:
+            self.logger.warning("failed_to_update_model_api_key", error=str(e))
+    
     async def process(
         self,
         messages: List[AgentMessage],
@@ -180,6 +227,10 @@ class AgnoBaseAgent(ABC):
             AgentResponse with agent's response
         """
         try:
+            # Update model API key from provider registry before processing
+            # This ensures user-specific keys are used
+            self._update_model_api_key()
+            
             # Convert messages to query string
             query = self._format_messages_to_query(messages, context)
             

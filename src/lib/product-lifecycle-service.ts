@@ -1,4 +1,6 @@
 // Using backend API instead of Supabase
+import { apiFetch } from './api-client';
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 export interface LifecyclePhase {
@@ -66,8 +68,10 @@ export class ProductLifecycleService {
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
     };
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
+    // Get token from localStorage if not set (apiFetch will also check, but we set it here for consistency)
+    const token = this.token || localStorage.getItem('auth_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
     }
     return headers;
   }
@@ -75,9 +79,8 @@ export class ProductLifecycleService {
   // Lifecycle Phases
   async getAllPhases(): Promise<LifecyclePhase[]> {
     try {
-      const response = await fetch(`${API_URL}/api/db/phases`, {
+      const response = await apiFetch('/api/db/phases', {
         headers: this.getHeaders(),
-        credentials: 'include',
       });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -103,9 +106,8 @@ export class ProductLifecycleService {
   // Phase Submissions
   async getPhaseSubmissions(productId: string): Promise<PhaseSubmission[]> {
     try {
-      const response = await fetch(`${API_URL}/api/db/phase-submissions?product_id=${productId}`, {
+      const response = await apiFetch(`/api/db/phase-submissions?product_id=${productId}`, {
         headers: this.getHeaders(),
-        credentials: 'include',
       });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -123,9 +125,8 @@ export class ProductLifecycleService {
     phaseId: string
   ): Promise<PhaseSubmission | null> {
     try {
-      const response = await fetch(`${API_URL}/api/db/phase-submissions/${productId}/${phaseId}`, {
+      const response = await apiFetch(`/api/db/phase-submissions/${productId}/${phaseId}`, {
         headers: this.getHeaders(),
-        credentials: 'include',
       });
       
       if (!response.ok) {
@@ -166,10 +167,9 @@ export class ProductLifecycleService {
     formData: Record<string, any>
   ): Promise<PhaseSubmission> {
     try {
-      const response = await fetch(`${API_URL}/api/db/phase-submissions`, {
+      const response = await apiFetch('/api/db/phase-submissions', {
         method: 'POST',
         headers: this.getHeaders(),
-        credentials: 'include',
         body: JSON.stringify({
           product_id: productId,
           phase_id: phaseId,
@@ -207,10 +207,9 @@ export class ProductLifecycleService {
     updates: Partial<PhaseSubmission>
   ): Promise<PhaseSubmission> {
     try {
-      const response = await fetch(`${API_URL}/api/db/phase-submissions/${submissionId}`, {
+      const response = await apiFetch(`/api/db/phase-submissions/${submissionId}`, {
         method: 'PUT',
         headers: this.getHeaders(),
-        credentials: 'include',
         body: JSON.stringify(updates),
       });
       
@@ -247,16 +246,10 @@ export class ProductLifecycleService {
     try {
       // Get userId if not provided
       if (!userId) {
-        // Try to get from token
-        const token = localStorage.getItem('token');
-        if (token) {
-          try {
-            const payload = JSON.parse(atob(token.split('.')[1]));
-            userId = payload.sub || payload.user_id || payload.id;
-          } catch {
-            // If we can't parse token, we'll need userId
-            throw new Error('User ID is required for creating phase submission');
-          }
+        // Try to get from localStorage (auth_token stores user info separately)
+        const storedUserId = localStorage.getItem('user_id');
+        if (storedUserId) {
+          userId = storedUserId;
         } else {
           throw new Error('User ID is required for creating phase submission');
         }
@@ -297,10 +290,9 @@ export class ProductLifecycleService {
     }
   ): Promise<ConversationHistoryEntry | null> {
     try {
-      const response = await fetch(`${API_URL}/api/db/conversation-history`, {
+      const response = await apiFetch('/api/db/conversation-history', {
         method: 'POST',
         headers: this.getHeaders(),
-        credentials: 'include',
         body: JSON.stringify({
           session_id: sessionId,
           message_type: messageType,
@@ -358,9 +350,8 @@ export class ProductLifecycleService {
         params.append('product_id', options.productId);
       }
       
-      const response = await fetch(`${API_URL}/api/db/conversation-history?${params}`, {
+      const response = await apiFetch(`/api/db/conversation-history?${params}`, {
         headers: this.getHeaders(),
-        credentials: 'include',
       });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -378,9 +369,8 @@ export class ProductLifecycleService {
     productId: string
   ): Promise<ConversationHistoryEntry[]> {
     try {
-      const response = await fetch(`${API_URL}/api/db/conversation-history?product_id=${productId}`, {
+      const response = await apiFetch(`/api/db/conversation-history?product_id=${productId}`, {
         headers: this.getHeaders(),
-        credentials: 'include',
       });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);

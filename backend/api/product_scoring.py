@@ -406,28 +406,51 @@ async def get_product_scores(
 ):
     """Get all scores for a product (tenant-level if tenant_id provided)."""
     try:
-        query = text("""
-            SELECT 
-                id,
-                overall_score,
-                success_probability,
-                scoring_data,
-                recommendations,
-                success_factors,
-                risk_factors,
-                scoring_criteria,
-                created_at,
-                updated_at
-            FROM product_idea_scores
-            WHERE product_id = :product_id
-            AND (:tenant_id IS NULL OR tenant_id = :tenant_id)
-            ORDER BY created_at DESC
-        """)
+        # Build query conditionally to avoid PostgreSQL parameter type issues
+        if tenant_id:
+            query = text("""
+                SELECT 
+                    id,
+                    overall_score,
+                    success_probability,
+                    scoring_data,
+                    recommendations,
+                    success_factors,
+                    risk_factors,
+                    scoring_criteria,
+                    created_at,
+                    updated_at
+                FROM product_idea_scores
+                WHERE product_id = :product_id
+                AND tenant_id = :tenant_id
+                ORDER BY created_at DESC
+            """)
+            params = {
+                "product_id": str(product_id),
+                "tenant_id": str(tenant_id)
+            }
+        else:
+            query = text("""
+                SELECT 
+                    id,
+                    overall_score,
+                    success_probability,
+                    scoring_data,
+                    recommendations,
+                    success_factors,
+                    risk_factors,
+                    scoring_criteria,
+                    created_at,
+                    updated_at
+                FROM product_idea_scores
+                WHERE product_id = :product_id
+                ORDER BY created_at DESC
+            """)
+            params = {
+                "product_id": str(product_id)
+            }
         
-        result = await db.execute(query, {
-            "product_id": str(product_id),
-            "tenant_id": str(tenant_id) if tenant_id else None
-        })
+        result = await db.execute(query, params)
         rows = result.fetchall()
         
         scores = [

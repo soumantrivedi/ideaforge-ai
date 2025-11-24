@@ -42,6 +42,8 @@ from backend.api.users import router as users_router
 from backend.api.products import router as products_router
 from backend.api.conversations import router as conversations_router
 from backend.api.product_scoring import router as product_scoring_router
+from backend.api.integrations import router as integrations_router
+from backend.api.documents import router as documents_router
 from backend.services.provider_registry import provider_registry
 
 structlog.configure(
@@ -98,6 +100,19 @@ def _initialize_orchestrator(force_agno: Optional[bool] = None) -> tuple[Agentic
 
 # Initialize orchestrator on startup
 orchestrator, agno_enabled = _initialize_orchestrator()
+
+def reinitialize_orchestrator():
+    """Reinitialize the global orchestrator. Can be called when API keys are updated."""
+    global orchestrator, agno_enabled
+    orchestrator, agno_enabled = _initialize_orchestrator()
+    
+    # If using Agno orchestrator, also reinitialize its components
+    if agno_enabled and hasattr(orchestrator, 'reinitialize'):
+        try:
+            orchestrator.reinitialize()
+            logger.info("orchestrator_reinitialized", framework="agno")
+        except Exception as e:
+            logger.warning("orchestrator_reinitialize_failed", error=str(e))
 
 
 def _map_provider_exception(exc: Exception):
@@ -189,6 +204,8 @@ app.include_router(db_router)
 app.include_router(design_router)
 app.include_router(api_keys_router)
 app.include_router(product_scoring_router)
+app.include_router(integrations_router)
+app.include_router(documents_router)
 
 
 @app.get("/", tags=["health"])
@@ -923,6 +940,14 @@ async def configure_provider_keys(
         global orchestrator, agno_enabled
         orchestrator, agno_enabled = _initialize_orchestrator()
         
+        # If Agno is enabled, reinitialize agents to use the new API keys
+        if agno_enabled and hasattr(orchestrator, 'reinitialize'):
+            try:
+                orchestrator.reinitialize()
+                logger.info("agno_agents_reinitialized_after_api_key_update", providers=configured)
+            except Exception as e:
+                logger.warning("agno_agents_reinitialization_failed", error=str(e))
+        
         return ProviderConfigureResponse(configured_providers=configured)
     except Exception as e:
         logger.error("provider_configuration_failed", error=str(e), user_id=str(current_user["id"]))
@@ -1041,6 +1066,11 @@ async def initialize_agno_agents(
     global orchestrator, agno_enabled
     try:
         orchestrator, agno_enabled = _initialize_orchestrator(force_agno=True)
+        
+        # Reinitialize agents to use the updated API keys
+        if agno_enabled and hasattr(orchestrator, 'reinitialize'):
+            orchestrator.reinitialize()
+            logger.info("agno_agents_reinitialized", providers=configured_providers_list)
         
         if agno_enabled:
             logger.info(

@@ -11,8 +11,12 @@ from backend.agents.agno_coordinator_agent import AgnoCoordinatorAgent
 from backend.agents.agno_enhanced_coordinator import AgnoEnhancedCoordinator
 from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
 from backend.agents.agno_ideation_agent import AgnoIdeationAgent
+from backend.agents.agno_research_agent import AgnoResearchAgent
+from backend.agents.agno_analysis_agent import AgnoAnalysisAgent
 from backend.agents.agno_summary_agent import AgnoSummaryAgent
 from backend.agents.agno_scoring_agent import AgnoScoringAgent
+from backend.agents.agno_github_agent import AgnoGitHubAgent
+from backend.agents.agno_atlassian_agent import AgnoAtlassianAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.models.schemas import AgentMessage, AgentResponse, MultiAgentRequest, MultiAgentResponse, AgentInteraction
 
@@ -24,19 +28,41 @@ class AgnoAgenticOrchestrator:
     
     def __init__(self, enable_rag: bool = True, use_enhanced: bool = True):
         """Initialize orchestrator with Agno coordinator and agents."""
-        if use_enhanced:
-            self.coordinator = AgnoEnhancedCoordinator(enable_rag=enable_rag)
+        self.enable_rag = enable_rag
+        self.use_enhanced = use_enhanced
+        self._initialize_components()
+        self.logger = logger.bind(component="agno_orchestrator")
+    
+    def _initialize_components(self):
+        """Initialize coordinator and agents. Can be called to reinitialize."""
+        if self.use_enhanced:
+            self.coordinator = AgnoEnhancedCoordinator(enable_rag=self.enable_rag)
         else:
-            self.coordinator = AgnoCoordinatorAgent(enable_rag=enable_rag)
+            self.coordinator = AgnoCoordinatorAgent(enable_rag=self.enable_rag)
         
         self.agents: Dict[str, Any] = {
-            "prd_authoring": AgnoPRDAuthoringAgent(enable_rag=enable_rag),
-            "ideation": AgnoIdeationAgent(enable_rag=enable_rag),
-            "summary": AgnoSummaryAgent(enable_rag=enable_rag),
-            "scoring": AgnoScoringAgent(enable_rag=enable_rag),
+            "research": AgnoResearchAgent(enable_rag=self.enable_rag),
+            "analysis": AgnoAnalysisAgent(enable_rag=self.enable_rag),
+            "prd_authoring": AgnoPRDAuthoringAgent(enable_rag=self.enable_rag),
+            "ideation": AgnoIdeationAgent(enable_rag=self.enable_rag),
+            "summary": AgnoSummaryAgent(enable_rag=self.enable_rag),
+            "scoring": AgnoScoringAgent(enable_rag=self.enable_rag),
+            "github_mcp": AgnoGitHubAgent(enable_rag=self.enable_rag),
+            "atlassian_mcp": AgnoAtlassianAgent(enable_rag=self.enable_rag),
             "rag": RAGAgent(),  # RAG agent always has RAG enabled
         }
-        self.logger = logger.bind(component="agno_orchestrator")
+    
+    def reinitialize(self):
+        """Reinitialize all agents and coordinator with current API keys.
+        Useful when API keys are updated after initial initialization.
+        """
+        try:
+            self.logger.info("reinitializing_agno_orchestrator")
+            self._initialize_components()
+            self.logger.info("agno_orchestrator_reinitialized", success=True)
+        except Exception as e:
+            self.logger.error("agno_orchestrator_reinitialization_failed", error=str(e))
+            raise
     
     async def route_request(
         self,

@@ -76,66 +76,14 @@ class AgnoCoordinatorAgent:
             raise ValueError("No AI provider configured")
     
     def _create_agno_teams(self):
-        """Create Agno teams for different coordination modes."""
-        model = self._get_agno_model()
-        
-        # Collaborative team: Primary agent consults supporting agents
-        self.collaborative_team = Agent(
-            name="Collaborative Product Team",
-            model=model,
-            team=[
-                self.research_agent.agno_agent,
-                self.analysis_agent.agno_agent,
-                self.prd_agent.agno_agent,
-                self.rag_agent.agno_agent,
-            ],
-            instructions=[
-                "You coordinate a team of specialized agents to answer user queries.",
-                "When a user asks about product requirements:",
-                "1. First, have the research agent gather market and competitive information",
-                "2. Then, have the analysis agent perform strategic analysis",
-                "3. Use the RAG agent to retrieve relevant knowledge from the knowledge base",
-                "4. Finally, have the PRD agent create a comprehensive PRD based on all gathered information",
-                "5. Synthesize the final response combining all insights"
-            ],
-            markdown=True
-        )
-        
-        # Sequential team: Agents work one after another
-        self.sequential_team = Agent(
-            name="Sequential Product Team",
-            model=model,
-            team=[
-                self.research_agent.agno_agent,
-                self.analysis_agent.agno_agent,
-                self.prd_agent.agno_agent,
-            ],
-            instructions=[
-                "Agents work sequentially, each building on the previous agent's output.",
-                "1. Research agent gathers information",
-                "2. Analysis agent analyzes the research",
-                "3. PRD agent creates PRD based on analysis"
-            ],
-            markdown=True
-        )
-        
-        # Parallel team: All agents respond simultaneously
-        self.parallel_team = Agent(
-            name="Parallel Product Team",
-            model=model,
-            team=[
-                self.research_agent.agno_agent,
-                self.analysis_agent.agno_agent,
-                self.ideation_agent.agno_agent,
-                self.prd_agent.agno_agent,
-            ],
-            instructions=[
-                "All agents respond to the query simultaneously.",
-                "Each agent provides their perspective independently.",
-                "Synthesize all responses into a comprehensive answer."
-            ],
-            markdown=True
-        )
+        """Create coordination logic for different modes.
+        Note: Agno Agent doesn't support 'team' parameter directly.
+        We use agent consultation via route_agent_consultation instead.
+        """
+        # Agno doesn't support team parameter, so we'll use agent consultation
+        # The teams are conceptual - actual coordination happens via route_query
+        # which uses route_agent_consultation to coordinate agents
+        pass
     
     def get_agent_capabilities(self) -> List[AgentCapability]:
         """Get capabilities of all agents."""
@@ -236,25 +184,46 @@ class AgnoCoordinatorAgent:
         supporting_agents: Optional[List[str]] = None,
         context: Optional[Dict[str, Any]] = None
     ) -> AgentResponse:
-        """Process query collaboratively using Agno team."""
+        """Process query collaboratively using agent consultation."""
         try:
-            # Use Agno collaborative team
+            # Primary agent processes query
+            primary = self.agents[primary_agent]
+            
+            # Consult supporting agents first
+            supporting_responses = []
+            if supporting_agents:
+                for agent_name in supporting_agents:
+                    if agent_name in self.agents:
+                        interaction = await self.route_agent_consultation(
+                            from_agent=primary_agent,
+                            to_agent=agent_name,
+                            query=query,
+                            context=context
+                        )
+                        supporting_responses.append(interaction.response)
+            
+            # Build enhanced query with supporting agent insights
             enhanced_query = query
+            if supporting_responses:
+                enhanced_query += "\n\nSupporting Agent Insights:\n"
+                for i, response in enumerate(supporting_responses):
+                    enhanced_query += f"\n{supporting_agents[i]}: {response}\n"
+            
             if context:
                 import json
                 enhanced_query += f"\n\nContext: {json.dumps(context, indent=2)}"
             
-            import asyncio
-            response = await asyncio.to_thread(self.collaborative_team.run, enhanced_query)
+            # Process with primary agent
+            messages = [AgentMessage(role="user", content=enhanced_query, timestamp=datetime.utcnow())]
+            response = await primary.process(messages, context)
             
             return AgentResponse(
                 agent_type="multi_agent",
-                response=response.content if hasattr(response, 'content') else str(response),
+                response=response.response,
                 metadata={
                     "mode": "collaborative",
                     "primary_agent": primary_agent,
                     "supporting_agents": supporting_agents or [],
-                    "team_members": [agent.name for agent in self.collaborative_team.team]
                 },
                 timestamp=datetime.utcnow()
             )
@@ -268,19 +237,32 @@ class AgnoCoordinatorAgent:
         agents: List[str],
         context: Optional[Dict[str, Any]] = None
     ) -> AgentResponse:
-        """Process query sequentially using Agno team."""
+        """Process query sequentially using agent consultation."""
         try:
-            enhanced_query = query
+            current_query = query
             if context:
                 import json
-                enhanced_query += f"\n\nContext: {json.dumps(context, indent=2)}"
+                current_query += f"\n\nContext: {json.dumps(context, indent=2)}"
             
-            import asyncio
-            response = await asyncio.to_thread(self.sequential_team.run, enhanced_query)
+            # Process through agents sequentially
+            last_response = None
+            for agent_name in agents:
+                if agent_name not in self.agents:
+                    continue
+                
+                agent = self.agents[agent_name]
+                
+                # Add previous agent's response to context
+                if last_response:
+                    current_query += f"\n\nPrevious Agent Output:\n{last_response}\n"
+                
+                messages = [AgentMessage(role="user", content=current_query, timestamp=datetime.utcnow())]
+                response = await agent.process(messages, context)
+                last_response = response.response
             
             return AgentResponse(
                 agent_type="multi_agent",
-                response=response.content if hasattr(response, 'content') else str(response),
+                response=last_response or "No response generated",
                 metadata={"mode": "sequential", "agents": agents},
                 timestamp=datetime.utcnow()
             )
@@ -294,19 +276,34 @@ class AgnoCoordinatorAgent:
         agents: List[str],
         context: Optional[Dict[str, Any]] = None
     ) -> AgentResponse:
-        """Process query in parallel using Agno team."""
+        """Process query in parallel using agent consultation."""
         try:
+            import asyncio
+            
             enhanced_query = query
             if context:
                 import json
                 enhanced_query += f"\n\nContext: {json.dumps(context, indent=2)}"
             
-            import asyncio
-            response = await asyncio.to_thread(self.parallel_team.run, enhanced_query)
+            # Process all agents in parallel
+            async def process_agent(agent_name: str):
+                if agent_name not in self.agents:
+                    return None
+                agent = self.agents[agent_name]
+                messages = [AgentMessage(role="user", content=enhanced_query, timestamp=datetime.utcnow())]
+                response = await agent.process(messages, context)
+                return f"{agent_name}: {response.response}"
+            
+            # Run all agents in parallel
+            tasks = [process_agent(agent_name) for agent_name in agents]
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Combine responses
+            combined = "\n\n".join([r for r in responses if r and not isinstance(r, Exception)])
             
             return AgentResponse(
                 agent_type="multi_agent",
-                response=response.content if hasattr(response, 'content') else str(response),
+                response=combined or "No responses generated",
                 metadata={"mode": "parallel", "agents": agents},
                 timestamp=datetime.utcnow()
             )

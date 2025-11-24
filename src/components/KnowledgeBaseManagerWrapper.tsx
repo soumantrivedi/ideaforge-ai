@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { KnowledgeBaseManager } from './KnowledgeBaseManager';
+import { DocumentUploader } from './DocumentUploader';
 import { useAuth } from '../contexts/AuthContext';
 import { RAGSystem } from '../lib/rag-system';
 import type { Document } from '../lib/rag-system';
@@ -180,8 +181,13 @@ export function KnowledgeBaseManagerWrapper({ productId }: KnowledgeBaseManagerW
     );
   }
 
+  const handleUploadComplete = async (documentId: string) => {
+    // Reload documents after upload
+    await loadDocuments();
+  };
+
   return (
-    <div>
+    <div className="space-y-6">
       {!productId && (
         <div className="mb-4 p-4 rounded-md border" style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)' }}>
           <p className="text-sm" style={{ color: 'var(--text-primary)' }}>
@@ -189,6 +195,10 @@ export function KnowledgeBaseManagerWrapper({ productId }: KnowledgeBaseManagerW
           </p>
         </div>
       )}
+      <DocumentUploader
+        productId={productId}
+        onUploadComplete={handleUploadComplete}
+      />
       <KnowledgeBaseManager
         documents={documents}
         onAddDocument={handleAddDocument}

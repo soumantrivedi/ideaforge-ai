@@ -86,47 +86,14 @@ class AgnoEnhancedCoordinator:
             raise ValueError("No AI provider configured")
     
     def _create_enhanced_teams(self):
-        """Create enhanced teams with heavy coordination."""
-        model = self._get_agno_model()
-        
-        # Enhanced collaborative team with context sharing
-        self.enhanced_collaborative_team = Agent(
-            name="Enhanced Collaborative Product Team",
-            model=model,
-            team=[
-                self.rag_agent.agno_agent,  # RAG first for context
-                self.research_agent.agno_agent,
-                self.analysis_agent.agno_agent,
-                self.ideation_agent.agno_agent,
-                self.prd_agent.agno_agent,
-                self.summary_agent.agno_agent,
-            ],
-            instructions=[
-                "You coordinate a team of specialized agents with heavy contextualization.",
-                "CRITICAL: Agents MUST coordinate and share context before responding.",
-                "",
-                "Coordination Protocol:",
-                "1. RAG Agent retrieves relevant knowledge from knowledge base",
-                "2. Research Agent gathers market and competitive information",
-                "3. Analysis Agent performs strategic analysis using research context",
-                "4. Ideation Agent generates ideas based on research and analysis",
-                "5. PRD Agent creates PRD using all gathered context",
-                "6. Summary Agent synthesizes all information",
-                "",
-                "Context Sharing Rules:",
-                "- Each agent must review previous agents' outputs",
-                "- Agents must explicitly reference shared context",
-                "- Agents must identify gaps and request additional information",
-                "- All agents contribute to a shared context repository",
-                "",
-                "Response Quality:",
-                "- Responses must be heavily contextualized",
-                "- Reference specific insights from other agents",
-                "- Show how different perspectives were synthesized",
-                "- Provide comprehensive, well-reasoned answers"
-            ],
-            markdown=True
-        )
+        """Create enhanced coordination logic.
+        Note: Agno Agent doesn't support 'team' parameter directly.
+        We use agent consultation via route_agent_consultation instead.
+        """
+        # Agno doesn't support team parameter, so we'll use agent consultation
+        # The coordination happens via process_with_context which uses
+        # route_agent_consultation to coordinate agents
+        pass
     
     async def process_with_context(
         self,
@@ -157,26 +124,60 @@ class AgnoEnhancedCoordinator:
             # Enhance query with context
             enhanced_query = self._enhance_query_with_context(query, context)
             
-            # Process with enhanced team (run is synchronous, wrap in asyncio)
-            import asyncio
-            response = await asyncio.to_thread(self.enhanced_collaborative_team.run, enhanced_query)
+            # Process with enhanced coordination using agent consultation
+            # Start with RAG agent for context
+            rag_response = await self.rag_agent.process(
+                [AgentMessage(role="user", content=enhanced_query, timestamp=datetime.utcnow())],
+                context
+            )
+            
+            # Then research agent
+            research_query = f"{enhanced_query}\n\nKnowledge Base Context:\n{rag_response.response}"
+            research_response = await self.research_agent.process(
+                [AgentMessage(role="user", content=research_query, timestamp=datetime.utcnow())],
+                context
+            )
+            
+            # Then analysis agent
+            analysis_query = f"{enhanced_query}\n\nResearch Context:\n{research_response.response}"
+            analysis_response = await self.analysis_agent.process(
+                [AgentMessage(role="user", content=analysis_query, timestamp=datetime.utcnow())],
+                context
+            )
+            
+            # Then ideation agent
+            ideation_query = f"{enhanced_query}\n\nAnalysis Context:\n{analysis_response.response}"
+            ideation_response = await self.ideation_agent.process(
+                [AgentMessage(role="user", content=ideation_query, timestamp=datetime.utcnow())],
+                context
+            )
+            
+            # Finally PRD agent with all context
+            prd_query = f"{enhanced_query}\n\nFull Context:\nKnowledge: {rag_response.response}\nResearch: {research_response.response}\nAnalysis: {analysis_response.response}\nIdeation: {ideation_response.response}"
+            prd_response = await self.prd_agent.process(
+                [AgentMessage(role="user", content=prd_query, timestamp=datetime.utcnow())],
+                context
+            )
+            
+            # Use PRD response as final response (most comprehensive)
+            final_response = prd_response.response
             
             # Update shared context
             self.shared_context.update({
                 "last_query": query,
-                "last_response": response.content if hasattr(response, 'content') else str(response),
+                "last_response": final_response,
                 "timestamp": datetime.utcnow().isoformat()
             })
             
             return AgentResponse(
                 agent_type="multi_agent_enhanced",
-                response=response.content if hasattr(response, 'content') else str(response),
+                response=final_response,
                 metadata={
                     "mode": coordination_mode,
                     "context_sources": list(context.keys()),
                     "session_ids": session_ids or [],
                     "product_id": product_id,
-                    "team_members": [agent.name for agent in self.enhanced_collaborative_team.team]
+                    "team_members": list(self.agents.keys())
                 },
                 timestamp=datetime.utcnow()
             )
@@ -349,8 +350,16 @@ INSTRUCTIONS:
                     import json
                     enhanced_query += f"\n\nContext: {json.dumps(context, indent=2)}"
                 
-                import asyncio
-                response = await asyncio.to_thread(self.enhanced_collaborative_team.run, enhanced_query)
+                # Use enhanced coordination via process_with_context
+                response = await self.process_with_context(
+                    query=query,
+                    product_id=context.get("product_id"),
+                    session_ids=context.get("session_ids"),
+                    user_context=context.get("user_context"),
+                    coordination_mode=coordination_mode
+                )
+                # response is already an AgentResponse, so we can return it directly
+                return response
                 
                 return AgentResponse(
                     agent_type=primary_agent or "multi_agent",
