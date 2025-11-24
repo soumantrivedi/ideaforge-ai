@@ -6,9 +6,11 @@ pydantic[email]==2.10.3
 pydantic-settings==2.7.0
 
 # AI Provider SDKs
-openai==1.59.5
-anthropic==0.42.0
-google-generativeai==0.8.3
+# Updated versions for Agno 2.3.2 compatibility
+openai>=2.0.0  # Agno 2.3.2 requires openai>=2.0.0 for openai.types.responses
+anthropic>=0.50.0  # Agno requires newer anthropic for streaming types
+google-generativeai==0.8.3  # Legacy Google AI SDK
+google-genai>=1.0.0  # Required by Agno for Gemini models
 
 # Agno Framework for Multi-Agent Systems (phidata)
 agno>=2.0.0

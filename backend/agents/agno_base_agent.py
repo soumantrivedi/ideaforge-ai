@@ -3,13 +3,13 @@ Extensible Agno Framework Base Agent
 Provides a consistent pattern for all agents using Agno framework
 """
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from typing import List, Dict, Any, Optional, TYPE_CHECKING, Union
 from datetime import datetime
 from uuid import UUID
 import structlog
 
 try:
-    from agno import Agent
+    from agno.agent import Agent
     from agno.models.openai import OpenAIChat
     from agno.models.anthropic import Claude
     from agno.models.google import Gemini
@@ -37,6 +37,7 @@ from backend.config import settings
 
 if TYPE_CHECKING:
     from backend.agents.agno_coordinator_agent import AgnoCoordinatorAgent
+    from backend.agents.agno_enhanced_coordinator import AgnoEnhancedCoordinator
 
 logger = structlog.get_logger()
 
@@ -78,7 +79,7 @@ class AgnoBaseAgent(ABC):
         self.capabilities = capabilities or []
         self.logger = logger.bind(agent=name)
         self.interactions: List[AgentInteraction] = []
-        self.coordinator: Optional['AgnoCoordinatorAgent'] = None
+        self.coordinator: Optional[Union['AgnoCoordinatorAgent', 'AgnoEnhancedCoordinator']] = None
         
         # Get model based on provider registry
         model = self._get_agno_model()
@@ -267,7 +268,7 @@ class AgnoBaseAgent(ABC):
         """Get all agent-to-agent interactions."""
         return self.interactions.copy()
     
-    def set_coordinator(self, coordinator: 'AgnoCoordinatorAgent'):
+    def set_coordinator(self, coordinator: Union['AgnoCoordinatorAgent', 'AgnoEnhancedCoordinator']):
         """Set the coordinator for agent-to-agent communication."""
         self.coordinator = coordinator
     

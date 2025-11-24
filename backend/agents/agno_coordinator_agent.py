@@ -7,13 +7,15 @@ from datetime import datetime
 import structlog
 
 try:
-    from agno import Agent
+    from agno.agent import Agent
     from agno.models.openai import OpenAIChat
     from agno.models.anthropic import Claude
     from agno.models.google import Gemini
     AGNO_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     AGNO_AVAILABLE = False
+    import structlog
+    structlog.get_logger().warning("agno_framework_not_available", error=str(e))
 
 from backend.agents.agno_base_agent import AgnoBaseAgent
 from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
