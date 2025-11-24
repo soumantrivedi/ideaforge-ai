@@ -49,6 +49,15 @@ export function IdeaScoreDashboard({ tenantId, productId, onProductSelect }: Ide
     }
   }, [token, tenantId, productId]);
 
+  // Listen for score updates
+  useEffect(() => {
+    const handleScoreUpdate = () => {
+      loadScores();
+    };
+    window.addEventListener('scores-updated', handleScoreUpdate);
+    return () => window.removeEventListener('scores-updated', handleScoreUpdate);
+  }, []);
+
   const loadScores = async () => {
     try {
       setLoading(true);

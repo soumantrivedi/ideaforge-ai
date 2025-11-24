@@ -430,7 +430,7 @@ export function MainApp() {
                       <h3 className="text-lg font-semibold text-gray-900 mb-4">Generate Summary & PRD</h3>
                       <ProductSummaryPRDGenerator
                         productId={productId}
-                        canEdit={true} // TODO: Check actual permissions
+                        canEdit={true} // Will be checked internally
                         onSummaryGenerated={(summaryId) => {
                           console.log('Summary generated:', summaryId);
                         }}
@@ -439,6 +439,8 @@ export function MainApp() {
                         }}
                         onScoreGenerated={(scoreId) => {
                           console.log('Score generated:', scoreId);
+                          // Reload scores after generation
+                          window.dispatchEvent(new Event('scores-updated'));
                         }}
                       />
                     </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FileText, BarChart3, Sparkles, CheckCircle2, Loader2 } from 'lucide-react';
 import { SessionSelector } from './SessionSelector';
 import { useAuth } from '../contexts/AuthContext';
@@ -18,7 +18,7 @@ export function ProductSummaryPRDGenerator({
   onSummaryGenerated,
   onPRDGenerated,
   onScoreGenerated,
-  canEdit = false,
+  canEdit: initialCanEdit = false,
 }: ProductSummaryPRDGeneratorProps) {
   const { token } = useAuth();
   const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
@@ -28,6 +28,47 @@ export function ProductSummaryPRDGenerator({
   const [scoreId, setScoreId] = useState<string | null>(null);
   const [prdId, setPrdId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [canEdit, setCanEdit] = useState(initialCanEdit);
+  const [checkingPermission, setCheckingPermission] = useState(true);
+
+  // Check permission on mount
+  useEffect(() => {
+    checkPermission();
+  }, [productId, token]);
+
+  const checkPermission = async () => {
+    if (!token || !productId) {
+      setCanEdit(false);
+      setCheckingPermission(false);
+      return;
+    }
+
+    try {
+      // Get product details which includes access_level
+      const response = await fetch(`${API_URL}/api/products`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const product = data.products?.find((p: any) => p.id === productId);
+        if (product) {
+          // Check if user has edit or admin access
+          const hasEditAccess = ['owner', 'admin', 'edit'].includes(product.access_level);
+          setCanEdit(hasEditAccess);
+        }
+      }
+    } catch (error) {
+      console.error('Error checking permission:', error);
+      setCanEdit(false);
+    } finally {
+      setCheckingPermission(false);
+    }
+  };
 
   const handleGenerateSummary = async () => {
     if (selectedSessions.length === 0) {
