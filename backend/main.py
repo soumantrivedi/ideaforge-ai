@@ -386,25 +386,63 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                     timeout=httpx.Timeout(10.0, connect=5.0),
                     follow_redirects=True
                 ) as client:
-                    # Try multiple V0 API endpoints for complete verification
-                    # V0 typically uses these endpoints for authentication verification
-                    verification_endpoints = [
-                        "https://v0.dev/api/user",
-                        "https://v0.dev/api/v1/user",
-                        "https://api.v0.dev/user",
-                        "https://v0.dev/api/auth/verify",
+                    # Try multiple V0 API endpoints and authentication methods
+                    # V0 may use different endpoints or header formats
+                    verification_attempts = [
+                        {
+                            "url": "https://v0.dev/api/user",
+                            "headers": {"Authorization": f"Bearer {payload.api_key}"},
+                            "method": "GET"
+                        },
+                        {
+                            "url": "https://v0.dev/api/v1/user",
+                            "headers": {"Authorization": f"Bearer {payload.api_key}"},
+                            "method": "GET"
+                        },
+                        {
+                            "url": "https://api.v0.dev/user",
+                            "headers": {"Authorization": f"Bearer {payload.api_key}"},
+                            "method": "GET"
+                        },
+                        {
+                            "url": "https://v0.dev/api/user",
+                            "headers": {"X-API-Key": payload.api_key},
+                            "method": "GET"
+                        },
+                        {
+                            "url": "https://v0.dev/api/v1/user",
+                            "headers": {"X-API-Key": payload.api_key},
+                            "method": "GET"
+                        },
                     ]
                     
                     verification_successful = False
                     last_error = None
+                    last_status_code = None
+                    last_response_body = None
                     
-                    for endpoint in verification_endpoints:
+                    for attempt in verification_attempts:
                         try:
-                            response = await client.get(
-                                endpoint,
-                                headers={"Authorization": f"Bearer {payload.api_key}"},
-                                timeout=10.0
-                            )
+                            if attempt["method"] == "GET":
+                                response = await client.get(
+                                    attempt["url"],
+                                    headers=attempt["headers"],
+                                    timeout=10.0
+                                )
+                            else:
+                                response = await client.post(
+                                    attempt["url"],
+                                    headers=attempt["headers"],
+                                    timeout=10.0
+                                )
+                            
+                            last_status_code = response.status_code
+                            
+                            # Try to capture response body for debugging
+                            try:
+                                last_response_body = response.text[:500]  # First 500 chars
+                            except:
+                                last_response_body = "Could not read response body"
                             
                             # Success - key is valid
                             if response.status_code == 200:
@@ -413,55 +451,93 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                                     data = response.json()
                                     # If we get user data or any valid JSON, the key is authenticated
                                     verification_successful = True
+                                    logger.info("v0_verification_success", endpoint=attempt["url"], method=attempt["method"])
                                     break
                                 except:
                                     # Even if JSON parsing fails, 200 status means auth worked
                                     verification_successful = True
+                                    logger.info("v0_verification_success_no_json", endpoint=attempt["url"], method=attempt["method"])
                                     break
                             
                             # Unauthorized - key is invalid
                             elif response.status_code == 401:
+                                error_detail = f"V0 API key is invalid or unauthorized. Status: {response.status_code}"
+                                try:
+                                    error_body = response.json()
+                                    if "message" in error_body:
+                                        error_detail += f" - {error_body['message']}"
+                                except:
+                                    pass
                                 raise HTTPException(
                                     status_code=400,
-                                    detail="V0 API key is invalid or unauthorized. Please check your key."
+                                    detail=error_detail
                                 )
                             
                             # Forbidden - key might be valid but lacks permissions
                             elif response.status_code == 403:
                                 # Key is valid but may not have access to this endpoint
                                 # Continue to next endpoint
+                                logger.debug("v0_endpoint_forbidden", endpoint=attempt["url"], method=attempt["method"])
+                                continue
+                            
+                            # Not found - endpoint doesn't exist
+                            elif response.status_code == 404:
+                                logger.debug("v0_endpoint_not_found", endpoint=attempt["url"], method=attempt["method"])
                                 continue
                             
                             # Other 2xx status codes might indicate success
                             elif 200 <= response.status_code < 300:
                                 verification_successful = True
+                                logger.info("v0_verification_success_2xx", endpoint=attempt["url"], status=response.status_code)
                                 break
+                            else:
+                                # Other status codes - log for debugging
+                                logger.debug("v0_unexpected_status", endpoint=attempt["url"], status=response.status_code)
+                                last_error = f"Unexpected status code: {response.status_code}"
+                                continue
                                 
                         except httpx.HTTPStatusError as e:
+                            last_status_code = e.response.status_code
+                            try:
+                                last_response_body = e.response.text[:500]
+                            except:
+                                last_response_body = "Could not read error response body"
+                            
                             if e.response.status_code == 401:
                                 # Unauthorized - key is definitely invalid
+                                error_detail = f"V0 API key is invalid or unauthorized. Status: {e.response.status_code}"
+                                try:
+                                    error_body = e.response.json()
+                                    if "message" in error_body:
+                                        error_detail += f" - {error_body['message']}"
+                                except:
+                                    pass
                                 raise HTTPException(
                                     status_code=400,
-                                    detail="V0 API key is invalid or unauthorized. Please check your key."
+                                    detail=error_detail
                                 )
                             elif e.response.status_code == 403:
                                 # Forbidden - continue to next endpoint
+                                logger.debug("v0_endpoint_forbidden_exception", endpoint=attempt["url"], status=e.response.status_code)
                                 continue
                             else:
-                                last_error = str(e)
+                                last_error = f"HTTP {e.response.status_code}: {str(e)}"
+                                logger.warning("v0_http_error", endpoint=attempt["url"], status=e.response.status_code, error=str(e))
                                 continue
                         except (httpx.RequestError, httpx.ConnectError, httpx.ConnectTimeout) as e:
                             # Network/connection errors - try next endpoint
-                            last_error = str(e)
+                            last_error = f"Connection error: {str(e)}"
+                            logger.warning("v0_connection_error", endpoint=attempt["url"], error=str(e))
                             continue
                         except ssl.SSLError as e:
                             # SSL certificate errors - log but try next endpoint
                             # This might indicate a proxy or network configuration issue
                             last_error = f"SSL verification error: {str(e)}"
-                            logger.warning("v0_ssl_verification_error", error=str(e), endpoint=endpoint)
+                            logger.warning("v0_ssl_verification_error", error=str(e), endpoint=attempt["url"])
                             continue
                         except Exception as e:
-                            last_error = str(e)
+                            last_error = f"Unexpected error: {str(e)}"
+                            logger.error("v0_unexpected_error", endpoint=attempt["url"], error=str(e), error_type=type(e).__name__)
                             continue
                     
                     # If we successfully verified with any endpoint
@@ -474,47 +550,107 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                     
                     # If all endpoints failed but we didn't get 401, try a POST request to verify token
                     # Some APIs require POST for token verification
-                    try:
-                        post_response = await client.post(
-                            "https://v0.dev/api/auth/verify",
-                            headers={
-                                "Authorization": f"Bearer {payload.api_key}",
-                                "Content-Type": "application/json"
+                    if not verification_successful:
+                        post_endpoints = [
+                            {
+                                "url": "https://v0.dev/api/auth/verify",
+                                "headers": {
+                                    "Authorization": f"Bearer {payload.api_key}",
+                                    "Content-Type": "application/json"
+                                },
+                                "body": {"token": payload.api_key}
                             },
-                            json={"token": payload.api_key},
-                            timeout=10.0
-                        )
+                            {
+                                "url": "https://v0.dev/api/v1/auth/verify",
+                                "headers": {
+                                    "Authorization": f"Bearer {payload.api_key}",
+                                    "Content-Type": "application/json"
+                                },
+                                "body": {"token": payload.api_key}
+                            },
+                        ]
                         
-                        if post_response.status_code == 200:
-                            return APIKeyVerificationResponse(
-                                provider="v0",
-                                valid=True,
-                                message="V0 API key is valid and authenticated successfully."
-                            )
-                        elif post_response.status_code == 401:
-                            raise HTTPException(
-                                status_code=400,
-                                detail="V0 API key is invalid or unauthorized. Please check your key."
-                            )
-                    except httpx.HTTPStatusError as e:
-                        if e.response.status_code == 401:
-                            raise HTTPException(
-                                status_code=400,
-                                detail="V0 API key is invalid or unauthorized. Please check your key."
-                            )
+                        for post_attempt in post_endpoints:
+                            try:
+                                post_response = await client.post(
+                                    post_attempt["url"],
+                                    headers=post_attempt["headers"],
+                                    json=post_attempt["body"],
+                                    timeout=10.0
+                                )
+                                
+                                last_status_code = post_response.status_code
+                                try:
+                                    last_response_body = post_response.text[:500]
+                                except:
+                                    pass
+                                
+                                if post_response.status_code == 200:
+                                    verification_successful = True
+                                    logger.info("v0_verification_success_post", endpoint=post_attempt["url"])
+                                    break
+                                elif post_response.status_code == 401:
+                                    error_detail = "V0 API key is invalid or unauthorized."
+                                    try:
+                                        error_body = post_response.json()
+                                        if "message" in error_body:
+                                            error_detail += f" {error_body['message']}"
+                                    except:
+                                        pass
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail=error_detail
+                                    )
+                            except HTTPException:
+                                raise
+                            except httpx.HTTPStatusError as e:
+                                if e.response.status_code == 401:
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail="V0 API key is invalid or unauthorized. Please check your key."
+                                    )
+                                last_error = f"POST HTTP {e.response.status_code}: {str(e)}"
+                                continue
+                            except Exception as e:
+                                last_error = f"POST error: {str(e)}"
+                                continue
+                    
+                    # If we successfully verified with any endpoint
+                    if verification_successful:
+                        return APIKeyVerificationResponse(
+                            provider="v0",
+                            valid=True,
+                            message="V0 API key is valid and authenticated successfully."
+                        )
                     
                     # If we reach here, verification failed
+                    # Build detailed error message
+                    error_parts = []
+                    if last_status_code:
+                        error_parts.append(f"Last status code: {last_status_code}")
+                    if last_response_body:
+                        error_parts.append(f"Response: {last_response_body[:200]}")
+                    if last_error:
+                        error_parts.append(f"Error: {last_error}")
+                    
+                    error_detail = "V0 API key verification failed. Could not authenticate with V0 API."
+                    if error_parts:
+                        error_detail += " " + " | ".join(error_parts)
+                    else:
+                        error_detail += " All verification attempts failed without returning specific error information."
+                    
                     # Check if it's an SSL error specifically
                     if last_error and ("SSL" in last_error or "certificate" in last_error.lower() or "CERTIFICATE_VERIFY_FAILED" in last_error):
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"V0 API key verification failed due to SSL certificate issue. This may be due to network/proxy configuration. Please check your network settings or contact your administrator. Error: {last_error}"
-                        )
+                        error_detail = f"V0 API key verification failed due to SSL certificate issue. This may be due to network/proxy configuration. {error_detail}"
                     
-                    # Otherwise, general verification failure
+                    logger.error("v0_verification_failed", 
+                                last_status_code=last_status_code,
+                                last_error=last_error,
+                                last_response_body=last_response_body[:200] if last_response_body else None)
+                    
                     raise HTTPException(
                         status_code=400,
-                        detail=f"V0 API key verification failed. Could not authenticate with V0 API. Please verify your key is correct and has proper permissions. Error: {last_error or 'Unknown error'}"
+                        detail=error_detail
                     )
                     
             except HTTPException:
