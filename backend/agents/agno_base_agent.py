@@ -178,8 +178,9 @@ class AgnoBaseAgent(ABC):
             # Convert messages to query string
             query = self._format_messages_to_query(messages, context)
             
-            # Run Agno agent
-            response = self.agno_agent.run(query)
+            # Run Agno agent (run is synchronous, wrap in asyncio for async context)
+            import asyncio
+            response = await asyncio.to_thread(self.agno_agent.run, query)
             
             # Extract response content
             response_content = response.content if hasattr(response, 'content') else str(response)

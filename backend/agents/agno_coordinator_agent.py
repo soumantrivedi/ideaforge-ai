@@ -247,7 +247,8 @@ class AgnoCoordinatorAgent:
                 import json
                 enhanced_query += f"\n\nContext: {json.dumps(context, indent=2)}"
             
-            response = self.collaborative_team.run(enhanced_query)
+            import asyncio
+            response = await asyncio.to_thread(self.collaborative_team.run, enhanced_query)
             
             return AgentResponse(
                 agent_type="multi_agent",
@@ -277,7 +278,8 @@ class AgnoCoordinatorAgent:
                 import json
                 enhanced_query += f"\n\nContext: {json.dumps(context, indent=2)}"
             
-            response = self.sequential_team.run(enhanced_query)
+            import asyncio
+            response = await asyncio.to_thread(self.sequential_team.run, enhanced_query)
             
             return AgentResponse(
                 agent_type="multi_agent",
@@ -302,7 +304,8 @@ class AgnoCoordinatorAgent:
                 import json
                 enhanced_query += f"\n\nContext: {json.dumps(context, indent=2)}"
             
-            response = self.parallel_team.run(enhanced_query)
+            import asyncio
+            response = await asyncio.to_thread(self.parallel_team.run, enhanced_query)
             
             return AgentResponse(
                 agent_type="multi_agent",

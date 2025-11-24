@@ -158,8 +158,9 @@ class AgnoEnhancedCoordinator:
             # Enhance query with context
             enhanced_query = self._enhance_query_with_context(query, context)
             
-            # Process with enhanced team
-            response = self.enhanced_collaborative_team.run(enhanced_query)
+            # Process with enhanced team (run is synchronous, wrap in asyncio)
+            import asyncio
+            response = await asyncio.to_thread(self.enhanced_collaborative_team.run, enhanced_query)
             
             # Update shared context
             self.shared_context.update({
@@ -314,4 +315,55 @@ INSTRUCTIONS:
     def get_shared_context(self) -> Dict[str, Any]:
         """Get shared context."""
         return self.shared_context.copy()
+    
+    async def route_query(
+        self,
+        query: str,
+        coordination_mode: str = "enhanced_collaborative",
+        primary_agent: Optional[str] = None,
+        supporting_agents: Optional[List[str]] = None,
+        context: Optional[Dict[str, Any]] = None
+    ) -> AgentResponse:
+        """
+        Route query to appropriate team or agent.
+        Compatible with AgnoAgenticOrchestrator interface.
+        """
+        try:
+            # Use process_with_context for enhanced coordination
+            if coordination_mode == "enhanced_collaborative":
+                product_id = context.get("product_id") if context else None
+                session_ids = context.get("session_ids") if context else None
+                user_context = {k: v for k, v in (context or {}).items() if k not in ["product_id", "session_ids"]}
+                
+                return await self.process_with_context(
+                    query=query,
+                    product_id=product_id,
+                    session_ids=session_ids,
+                    user_context=user_context,
+                    coordination_mode=coordination_mode
+                )
+            else:
+                # For other modes, use the enhanced collaborative team by default
+                # (can be extended to support other modes)
+                enhanced_query = query
+                if context:
+                    import json
+                    enhanced_query += f"\n\nContext: {json.dumps(context, indent=2)}"
+                
+                import asyncio
+                response = await asyncio.to_thread(self.enhanced_collaborative_team.run, enhanced_query)
+                
+                return AgentResponse(
+                    agent_type=primary_agent or "multi_agent",
+                    response=response.content if hasattr(response, 'content') else str(response),
+                    metadata={
+                        "mode": coordination_mode,
+                        "primary_agent": primary_agent,
+                        "supporting_agents": supporting_agents,
+                    },
+                    timestamp=datetime.utcnow()
+                )
+        except Exception as e:
+            self.logger.error("route_query_error", error=str(e), coordination_mode=coordination_mode)
+            raise
 
