@@ -32,7 +32,13 @@ async def load_user_api_keys_from_db(
             provider = row[0]
             encrypted_key = row[1]
             try:
+                if not encrypted_key:
+                    logger.warning("empty_encrypted_key", provider=provider, user_id=user_id)
+                    continue
                 decrypted_key = encryption.decrypt(encrypted_key)
+                if not decrypted_key:
+                    logger.warning("empty_decrypted_key", provider=provider, user_id=user_id)
+                    continue
                 # Map database provider names to registry names
                 if provider == 'openai':
                     keys['openai'] = decrypted_key
@@ -44,8 +50,14 @@ async def load_user_api_keys_from_db(
                     keys['v0'] = decrypted_key
                 elif provider == 'lovable':
                     keys['lovable'] = decrypted_key
+                logger.debug("key_decrypted_successfully", provider=provider, user_id=user_id, key_length=len(decrypted_key))
+            except ValueError as e:
+                error_msg = str(e) if str(e) else "Unknown decryption error"
+                logger.error("decrypt_key_failed", provider=provider, error=error_msg, user_id=user_id, encrypted_key_length=len(encrypted_key) if encrypted_key else 0)
+                # Continue with other keys even if one fails
             except Exception as e:
-                logger.error("decrypt_key_failed", provider=provider, error=str(e))
+                error_msg = str(e) if str(e) else f"Exception type: {type(e).__name__}"
+                logger.error("decrypt_key_failed_unexpected", provider=provider, error=error_msg, user_id=user_id, exception_type=type(e).__name__)
                 # Continue with other keys even if one fails
         
         return keys

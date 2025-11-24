@@ -303,6 +303,13 @@ async def process_multi_agent_request(
         
         user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
         
+        logger.info(
+            "loading_user_api_keys",
+            user_id=str(current_user["id"]),
+            keys_found=list(user_keys.keys()) if user_keys else [],
+            key_count=len(user_keys) if user_keys else 0
+        )
+        
         # Update provider registry with user's keys (temporarily for this request)
         if user_keys:
             provider_registry.update_keys(
@@ -313,11 +320,29 @@ async def process_multi_agent_request(
             logger.info(
                 "user_api_keys_loaded",
                 user_id=str(current_user["id"]),
-                providers=list(user_keys.keys())
+                providers=list(user_keys.keys()),
+                configured_providers=provider_registry.get_configured_providers()
+            )
+        else:
+            logger.warning(
+                "no_user_api_keys_found",
+                user_id=str(current_user["id"]),
+                message="No API keys found in database for user"
             )
         
         # Check if any provider is configured after loading user keys
-        if not provider_registry.get_configured_providers():
+        configured_providers = provider_registry.get_configured_providers()
+        if not configured_providers:
+            logger.error(
+                "no_providers_configured",
+                user_id=str(current_user["id"]),
+                user_keys_found=list(user_keys.keys()) if user_keys else [],
+                registry_state={
+                    "has_openai": provider_registry.has_openai_key(),
+                    "has_claude": provider_registry.has_claude_key(),
+                    "has_gemini": provider_registry.has_gemini_key()
+                }
+            )
             raise HTTPException(
                 status_code=400,
                 detail="No AI provider is configured. Please go to Settings and configure at least one AI provider (OpenAI, Anthropic, or Google Gemini) before using this feature."
@@ -785,50 +810,83 @@ async def configure_provider_keys(
     """Configure provider API keys for backend agents and save to database."""
     try:
         from backend.api.api_keys import _save_api_key_internal
+        from backend.services.api_key_loader import load_user_api_keys_from_db
         
-        # Save API keys to database
+        # Load existing keys from database to preserve them if not provided
+        existing_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+        
+        # Determine which keys to save (only if provided and not empty)
+        keys_to_save = {}
+        keys_to_update_registry = {}
+        
+        # OpenAI
         if payload.openaiKey is not None and payload.openaiKey.strip():
-            await _save_api_key_internal('openai', payload.openaiKey, current_user['id'], db)
+            keys_to_save['openai'] = payload.openaiKey.strip()
+            keys_to_update_registry['openai_key'] = payload.openaiKey.strip()
+        elif 'openai' in existing_keys:
+            # Preserve existing key
+            keys_to_update_registry['openai_key'] = existing_keys['openai']
         
+        # Claude/Anthropic
         if payload.claudeKey is not None and payload.claudeKey.strip():
-            await _save_api_key_internal('anthropic', payload.claudeKey, current_user['id'], db)
+            keys_to_save['anthropic'] = payload.claudeKey.strip()
+            keys_to_update_registry['claude_key'] = payload.claudeKey.strip()
+        elif 'claude' in existing_keys:
+            # Preserve existing key
+            keys_to_update_registry['claude_key'] = existing_keys['claude']
         
+        # Gemini/Google
         if payload.geminiKey is not None and payload.geminiKey.strip():
-            await _save_api_key_internal('google', payload.geminiKey, current_user['id'], db)
+            keys_to_save['google'] = payload.geminiKey.strip()
+            keys_to_update_registry['gemini_key'] = payload.geminiKey.strip()
+        elif 'gemini' in existing_keys:
+            # Preserve existing key
+            keys_to_update_registry['gemini_key'] = existing_keys['gemini']
         
+        # V0
         if payload.v0Key is not None and payload.v0Key.strip():
-            await _save_api_key_internal('v0', payload.v0Key, current_user['id'], db)
-        
-        if payload.lovableKey is not None and payload.lovableKey.strip():
-            await _save_api_key_internal('lovable', payload.lovableKey, current_user['id'], db)
-        
-        # Update in-memory registry for immediate use
-        configured = provider_registry.update_keys(
-            openai_key=payload.openaiKey,
-            claude_key=payload.claudeKey,
-            gemini_key=payload.geminiKey,
-        )
-        
-        # Handle V0 and Lovable keys in settings
-        if payload.v0Key is not None:
-            settings.v0_api_key = payload.v0Key or None
+            keys_to_save['v0'] = payload.v0Key.strip()
+            settings.v0_api_key = payload.v0Key.strip()
+            import os
+            os.environ["V0_API_KEY"] = settings.v0_api_key
+        elif 'v0' in existing_keys:
+            # Preserve existing key
+            settings.v0_api_key = existing_keys['v0']
             import os
             if settings.v0_api_key:
                 os.environ["V0_API_KEY"] = settings.v0_api_key
-            else:
-                os.environ.pop("V0_API_KEY", None)
         
-        if payload.lovableKey is not None:
-            settings.lovable_api_key = payload.lovableKey or None
+        # Lovable
+        if payload.lovableKey is not None and payload.lovableKey.strip():
+            keys_to_save['lovable'] = payload.lovableKey.strip()
+            settings.lovable_api_key = payload.lovableKey.strip()
+            import os
+            os.environ["LOVABLE_API_KEY"] = settings.lovable_api_key
+        elif 'lovable' in existing_keys:
+            # Preserve existing key
+            settings.lovable_api_key = existing_keys['lovable']
             import os
             if settings.lovable_api_key:
                 os.environ["LOVABLE_API_KEY"] = settings.lovable_api_key
-            else:
-                os.environ.pop("LOVABLE_API_KEY", None)
+        
+        # Save only the keys that were provided
+        for provider, key_value in keys_to_save.items():
+            await _save_api_key_internal(provider, key_value, current_user['id'], db)
+        
+        # Update in-memory registry with all keys (new + existing)
+        configured = provider_registry.update_keys(**keys_to_update_registry)
+        
+        logger.info(
+            "provider_keys_configured",
+            user_id=str(current_user["id"]),
+            keys_saved=list(keys_to_save.keys()),
+            keys_preserved=[k for k in existing_keys.keys() if k not in keys_to_save],
+            configured_providers=configured
+        )
         
         return ProviderConfigureResponse(configured_providers=configured)
     except Exception as e:
-        logger.error("provider_configuration_failed", error=str(e))
+        logger.error("provider_configuration_failed", error=str(e), user_id=str(current_user["id"]))
         raise HTTPException(status_code=400, detail=str(e))
 
 
