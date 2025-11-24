@@ -388,7 +388,35 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                 ) as client:
                     # Try multiple V0 API endpoints and authentication methods
                     # V0 may use different endpoints or header formats
+                    # Start with POST methods since 405 suggests GET is not allowed
                     verification_attempts = [
+                        # POST methods first (since we're getting 405 on GET)
+                        {
+                            "url": "https://v0.dev/api/user",
+                            "headers": {"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"},
+                            "method": "POST"
+                        },
+                        {
+                            "url": "https://v0.dev/api/v1/user",
+                            "headers": {"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"},
+                            "method": "POST"
+                        },
+                        {
+                            "url": "https://api.v0.dev/user",
+                            "headers": {"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"},
+                            "method": "POST"
+                        },
+                        {
+                            "url": "https://v0.dev/api/user",
+                            "headers": {"X-API-Key": payload.api_key, "Content-Type": "application/json"},
+                            "method": "POST"
+                        },
+                        {
+                            "url": "https://v0.dev/api/v1/user",
+                            "headers": {"X-API-Key": payload.api_key, "Content-Type": "application/json"},
+                            "method": "POST"
+                        },
+                        # Also try GET methods (some endpoints might support both)
                         {
                             "url": "https://v0.dev/api/user",
                             "headers": {"Authorization": f"Bearer {payload.api_key}"},
@@ -430,9 +458,15 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                                     timeout=10.0
                                 )
                             else:
+                                # For POST, send empty JSON body or token in body
+                                post_body = {}
+                                if "Authorization" in attempt["headers"]:
+                                    # Some APIs expect token in body for POST
+                                    post_body = {"token": payload.api_key}
                                 response = await client.post(
                                     attempt["url"],
                                     headers=attempt["headers"],
+                                    json=post_body if post_body else None,
                                     timeout=10.0
                                 )
                             
@@ -483,6 +517,39 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                             # Not found - endpoint doesn't exist
                             elif response.status_code == 404:
                                 logger.debug("v0_endpoint_not_found", endpoint=attempt["url"], method=attempt["method"])
+                                continue
+                            
+                            # Method not allowed - try POST instead
+                            elif response.status_code == 405:
+                                logger.debug("v0_method_not_allowed", endpoint=attempt["url"], method=attempt["method"])
+                                # If we tried GET and got 405, try POST on the same endpoint
+                                if attempt["method"] == "GET":
+                                    try:
+                                        post_response = await client.post(
+                                            attempt["url"],
+                                            headers=attempt["headers"],
+                                            timeout=10.0
+                                        )
+                                        if post_response.status_code == 200:
+                                            verification_successful = True
+                                            logger.info("v0_verification_success_post_after_405", endpoint=attempt["url"])
+                                            break
+                                        elif post_response.status_code == 401:
+                                            error_detail = "V0 API key is invalid or unauthorized."
+                                            try:
+                                                error_body = post_response.json()
+                                                if "message" in error_body:
+                                                    error_detail += f" {error_body['message']}"
+                                            except:
+                                                pass
+                                            raise HTTPException(
+                                                status_code=400,
+                                                detail=error_detail
+                                            )
+                                    except HTTPException:
+                                        raise
+                                    except Exception as e:
+                                        logger.debug("v0_post_after_405_failed", endpoint=attempt["url"], error=str(e))
                                 continue
                             
                             # Other 2xx status codes might indicate success
