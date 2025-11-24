@@ -386,61 +386,35 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                     timeout=httpx.Timeout(10.0, connect=5.0),
                     follow_redirects=True
                 ) as client:
-                    # Try multiple V0 API endpoints and authentication methods
-                    # V0 may use different endpoints or header formats
-                    # Start with POST methods since 405 suggests GET is not allowed
+                    # V0 API uses https://api.v0.dev/v1/chat/completions for verification
+                    # We'll test the token by making a minimal chat completion request
                     verification_attempts = [
-                        # POST methods first (since we're getting 405 on GET)
+                        # Primary V0 API endpoint - chat completions
                         {
-                            "url": "https://v0.dev/api/user",
+                            "url": "https://api.v0.dev/v1/chat/completions",
                             "headers": {"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"},
-                            "method": "POST"
+                            "method": "POST",
+                            "body": {"model": "v0-1.5-md", "messages": [{"role": "user", "content": "test"}]}
                         },
+                        # Alternative: try with different model
                         {
-                            "url": "https://v0.dev/api/v1/user",
+                            "url": "https://api.v0.dev/v1/chat/completions",
                             "headers": {"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"},
-                            "method": "POST"
+                            "method": "POST",
+                            "body": {"model": "v0", "messages": [{"role": "user", "content": "test"}]}
+                        },
+                        # Fallback: try user/profile endpoints (may not exist but worth trying)
+                        {
+                            "url": "https://api.v0.dev/v1/user",
+                            "headers": {"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"},
+                            "method": "GET",
+                            "body": None
                         },
                         {
                             "url": "https://api.v0.dev/user",
                             "headers": {"Authorization": f"Bearer {payload.api_key}", "Content-Type": "application/json"},
-                            "method": "POST"
-                        },
-                        {
-                            "url": "https://v0.dev/api/user",
-                            "headers": {"X-API-Key": payload.api_key, "Content-Type": "application/json"},
-                            "method": "POST"
-                        },
-                        {
-                            "url": "https://v0.dev/api/v1/user",
-                            "headers": {"X-API-Key": payload.api_key, "Content-Type": "application/json"},
-                            "method": "POST"
-                        },
-                        # Also try GET methods (some endpoints might support both)
-                        {
-                            "url": "https://v0.dev/api/user",
-                            "headers": {"Authorization": f"Bearer {payload.api_key}"},
-                            "method": "GET"
-                        },
-                        {
-                            "url": "https://v0.dev/api/v1/user",
-                            "headers": {"Authorization": f"Bearer {payload.api_key}"},
-                            "method": "GET"
-                        },
-                        {
-                            "url": "https://api.v0.dev/user",
-                            "headers": {"Authorization": f"Bearer {payload.api_key}"},
-                            "method": "GET"
-                        },
-                        {
-                            "url": "https://v0.dev/api/user",
-                            "headers": {"X-API-Key": payload.api_key},
-                            "method": "GET"
-                        },
-                        {
-                            "url": "https://v0.dev/api/v1/user",
-                            "headers": {"X-API-Key": payload.api_key},
-                            "method": "GET"
+                            "method": "GET",
+                            "body": None
                         },
                     ]
                     
@@ -458,11 +432,8 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                                     timeout=10.0
                                 )
                             else:
-                                # For POST, send empty JSON body or token in body
-                                post_body = {}
-                                if "Authorization" in attempt["headers"]:
-                                    # Some APIs expect token in body for POST
-                                    post_body = {"token": payload.api_key}
+                                # For POST, use the body specified in the attempt, or empty body
+                                post_body = attempt.get("body", {})
                                 response = await client.post(
                                     attempt["url"],
                                     headers=attempt["headers"],
@@ -495,13 +466,18 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                             
                             # Unauthorized - key is invalid
                             elif response.status_code == 401:
-                                error_detail = f"V0 API key is invalid or unauthorized. Status: {response.status_code}"
+                                # For V0 API, 401 from chat/completions endpoint means token is invalid
+                                # But we've reached the correct endpoint, so provide helpful error
+                                error_detail = "V0 API key is invalid or unauthorized."
                                 try:
                                     error_body = response.json()
-                                    if "message" in error_body:
-                                        error_detail += f" - {error_body['message']}"
+                                    if "error" in error_body:
+                                        error_detail += f" API Error: {error_body['error']}"
+                                    elif "message" in error_body:
+                                        error_detail += f" {error_body['message']}"
                                 except:
                                     pass
+                                error_detail += " Please verify your token is correct and has not expired."
                                 raise HTTPException(
                                     status_code=400,
                                     detail=error_detail
