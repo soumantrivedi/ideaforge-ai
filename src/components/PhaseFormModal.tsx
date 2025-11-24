@@ -3,6 +3,7 @@ import { X, Send, Loader2, Sparkles, Wand2, Trash2, Play } from 'lucide-react';
 import type { LifecyclePhase } from '../lib/product-lifecycle-service';
 import { lifecycleService } from '../lib/product-lifecycle-service';
 import { DesignMockupGallery } from './DesignMockupGallery';
+import { useAuth } from '../contexts/AuthContext';
 
 interface PhaseFormModalProps {
   phase: LifecyclePhase;
@@ -25,6 +26,7 @@ export function PhaseFormModal({
   sessionId,
   onNavigateToSettings,
 }: PhaseFormModalProps) {
+  const { user, token } = useAuth();
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentPromptIndex, setCurrentPromptIndex] = useState(0);
@@ -145,21 +147,12 @@ export function PhaseFormModal({
     setIsGeneratingAIHelp(true);
 
     try {
-      // First, check if AI providers are configured on the backend
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      const healthResponse = await fetch(`${API_URL}/health`);
-      
-      if (healthResponse.ok) {
-        const healthData = await healthResponse.json();
-        const services = healthData.services || {};
-        const hasProvider = services.openai || services.anthropic || services.google;
-        
-        if (!hasProvider) {
-          throw new Error(
-            'No AI provider is configured on the backend. Please go to Settings and configure at least one AI provider (OpenAI, Anthropic, or Google Gemini) before using "Help with AI".'
-          );
-        }
+      if (!user || !user.id) {
+        throw new Error('User not authenticated. Please log in to use AI help.');
       }
+
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      
       // Fetch conversation history for context
       const conversationHistory = await lifecycleService.getProductConversationHistory(productId);
       
@@ -278,13 +271,19 @@ export function PhaseFormModal({
         supportingAgents = ['research', 'analysis'];
       }
 
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+      
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const response = await fetch(`${API_URL}/api/multi-agent/process`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
-          user_id: '00000000-0000-0000-0000-000000000000',
+          user_id: user.id,
           query: fullPrompt,
           coordination_mode: 'collaborative',
           primary_agent: primaryAgent,

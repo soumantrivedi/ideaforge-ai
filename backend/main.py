@@ -291,24 +291,63 @@ async def execute_workflow(
 
 
 @app.post("/api/multi-agent/process", response_model=MultiAgentResponse, tags=["multi-agent"])
-async def process_multi_agent_request(request: MultiAgentRequest):
+async def process_multi_agent_request(
+    request: MultiAgentRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """Process a multi-agent coordination request."""
     try:
+        # Load user-specific API keys from database and update provider registry
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        
+        user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+        
+        # Update provider registry with user's keys (temporarily for this request)
+        if user_keys:
+            provider_registry.update_keys(
+                openai_key=user_keys.get("openai"),
+                claude_key=user_keys.get("claude"),
+                gemini_key=user_keys.get("gemini"),
+            )
+            logger.info(
+                "user_api_keys_loaded",
+                user_id=str(current_user["id"]),
+                providers=list(user_keys.keys())
+            )
+        
+        # Check if any provider is configured after loading user keys
+        if not provider_registry.get_configured_providers():
+            raise HTTPException(
+                status_code=400,
+                detail="No AI provider is configured. Please go to Settings and configure at least one AI provider (OpenAI, Anthropic, or Google Gemini) before using this feature."
+            )
+        
+        # Use authenticated user's ID (not the one from request to ensure security)
+        authenticated_user_id = current_user["id"]
+        
         logger.info(
             "multi_agent_request",
-            user_id=str(request.user_id),
+            user_id=str(authenticated_user_id),
+            request_user_id=str(request.user_id),
             coordination_mode=request.coordination_mode,
             primary_agent=request.primary_agent,
-            supporting_agents=request.supporting_agents
+            supporting_agents=request.supporting_agents,
+            configured_providers=provider_registry.get_configured_providers()
         )
 
+        # Update request with authenticated user ID for security
+        request.user_id = authenticated_user_id
+
         response = await orchestrator.process_multi_agent_request(
-            user_id=request.user_id,
+            user_id=authenticated_user_id,
             request=request
         )
 
         return response
 
+    except HTTPException:
+        raise
     except ValueError as e:
         logger.error("invalid_multi_agent_request", error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
