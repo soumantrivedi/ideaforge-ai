@@ -6,6 +6,7 @@ from fastapi.openapi.utils import get_openapi
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal, Optional
+from uuid import UUID
 import structlog
 
 from fastapi.concurrency import run_in_threadpool

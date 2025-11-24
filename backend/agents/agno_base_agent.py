@@ -99,7 +99,7 @@ class AgnoBaseAgent(ABC):
             knowledge=knowledge,  # Agno uses 'knowledge' parameter
             tools=tools or [],
             markdown=True,
-            show_tool_calls=True,
+            # Note: show_tool_calls is not a valid parameter for Agno Agent
         )
         
         self.logger.info("agno_agent_initialized", agent=name, role=role, rag_enabled=enable_rag)

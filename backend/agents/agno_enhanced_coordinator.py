@@ -125,7 +125,6 @@ class AgnoEnhancedCoordinator:
                 "- Show how different perspectives were synthesized",
                 "- Provide comprehensive, well-reasoned answers"
             ],
-            show_tool_calls=True,
             markdown=True
         )
     

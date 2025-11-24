@@ -98,7 +98,6 @@ class AgnoCoordinatorAgent:
                 "4. Finally, have the PRD agent create a comprehensive PRD based on all gathered information",
                 "5. Synthesize the final response combining all insights"
             ],
-            show_tool_calls=True,
             markdown=True
         )
         
@@ -117,7 +116,6 @@ class AgnoCoordinatorAgent:
                 "2. Analysis agent analyzes the research",
                 "3. PRD agent creates PRD based on analysis"
             ],
-            show_tool_calls=True,
             markdown=True
         )
         
@@ -136,7 +134,6 @@ class AgnoCoordinatorAgent:
                 "Each agent provides their perspective independently.",
                 "Synthesize all responses into a comprehensive answer."
             ],
-            show_tool_calls=True,
             markdown=True
         )
     
