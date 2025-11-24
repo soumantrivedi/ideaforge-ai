@@ -366,6 +366,7 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
         if payload.provider == "v0":
             # V0 API verification - perform complete API verification
             import httpx
+            import ssl
             try:
                 # Basic format validation first
                 if not payload.api_key or len(payload.api_key) < 10:
@@ -374,7 +375,16 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                         detail="V0 API key format appears invalid. Please check your key."
                     )
                 
-                async with httpx.AsyncClient() as client:
+                # Get SSL verification setting from config
+                verify_ssl = settings.verify_ssl
+                
+                # Create httpx client with SSL configuration
+                # SSL verification can be disabled via VERIFY_SSL=false for development/testing
+                async with httpx.AsyncClient(
+                    verify=verify_ssl,  # Configurable SSL verification
+                    timeout=httpx.Timeout(10.0, connect=5.0),
+                    follow_redirects=True
+                ) as client:
                     # Try multiple V0 API endpoints for complete verification
                     # V0 typically uses these endpoints for authentication verification
                     verification_endpoints = [
@@ -439,9 +449,15 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                             else:
                                 last_error = str(e)
                                 continue
-                        except httpx.RequestError as e:
+                        except (httpx.RequestError, httpx.ConnectError, httpx.ConnectTimeout) as e:
                             # Network/connection errors - try next endpoint
                             last_error = str(e)
+                            continue
+                        except ssl.SSLError as e:
+                            # SSL certificate errors - log but try next endpoint
+                            # This might indicate a proxy or network configuration issue
+                            last_error = f"SSL verification error: {str(e)}"
+                            logger.warning("v0_ssl_verification_error", error=str(e), endpoint=endpoint)
                             continue
                         except Exception as e:
                             last_error = str(e)
@@ -486,8 +502,15 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                                 detail="V0 API key is invalid or unauthorized. Please check your key."
                             )
                     
-                    # If we reach here, verification failed but key format might be valid
-                    # This is a fallback - we couldn't verify but format looks okay
+                    # If we reach here, verification failed
+                    # Check if it's an SSL error specifically
+                    if last_error and ("SSL" in last_error or "certificate" in last_error.lower() or "CERTIFICATE_VERIFY_FAILED" in last_error):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"V0 API key verification failed due to SSL certificate issue. This may be due to network/proxy configuration. Please check your network settings or contact your administrator. Error: {last_error}"
+                        )
+                    
+                    # Otherwise, general verification failure
                     raise HTTPException(
                         status_code=400,
                         detail=f"V0 API key verification failed. Could not authenticate with V0 API. Please verify your key is correct and has proper permissions. Error: {last_error or 'Unknown error'}"
@@ -495,10 +518,21 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                     
             except HTTPException:
                 raise
+            except ssl.SSLError as e:
+                # SSL certificate verification failed
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"V0 API key verification failed due to SSL certificate verification error. This may be due to network/proxy configuration or a self-signed certificate in the chain. Please check your network settings or contact your administrator. Error: {str(e)}"
+                )
             except Exception as e:
                 # For any other error, provide detailed error message
                 error_msg = str(e)
-                if "401" in error_msg or "unauthorized" in error_msg.lower() or "invalid" in error_msg.lower():
+                if "SSL" in error_msg or "certificate" in error_msg.lower() or "CERTIFICATE_VERIFY_FAILED" in error_msg:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"V0 API key verification failed due to SSL certificate issue. This may be due to network/proxy configuration. Please check your network settings or contact your administrator. Error: {error_msg}"
+                    )
+                elif "401" in error_msg or "unauthorized" in error_msg.lower() or "invalid" in error_msg.lower():
                     raise HTTPException(
                         status_code=400,
                         detail=f"V0 API key is invalid: {error_msg}"
