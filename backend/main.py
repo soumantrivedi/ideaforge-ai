@@ -364,7 +364,7 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
             )
 
         if payload.provider == "v0":
-            # V0 API verification - make a test API call
+            # V0 API verification - perform complete API verification
             import httpx
             try:
                 # Basic format validation first
@@ -375,56 +375,138 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                     )
                 
                 async with httpx.AsyncClient() as client:
-                    # Try to verify with V0 API (adjust endpoint based on actual V0 API)
-                    # Common pattern: try a simple authenticated endpoint
-                    try:
-                        # Attempt a simple API call - adjust endpoint as needed
-                        response = await client.get(
-                            "https://v0.dev/api/user",
-                            headers={"Authorization": f"Bearer {payload.api_key}"},
-                            timeout=10.0
-                        )
-                        
-                        if response.status_code == 200:
-                            return APIKeyVerificationResponse(
-                                provider="v0",
-                                valid=True,
-                                message="V0 API key is valid."
+                    # Try multiple V0 API endpoints for complete verification
+                    # V0 typically uses these endpoints for authentication verification
+                    verification_endpoints = [
+                        "https://v0.dev/api/user",
+                        "https://v0.dev/api/v1/user",
+                        "https://api.v0.dev/user",
+                        "https://v0.dev/api/auth/verify",
+                    ]
+                    
+                    verification_successful = False
+                    last_error = None
+                    
+                    for endpoint in verification_endpoints:
+                        try:
+                            response = await client.get(
+                                endpoint,
+                                headers={"Authorization": f"Bearer {payload.api_key}"},
+                                timeout=10.0
                             )
-                        elif response.status_code == 401:
-                            raise HTTPException(
-                                status_code=400,
-                                detail="V0 API key is invalid or unauthorized."
-                            )
-                        else:
-                            # If endpoint doesn't exist or returns unexpected status, accept format validation
-                            return APIKeyVerificationResponse(
-                                provider="v0",
-                                valid=True,
-                                message="V0 API key format appears valid. Note: Full verification may require V0 API access."
-                            )
-                    except httpx.HTTPStatusError:
-                        # If we get an HTTP error, the key format might still be valid
-                        # Accept it with a warning
+                            
+                            # Success - key is valid
+                            if response.status_code == 200:
+                                # Try to parse response to ensure it's a valid API response
+                                try:
+                                    data = response.json()
+                                    # If we get user data or any valid JSON, the key is authenticated
+                                    verification_successful = True
+                                    break
+                                except:
+                                    # Even if JSON parsing fails, 200 status means auth worked
+                                    verification_successful = True
+                                    break
+                            
+                            # Unauthorized - key is invalid
+                            elif response.status_code == 401:
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail="V0 API key is invalid or unauthorized. Please check your key."
+                                )
+                            
+                            # Forbidden - key might be valid but lacks permissions
+                            elif response.status_code == 403:
+                                # Key is valid but may not have access to this endpoint
+                                # Continue to next endpoint
+                                continue
+                            
+                            # Other 2xx status codes might indicate success
+                            elif 200 <= response.status_code < 300:
+                                verification_successful = True
+                                break
+                                
+                        except httpx.HTTPStatusError as e:
+                            if e.response.status_code == 401:
+                                # Unauthorized - key is definitely invalid
+                                raise HTTPException(
+                                    status_code=400,
+                                    detail="V0 API key is invalid or unauthorized. Please check your key."
+                                )
+                            elif e.response.status_code == 403:
+                                # Forbidden - continue to next endpoint
+                                continue
+                            else:
+                                last_error = str(e)
+                                continue
+                        except httpx.RequestError as e:
+                            # Network/connection errors - try next endpoint
+                            last_error = str(e)
+                            continue
+                        except Exception as e:
+                            last_error = str(e)
+                            continue
+                    
+                    # If we successfully verified with any endpoint
+                    if verification_successful:
                         return APIKeyVerificationResponse(
                             provider="v0",
                             valid=True,
-                            message="V0 API key format appears valid. Note: Full verification may require V0 API access."
+                            message="V0 API key is valid and authenticated successfully."
                         )
+                    
+                    # If all endpoints failed but we didn't get 401, try a POST request to verify token
+                    # Some APIs require POST for token verification
+                    try:
+                        post_response = await client.post(
+                            "https://v0.dev/api/auth/verify",
+                            headers={
+                                "Authorization": f"Bearer {payload.api_key}",
+                                "Content-Type": "application/json"
+                            },
+                            json={"token": payload.api_key},
+                            timeout=10.0
+                        )
+                        
+                        if post_response.status_code == 200:
+                            return APIKeyVerificationResponse(
+                                provider="v0",
+                                valid=True,
+                                message="V0 API key is valid and authenticated successfully."
+                            )
+                        elif post_response.status_code == 401:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="V0 API key is invalid or unauthorized. Please check your key."
+                            )
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 401:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="V0 API key is invalid or unauthorized. Please check your key."
+                            )
+                    
+                    # If we reach here, verification failed but key format might be valid
+                    # This is a fallback - we couldn't verify but format looks okay
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"V0 API key verification failed. Could not authenticate with V0 API. Please verify your key is correct and has proper permissions. Error: {last_error or 'Unknown error'}"
+                    )
+                    
             except HTTPException:
                 raise
             except Exception as e:
-                # For any other error, do basic format validation
-                if payload.api_key and len(payload.api_key) >= 10:
-                    return APIKeyVerificationResponse(
-                        provider="v0",
-                        valid=True,
-                        message="V0 API key format appears valid. Note: Full verification may require V0 API access."
+                # For any other error, provide detailed error message
+                error_msg = str(e)
+                if "401" in error_msg or "unauthorized" in error_msg.lower() or "invalid" in error_msg.lower():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"V0 API key is invalid: {error_msg}"
                     )
                 else:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"V0 API key verification failed: {str(e)}"
+                        detail=f"V0 API key verification failed: {error_msg}"
                     )
 
         raise HTTPException(status_code=400, detail="Unsupported provider")

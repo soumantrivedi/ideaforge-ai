@@ -87,6 +87,11 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
       });
 
       setSaveSuccess('Provider configuration updated successfully.');
+      
+      // Refresh API keys status after saving
+      // Trigger a reload by calling the parent's refresh if available
+      // For now, we'll rely on the parent component to refresh
+      window.dispatchEvent(new CustomEvent('apiKeysUpdated'));
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Failed to save configuration.');
     } finally {
@@ -156,8 +161,9 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
 
   const isConfigured = (provider: AIProvider | 'v0' | 'lovable') => {
     // First check apiKeysStatus (from database), then fallback to configuredProviders (in-memory)
+    // Map frontend provider names to backend provider names
     const providerKey = provider === 'claude' ? 'anthropic' : provider === 'gemini' ? 'google' : provider;
-    return apiKeysStatus[providerKey] || configuredProviders.includes(provider as AIProvider);
+    return apiKeysStatus[providerKey] === true || configuredProviders.includes(provider as AIProvider);
   };
 
   const renderVerificationFeedback = (provider: AIProvider | 'v0' | 'lovable') => {

@@ -112,8 +112,10 @@ class AgnoBaseAgent(ABC):
         else:
             raise ValueError("No AI provider configured. Please configure at least one provider.")
     
-    def _create_knowledge_base(self, table_name: str) -> Optional[Knowledge]:
+    def _create_knowledge_base(self, table_name: str) -> Optional[Any]:
         """Create knowledge base with pgvector for RAG."""
+        if not AGNO_AVAILABLE:
+            return None
         try:
             # Get embedder based on available provider
             embedder = None
@@ -142,6 +144,7 @@ class AgnoBaseAgent(ABC):
             )
             
             # Create knowledge base
+            from agno.knowledge.knowledge import Knowledge
             knowledge = Knowledge(
                 vector_db=vector_db,
                 embedder=embedder,

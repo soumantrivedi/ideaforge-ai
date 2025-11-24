@@ -74,10 +74,10 @@ export function MainApp() {
   };
 
   const handleFormSubmit = async (formData: Record<string, string>) => {
-    if (!productId || !currentPhase) return;
+    if (!productId || !currentPhase || !user) return;
     
     try {
-      await lifecycleService.submitPhaseData(productId, currentPhase.id, formData);
+      await lifecycleService.submitPhaseData(productId, currentPhase.id, formData, user.id);
       await loadSubmissions();
       setIsFormModalOpen(false);
     } catch (error) {

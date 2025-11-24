@@ -12,19 +12,30 @@ import structlog
 from backend.database import get_db
 from backend.api.auth import get_current_user
 from backend.api.product_permissions import check_product_permission, get_product_permission
-from backend.agents.agno_enhanced_coordinator import AgnoEnhancedCoordinator
-from backend.agents.agno_summary_agent import AgnoSummaryAgent
-from backend.agents.agno_scoring_agent import AgnoScoringAgent
-from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
+from backend.agents import AGNO_AVAILABLE
 
 router = APIRouter(prefix="/api/products", tags=["product-scoring"])
 logger = structlog.get_logger()
 
-# Initialize agents
-enhanced_coordinator = AgnoEnhancedCoordinator(enable_rag=True)
-summary_agent = AgnoSummaryAgent(enable_rag=True)
-scoring_agent = AgnoScoringAgent(enable_rag=True)
-prd_agent = AgnoPRDAuthoringAgent(enable_rag=True)
+# Initialize agents conditionally
+enhanced_coordinator = None
+summary_agent = None
+scoring_agent = None
+prd_agent = None
+
+if AGNO_AVAILABLE:
+    try:
+        from backend.agents.agno_enhanced_coordinator import AgnoEnhancedCoordinator
+        from backend.agents.agno_summary_agent import AgnoSummaryAgent
+        from backend.agents.agno_scoring_agent import AgnoScoringAgent
+        from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
+        
+        enhanced_coordinator = AgnoEnhancedCoordinator(enable_rag=True)
+        summary_agent = AgnoSummaryAgent(enable_rag=True)
+        scoring_agent = AgnoScoringAgent(enable_rag=True)
+        prd_agent = AgnoPRDAuthoringAgent(enable_rag=True)
+    except Exception as e:
+        logger.warning("agno_agents_initialization_failed", error=str(e))
 
 
 @router.get("/{product_id}/sessions")
@@ -79,6 +90,8 @@ async def create_product_summary(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a summary from selected sessions."""
+    if not summary_agent:
+        raise HTTPException(status_code=503, detail="Summary agent not available. Agno framework required.")
     try:
         # Fetch messages from selected sessions
         query = text("""
@@ -179,6 +192,8 @@ async def score_product_idea(
     db: AsyncSession = Depends(get_db)
 ):
     """Score a product idea based on summary and context."""
+    if not scoring_agent:
+        raise HTTPException(status_code=503, detail="Scoring agent not available. Agno framework required.")
     try:
         # Get product summary
         summary_content = ""
@@ -337,6 +352,8 @@ Idea Score and Analysis:
 Generate a complete PRD following the standard template with all sections."""
 
         # Use enhanced coordinator for contextualized PRD generation
+        if not enhanced_coordinator:
+            raise HTTPException(status_code=503, detail="Enhanced coordinator not available. Agno framework required.")
         response = await enhanced_coordinator.process_with_context(
             query=prd_prompt,
             product_id=str(product_id),

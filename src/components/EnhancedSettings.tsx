@@ -23,6 +23,17 @@ export function EnhancedSettings() {
       loadPreferences();
       loadAPIKeysStatus();
     }
+    
+    // Listen for API keys updates
+    const handleApiKeysUpdate = () => {
+      loadAPIKeysStatus();
+    };
+    
+    window.addEventListener('apiKeysUpdated', handleApiKeysUpdate);
+    
+    return () => {
+      window.removeEventListener('apiKeysUpdated', handleApiKeysUpdate);
+    };
   }, [token]);
 
   const loadPreferences = async () => {
@@ -244,8 +255,11 @@ export function EnhancedSettings() {
           onSaveConfig={(config) => {
             // Provider config is handled by ProviderConfig component
             console.log('Config saved:', config);
+            // Reload API keys status after saving
+            loadAPIKeysStatus();
           }}
           configuredProviders={configuredProviders}
+          apiKeysStatus={apiKeysStatus}
         />
       </div>
 

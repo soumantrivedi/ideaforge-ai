@@ -237,6 +237,50 @@ export class ProductLifecycleService {
     } as Partial<PhaseSubmission>);
   }
 
+  // Alias for submitPhaseData - creates or updates a phase submission
+  async submitPhaseData(
+    productId: string,
+    phaseId: string,
+    formData: Record<string, any>,
+    userId?: string
+  ): Promise<PhaseSubmission> {
+    try {
+      // Get userId if not provided
+      if (!userId) {
+        // Try to get from token
+        const token = localStorage.getItem('token');
+        if (token) {
+          try {
+            const payload = JSON.parse(atob(token.split('.')[1]));
+            userId = payload.sub || payload.user_id || payload.id;
+          } catch {
+            // If we can't parse token, we'll need userId
+            throw new Error('User ID is required for creating phase submission');
+          }
+        } else {
+          throw new Error('User ID is required for creating phase submission');
+        }
+      }
+
+      // First, try to get existing submission
+      const existing = await this.getPhaseSubmission(productId, phaseId);
+      
+      if (existing) {
+        // Update existing submission
+        return await this.updatePhaseSubmission(existing.id, {
+          form_data: formData,
+          status: 'in_progress',
+        } as Partial<PhaseSubmission>);
+      } else {
+        // Create new submission
+        return await this.createPhaseSubmission(productId, phaseId, userId, formData);
+      }
+    } catch (error) {
+      console.error('Error submitting phase data:', error);
+      throw error;
+    }
+  }
+
   // Conversation History
   async saveConversationMessage(
     sessionId: string,
