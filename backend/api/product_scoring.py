@@ -11,6 +11,7 @@ import structlog
 
 from backend.database import get_db
 from backend.api.auth import get_current_user
+from backend.api.product_permissions import check_product_permission, get_product_permission
 from backend.agents.agno_enhanced_coordinator import AgnoEnhancedCoordinator
 from backend.agents.agno_summary_agent import AgnoSummaryAgent
 from backend.agents.agno_scoring_agent import AgnoScoringAgent
@@ -279,8 +280,15 @@ async def generate_standardized_prd(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Generate standardized PRD from summary and score."""
+    """Generate standardized PRD from summary and score. Requires edit or admin permission."""
     try:
+        # Check permission
+        has_permission = await check_product_permission(db, product_id, current_user["id"], "edit")
+        if not has_permission:
+            raise HTTPException(
+                status_code=403,
+                detail="You need edit or admin permissions to generate PRD documents"
+            )
         # Get summary
         summary_content = ""
         if summary_id:
