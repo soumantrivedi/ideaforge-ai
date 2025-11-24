@@ -42,21 +42,32 @@ export function KnowledgeBaseManager({
     }
   };
 
-  const displayDocuments = searchQuery.trim() ? searchResults : documents;
+  const displayDocuments = searchQuery.trim() ? (Array.isArray(searchResults) ? searchResults : []) : (Array.isArray(documents) ? documents : []);
+  const documentsCount = Array.isArray(documents) ? documents.length : 0;
 
   return (
-    <div className="bg-white rounded-xl shadow-lg p-6">
+    <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
-          <BookOpen className="w-5 h-5 text-blue-600" />
-          <h3 className="text-lg font-bold text-gray-900">Knowledge Base</h3>
-          <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">
-            {documents.length} docs
+          <BookOpen className="w-5 h-5" style={{ color: 'var(--text-primary)' }} />
+          <h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Knowledge Base</h3>
+          <span className="px-2 py-1 text-xs font-medium rounded-full" style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
+            {documentsCount} docs
           </span>
         </div>
         <button
           onClick={() => setShowAddForm(!showAddForm)}
-          className="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition flex items-center gap-2"
+          className="px-4 py-2 font-medium rounded-md transition flex items-center gap-2"
+          style={{ 
+            backgroundColor: 'var(--button-primary-bg)', 
+            color: 'var(--button-primary-text)' 
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = 'var(--button-primary-hover)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = 'var(--button-primary-bg)';
+          }}
         >
           <Plus className="w-4 h-4" />
           Add Document
@@ -96,9 +107,19 @@ export function KnowledgeBaseManager({
           <div className="flex gap-3">
             <button
               type="submit"
-              className="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition"
+              className="px-4 py-2 font-medium rounded-lg transition flex items-center gap-2"
+              style={{ 
+                backgroundColor: 'var(--button-primary-bg)', 
+                color: 'var(--button-primary-text)' 
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--button-primary-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--button-primary-bg)';
+              }}
             >
-              <Upload className="w-4 h-4 inline mr-2" />
+              <Upload className="w-4 h-4" />
               Add to Knowledge Base
             </button>
             <button
@@ -108,7 +129,18 @@ export function KnowledgeBaseManager({
                 setTitle('');
                 setContent('');
               }}
-              className="px-4 py-2 bg-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-300 transition"
+              className="px-4 py-2 font-medium rounded-lg transition"
+              style={{ 
+                backgroundColor: 'var(--button-secondary-bg)', 
+                color: 'var(--button-secondary-text)',
+                borderColor: 'var(--border-color)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--button-secondary-hover)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--button-secondary-bg)';
+              }}
             >
               Cancel
             </button>
@@ -117,22 +149,49 @@ export function KnowledgeBaseManager({
       )}
 
       <form onSubmit={handleSearch} className="mb-6">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search knowledge base..."
-            className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
+        <div className="relative flex gap-2">
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5" style={{ color: 'var(--text-tertiary)' }} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search knowledge base..."
+              className="w-full pl-10 pr-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              style={{ 
+                backgroundColor: 'var(--input-bg)', 
+                color: 'var(--text-primary)', 
+                borderColor: 'var(--input-border)' 
+              }}
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={!searchQuery.trim() || isSearching}
+            className="px-6 py-3 font-medium rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            style={{ 
+              backgroundColor: 'var(--button-primary-bg)', 
+              color: 'var(--button-primary-text)' 
+            }}
+            onMouseEnter={(e) => {
+              if (!e.currentTarget.disabled) {
+                e.currentTarget.style.backgroundColor = 'var(--button-primary-hover)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--button-primary-bg)';
+            }}
+          >
+            <Search className="w-4 h-4" />
+            {isSearching ? 'Searching...' : 'Search'}
+          </button>
         </div>
       </form>
 
       <div className="space-y-3 max-h-96 overflow-y-auto">
-        {displayDocuments.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">
-            <BookOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+        {!Array.isArray(displayDocuments) || displayDocuments.length === 0 ? (
+          <div className="text-center py-12" style={{ color: 'var(--text-secondary)' }}>
+            <BookOpen className="w-12 h-12 mx-auto mb-4" style={{ color: 'var(--text-tertiary)' }} />
             <p>
               {searchQuery.trim()
                 ? 'No documents found matching your search'

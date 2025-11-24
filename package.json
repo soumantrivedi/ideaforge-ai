@@ -15,7 +15,6 @@
     "@google/genai": "^1.30.0",
     "@modelcontextprotocol/sdk": "^1.22.0",
     "@openai/agents": "^0.3.3",
-    "@supabase/supabase-js": "^2.84.0",
     "lucide-react": "^0.344.0",
     "openai": "^6.9.1",
     "react": "^18.3.1",

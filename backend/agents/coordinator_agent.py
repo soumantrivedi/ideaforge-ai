@@ -11,6 +11,8 @@ from backend.agents.strategy_agent import StrategyAgent
 from backend.agents.ideation_agent import IdeationAgent
 from backend.agents.prd_authoring_agent import PRDAuthoringAgent
 from backend.agents.jira_agent import JiraAgent
+from backend.agents.v0_agent import V0Agent
+from backend.agents.lovable_agent import LovableAgent
 from backend.models.schemas import AgentMessage, AgentResponse, AgentInteraction, AgentCapability
 
 logger = structlog.get_logger()
@@ -29,6 +31,8 @@ class CoordinatorAgent:
         self.ideation_agent = IdeationAgent()
         self.prd_agent = PRDAuthoringAgent()
         self.jira_agent = JiraAgent()
+        self.v0_agent = V0Agent()
+        self.lovable_agent = LovableAgent()
         
         # Register all agents
         self.agents: Dict[str, BaseAgent] = {
@@ -39,6 +43,8 @@ class CoordinatorAgent:
             "ideation": self.ideation_agent,
             "prd_authoring": self.prd_agent,
             "jira_integration": self.jira_agent,
+            "v0_design": self.v0_agent,
+            "lovable_design": self.lovable_agent,
         }
         
         # Set coordinator reference for agent-to-agent communication

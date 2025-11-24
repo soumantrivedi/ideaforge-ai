@@ -83,10 +83,16 @@ nano .env
 Edit `.env` file with your credentials:
 
 ```env
-# Database Configuration
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+# API Configuration
+VITE_API_URL=http://localhost:8000
 DATABASE_URL=postgresql://user:password@postgres:5432/agentic_pm_db
+
+# Optional: Okta OAuth/SSO (for enterprise authentication)
+VITE_OKTA_CLIENT_ID=your_okta_client_id
+VITE_OKTA_ISSUER=your_okta_issuer
+OKTA_CLIENT_ID=your_okta_client_id
+OKTA_CLIENT_SECRET=your_okta_client_secret
+OKTA_ISSUER=your_okta_issuer
 
 # AI Provider API Keys (at least one required)
 OPENAI_API_KEY=sk-...
@@ -389,7 +395,7 @@ curl http://localhost:8000/health
     "openai": true,
     "anthropic": true,
     "google": true,
-    "supabase": true
+    "database": true
   }
 }
 ```

@@ -1,0 +1,8 @@
+<svg width="820" height="220" viewBox="0 0 820 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="IdeaForge AI text-only logo">
+  <rect width="820" height="220" fill="#FFFFFF"/>
+  <g transform="translate(20,104)">
+    <text x="0" y="0" font-family="Source Serif 4, Libre Baskerville, Georgia, 'Times New Roman', serif" font-weight="700" font-size="64" fill="#071B3D" letter-spacing="0.4">IdeaForge</text>
+    <text x="380" y="0" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="700" font-size="64" fill="#071B3D" letter-spacing="1.1">AI</text>
+    <text x="2" y="58" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="500" font-size="22" fill="#4A5875" letter-spacing="1.0">Enterprise Agentic PM</text>
+  </g>
+</svg>

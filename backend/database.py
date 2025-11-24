@@ -1,5 +1,7 @@
 """Database connection and session management."""
 import os
+from typing import Optional
+from fastapi import Request
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import text
@@ -48,6 +50,21 @@ async def get_db() -> AsyncSession:
     """Get database session."""
     async with AsyncSessionLocal() as session:
         try:
+            yield session
+        finally:
+            await session.close()
+
+
+async def get_db_with_user(user_id: Optional[str] = None) -> AsyncSession:
+    """Get database session with user context for RLS."""
+    async with AsyncSessionLocal() as session:
+        try:
+            # Set user context for RLS policies
+            if user_id:
+                await session.execute(text(f"SET LOCAL app.current_user_id = '{user_id}'"))
+            else:
+                await session.execute(text("SET LOCAL app.current_user_id = '00000000-0000-0000-0000-000000000000'"))
+            
             yield session
         finally:
             await session.close()

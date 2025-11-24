@@ -155,6 +155,35 @@ CREATE TABLE IF NOT EXISTS exported_documents (
   updated_at timestamptz DEFAULT now()
 );
 
+-- Design Mockups Table
+CREATE TABLE IF NOT EXISTS design_mockups (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  phase_submission_id uuid REFERENCES phase_submissions(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL,
+  provider text NOT NULL CHECK (provider IN ('v0', 'lovable')),
+  prompt text NOT NULL,
+  image_url text,
+  thumbnail_url text,
+  metadata jsonb DEFAULT '{}',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+-- Create indexes for design_mockups
+CREATE INDEX IF NOT EXISTS idx_design_mockups_product_id ON design_mockups(product_id);
+CREATE INDEX IF NOT EXISTS idx_design_mockups_phase_submission_id ON design_mockups(phase_submission_id);
+CREATE INDEX IF NOT EXISTS idx_design_mockups_provider ON design_mockups(provider);
+
+-- Create function for updated_at triggers
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_products_user_id ON products(user_id);
 CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
@@ -167,6 +196,15 @@ CREATE INDEX IF NOT EXISTS idx_phase_submissions_phase_id ON phase_submissions(p
 CREATE INDEX IF NOT EXISTS idx_conversation_history_session_id ON conversation_history(session_id);
 CREATE INDEX IF NOT EXISTS idx_conversation_history_product_id ON conversation_history(product_id);
 CREATE INDEX IF NOT EXISTS idx_conversation_history_created_at ON conversation_history(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_design_mockups_product_id ON design_mockups(product_id);
+CREATE INDEX IF NOT EXISTS idx_design_mockups_phase_submission_id ON design_mockups(phase_submission_id);
+CREATE INDEX IF NOT EXISTS idx_design_mockups_provider ON design_mockups(provider);
+
+-- Create triggers for updated_at
+CREATE TRIGGER update_design_mockups_updated_at
+  BEFORE UPDATE ON design_mockups
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
 
 -- Create function for vector similarity search
 CREATE OR REPLACE FUNCTION search_knowledge_articles(
@@ -224,8 +262,8 @@ VALUES
    '["What are the core features?", "What are the performance requirements?", "What are the constraints?"]'::jsonb),
   
   ('Design', 4, 'Product design and architecture planning', '🎨',
-   '["user_experience", "technical_architecture", "design_mockups"]'::jsonb,
-   '["Describe the user experience", "What is the technical architecture?", "Share design mockups"]'::jsonb),
+   '["user_experience", "v0_lovable_prompts", "design_mockups"]'::jsonb,
+   '["Describe the user experience and key user flows", "Generate detailed prompts for V0 and Lovable (with Help with AI)", "View and select design mockups"]'::jsonb),
   
   ('Development Planning', 5, 'Development roadmap and sprint planning', '⚙️',
    '["milestones", "timeline", "resources"]'::jsonb,

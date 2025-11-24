@@ -8,6 +8,7 @@ from datetime import datetime
 import structlog
 
 from backend.database import get_db, AsyncSessionLocal
+from backend.api.auth import get_current_user
 from backend.models.schemas import (
     Product,
     PRDDocument,
@@ -55,22 +56,56 @@ async def get_lifecycle_phases(db: AsyncSession = Depends(get_db)):
 @router.get("/knowledge-articles")
 async def get_knowledge_articles(
     product_id: Optional[str] = None,
+    search: Optional[str] = None,
     limit: int = 50,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get knowledge articles."""
+    """Get knowledge articles (tenant-isolated)."""
     try:
+        # Set user context for RLS
+        await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
+        
+        # Filter through products table since knowledge_articles doesn't have tenant_id
         query = """
-            SELECT id, product_id, title, content, source, metadata, created_at
-            FROM knowledge_articles
+            SELECT ka.id, ka.product_id, ka.title, ka.content, ka.source, ka.metadata, ka.created_at
+            FROM knowledge_articles ka
+            INNER JOIN products p ON ka.product_id = p.id
+            WHERE p.tenant_id = :tenant_id
         """
-        params = {}
+        params = {"tenant_id": current_user["tenant_id"]}
         
         if product_id:
-            query += " WHERE product_id = :product_id"
+            # Verify product access
+            product_check = text("""
+                SELECT id FROM products 
+                WHERE id = :product_id 
+                AND tenant_id = :tenant_id
+                AND (
+                  user_id = :user_id
+                  OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id)
+                )
+            """)
+            check_result = await db.execute(product_check, {
+                "product_id": product_id,
+                "tenant_id": current_user["tenant_id"],
+                "user_id": current_user["id"]
+            })
+            if not check_result.fetchone():
+                raise HTTPException(status_code=403, detail="Access denied to product")
+            
+            query += " AND ka.product_id = :product_id"
             params["product_id"] = product_id
+        else:
+            # Only show articles from accessible products
+            query += " AND (p.user_id = :user_id OR p.id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id))"
+            params["user_id"] = current_user["id"]
         
-        query += " ORDER BY created_at DESC LIMIT :limit"
+        if search:
+            query += " AND (ka.title ILIKE :search OR ka.content ILIKE :search)"
+            params["search"] = f"%{search}%"
+        
+        query += " ORDER BY ka.created_at DESC LIMIT :limit"
         params["limit"] = limit
         
         result = await db.execute(text(query), params)
@@ -89,6 +124,8 @@ async def get_knowledge_articles(
             for row in rows
         ]
         return {"articles": articles}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("error_getting_knowledge_articles", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -99,24 +136,46 @@ async def get_conversation_history(
     session_id: Optional[str] = None,
     product_id: Optional[str] = None,
     limit: int = 100,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get conversation history."""
+    """Get conversation history (tenant-isolated)."""
     try:
+        # Set user context for RLS
+        await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
+        
         query = """
             SELECT id, session_id, product_id, phase_id, message_type,
                    agent_name, agent_role, content, formatted_content,
                    parent_message_id, interaction_metadata, created_at
             FROM conversation_history
-            WHERE 1=1
+            WHERE tenant_id = :tenant_id
         """
-        params = {}
+        params = {"tenant_id": current_user["tenant_id"]}
         
         if session_id:
             query += " AND session_id = :session_id"
             params["session_id"] = session_id
         
         if product_id:
+            # Verify product access
+            product_check = text("""
+                SELECT id FROM products 
+                WHERE id = :product_id 
+                AND tenant_id = :tenant_id
+                AND (
+                  user_id = :user_id
+                  OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id)
+                )
+            """)
+            check_result = await db.execute(product_check, {
+                "product_id": product_id,
+                "tenant_id": current_user["tenant_id"],
+                "user_id": current_user["id"]
+            })
+            if not check_result.fetchone():
+                raise HTTPException(status_code=403, detail="Access denied to product")
+            
             query += " AND product_id = :product_id"
             params["product_id"] = product_id
         
@@ -152,23 +211,49 @@ async def get_conversation_history(
 @router.post("/knowledge-articles")
 async def create_knowledge_article(
     article: Dict[str, Any],
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a knowledge article."""
+    """Create a knowledge article (tenant-isolated)."""
     try:
+        # Set user context for RLS
+        await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
+        
+        product_id = article.get("product_id")
+        if product_id:
+            # Verify product access
+            product_check = text("""
+                SELECT id, tenant_id FROM products 
+                WHERE id = :product_id
+                AND (
+                  user_id = :user_id
+                  OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id AND permission IN ('edit', 'admin'))
+                )
+            """)
+            check_result = await db.execute(product_check, {
+                "product_id": product_id,
+                "user_id": current_user["id"]
+            })
+            product_row = check_result.fetchone()
+            if not product_row:
+                raise HTTPException(status_code=403, detail="Access denied to product")
+            if str(product_row[1]) != current_user["tenant_id"]:
+                raise HTTPException(status_code=403, detail="Product belongs to different tenant")
+        
         query = text("""
             INSERT INTO knowledge_articles 
-            (product_id, title, content, source, metadata)
-            VALUES (:product_id, :title, :content, :source, :metadata)
+            (product_id, title, content, source, metadata, tenant_id)
+            VALUES (:product_id, :title, :content, :source, :metadata, :tenant_id)
             RETURNING id, created_at
         """)
         
         result = await db.execute(query, {
-            "product_id": article.get("product_id"),
+            "product_id": product_id,
             "title": article.get("title"),
             "content": article.get("content"),
             "source": article.get("source", "manual"),
             "metadata": article.get("metadata", {}),
+            "tenant_id": current_user["tenant_id"],
         })
         
         await db.commit()
@@ -178,6 +263,8 @@ async def create_knowledge_article(
             "id": str(row[0]),
             "created_at": row[1].isoformat() if row[1] else None,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         logger.error("error_creating_knowledge_article", error=str(e))
@@ -187,14 +274,41 @@ async def create_knowledge_article(
 @router.post("/conversation-history")
 async def create_conversation_message(
     message: Dict[str, Any],
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a conversation message."""
+    """Create a conversation message (tenant-isolated)."""
     try:
         import json
         from sqlalchemy import func
         
+        # Set user context for RLS
+        await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
+        
         session_id = message.get("session_id")
+        product_id = message.get("product_id")
+        
+        # Verify product access if product_id is provided
+        if product_id:
+            product_check = text("""
+                SELECT id, tenant_id FROM products 
+                WHERE id = :product_id
+                AND (
+                  user_id = :user_id
+                  OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id)
+                )
+            """)
+            check_result = await db.execute(product_check, {
+                "product_id": product_id,
+                "user_id": current_user["id"]
+            })
+            product_row = check_result.fetchone()
+            if not product_row:
+                raise HTTPException(status_code=403, detail="Access denied to product")
+            # Ensure tenant matches
+            if str(product_row[1]) != current_user["tenant_id"]:
+                raise HTTPException(status_code=403, detail="Product belongs to different tenant")
+        
         # Ensure session exists
         if session_id:
             session_check = text("""
@@ -210,8 +324,8 @@ async def create_conversation_message(
                 """)
                 await db.execute(create_session, {
                     "session_id": session_id,
-                    "user_id": "00000000-0000-0000-0000-000000000000",
-                    "product_id": message.get("product_id"),
+                    "user_id": current_user["id"],
+                    "product_id": product_id,
                     "title": "Product Lifecycle Session",
                 })
         
@@ -223,15 +337,15 @@ async def create_conversation_message(
         query = text("""
             INSERT INTO conversation_history
             (session_id, product_id, phase_id, message_type, agent_name,
-             agent_role, content, formatted_content, parent_message_id, interaction_metadata)
+             agent_role, content, formatted_content, parent_message_id, interaction_metadata, tenant_id)
             VALUES (:session_id, :product_id, :phase_id, :message_type, :agent_name,
-                    :agent_role, :content, :formatted_content, :parent_message_id, CAST(:interaction_metadata AS jsonb))
+                    :agent_role, :content, :formatted_content, :parent_message_id, CAST(:interaction_metadata AS jsonb), :tenant_id)
             RETURNING id, created_at
         """)
         
         result = await db.execute(query, {
             "session_id": session_id,
-            "product_id": message.get("product_id"),
+            "product_id": product_id,
             "phase_id": message.get("phase_id"),
             "message_type": message.get("message_type"),
             "agent_name": message.get("agent_name"),
@@ -240,6 +354,7 @@ async def create_conversation_message(
             "formatted_content": message.get("formatted_content"),
             "parent_message_id": message.get("parent_message_id"),
             "interaction_metadata": interaction_metadata,
+            "tenant_id": current_user["tenant_id"],
         })
         
         await db.commit()
@@ -350,27 +465,50 @@ async def create_product(
 async def get_phase_submissions(
     product_id: Optional[str] = None,
     phase_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get phase submissions."""
+    """Get phase submissions (tenant-isolated)."""
     try:
+        # Set user context for RLS
+        await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
+        
         query = """
-            SELECT id, product_id, phase_id, user_id, form_data, generated_content,
-                   status, metadata, created_at, updated_at
-            FROM phase_submissions
-            WHERE 1=1
+            SELECT ps.id, ps.product_id, ps.phase_id, ps.user_id, ps.form_data, ps.generated_content,
+                   ps.status, ps.metadata, ps.created_at, ps.updated_at
+            FROM phase_submissions ps
+            JOIN products p ON ps.product_id = p.id
+            WHERE ps.tenant_id = :tenant_id
         """
-        params = {}
+        params = {"tenant_id": current_user["tenant_id"]}
         
         if product_id:
-            query += " AND product_id = :product_id"
+            # Verify product access
+            product_check = text("""
+                SELECT id FROM products 
+                WHERE id = :product_id 
+                AND tenant_id = :tenant_id
+                AND (
+                  user_id = :user_id
+                  OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id)
+                )
+            """)
+            check_result = await db.execute(product_check, {
+                "product_id": product_id,
+                "tenant_id": current_user["tenant_id"],
+                "user_id": current_user["id"]
+            })
+            if not check_result.fetchone():
+                raise HTTPException(status_code=403, detail="Access denied to product")
+            
+            query += " AND ps.product_id = :product_id"
             params["product_id"] = product_id
         
         if phase_id:
-            query += " AND phase_id = :phase_id"
+            query += " AND ps.phase_id = :phase_id"
             params["phase_id"] = phase_id
         
-        query += " ORDER BY created_at ASC"
+        query += " ORDER BY ps.created_at ASC"
         
         result = await db.execute(text(query), params)
         rows = result.fetchall()
@@ -400,21 +538,45 @@ async def get_phase_submissions(
 async def get_phase_submission(
     product_id: str,
     phase_id: str,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get a specific phase submission."""
+    """Get a specific phase submission (tenant-isolated)."""
     try:
+        # Set user context for RLS
+        await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
+        
+        # Verify product access
+        product_check = text("""
+            SELECT id, tenant_id FROM products 
+            WHERE id = :product_id
+            AND (
+              user_id = :user_id
+              OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id)
+            )
+        """)
+        check_result = await db.execute(product_check, {
+            "product_id": product_id,
+            "user_id": current_user["id"]
+        })
+        product_row = check_result.fetchone()
+        if not product_row:
+            raise HTTPException(status_code=403, detail="Access denied to product")
+        if str(product_row[1]) != current_user["tenant_id"]:
+            raise HTTPException(status_code=403, detail="Product belongs to different tenant")
+        
         query = text("""
             SELECT id, product_id, phase_id, user_id, form_data, generated_content,
                    status, metadata, created_at, updated_at
             FROM phase_submissions
-            WHERE product_id = :product_id AND phase_id = :phase_id
+            WHERE product_id = :product_id AND phase_id = :phase_id AND tenant_id = :tenant_id
             LIMIT 1
         """)
         
         result = await db.execute(query, {
             "product_id": product_id,
             "phase_id": phase_id,
+            "tenant_id": current_user["tenant_id"],
         })
         row = result.fetchone()
         
@@ -441,11 +603,36 @@ async def get_phase_submission(
 @router.post("/phase-submissions")
 async def create_phase_submission(
     submission: Dict[str, Any],
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a phase submission."""
+    """Create a phase submission (tenant-isolated)."""
     try:
         import json
+        
+        # Set user context for RLS
+        await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
+        
+        product_id = submission.get("product_id")
+        if product_id:
+            # Verify product access
+            product_check = text("""
+                SELECT id, tenant_id FROM products 
+                WHERE id = :product_id
+                AND (
+                  user_id = :user_id
+                  OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id AND permission IN ('edit', 'admin'))
+                )
+            """)
+            check_result = await db.execute(product_check, {
+                "product_id": product_id,
+                "user_id": current_user["id"]
+            })
+            product_row = check_result.fetchone()
+            if not product_row:
+                raise HTTPException(status_code=403, detail="Access denied to product")
+            if str(product_row[1]) != current_user["tenant_id"]:
+                raise HTTPException(status_code=403, detail="Product belongs to different tenant")
         
         # Convert JSONB fields to JSON strings
         form_data = submission.get("form_data", {})
@@ -489,6 +676,68 @@ async def create_phase_submission(
     except Exception as e:
         await db.rollback()
         logger.error("error_creating_phase_submission", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/knowledge-articles/{article_id}")
+async def delete_knowledge_article(
+    article_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a knowledge article (tenant-isolated)."""
+    try:
+        # Set user context for RLS
+        await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
+        
+        # Verify article exists and user has access
+        check_query = text("""
+            SELECT id, product_id, tenant_id FROM knowledge_articles
+            WHERE id = :article_id AND tenant_id = :tenant_id
+        """)
+        check_result = await db.execute(check_query, {
+            "article_id": article_id,
+            "tenant_id": current_user["tenant_id"]
+        })
+        article_row = check_result.fetchone()
+        
+        if not article_row:
+            raise HTTPException(status_code=404, detail="Article not found")
+        
+        # If article is product-specific, verify product access
+        if article_row[1]:  # product_id is not None
+            product_check = text("""
+                SELECT id FROM products 
+                WHERE id = :product_id
+                AND (
+                  user_id = :user_id
+                  OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id AND permission IN ('edit', 'admin'))
+                )
+            """)
+            check_result = await db.execute(product_check, {
+                "product_id": article_row[1],
+                "user_id": current_user["id"]
+            })
+            if not check_result.fetchone():
+                raise HTTPException(status_code=403, detail="Access denied to article")
+        
+        # Delete the article
+        delete_query = text("""
+            DELETE FROM knowledge_articles
+            WHERE id = :article_id AND tenant_id = :tenant_id
+        """)
+        await db.execute(delete_query, {
+            "article_id": article_id,
+            "tenant_id": current_user["tenant_id"]
+        })
+        
+        await db.commit()
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error("error_deleting_knowledge_article", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 

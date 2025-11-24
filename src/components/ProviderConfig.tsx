@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Settings, Key, Eye, EyeOff, CheckCircle2, XCircle, Loader2, AlertCircle } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 import type { AIProvider } from '../lib/ai-providers';
 
 interface ProviderConfigProps {
@@ -7,8 +8,11 @@ interface ProviderConfigProps {
     openaiKey?: string;
     claudeKey?: string;
     geminiKey?: string;
+    v0Key?: string;
+    lovableKey?: string;
   }) => void;
   configuredProviders: AIProvider[];
+  apiKeysStatus?: Record<string, boolean>;
 }
 
 type VerificationState = 'idle' | 'verifying' | 'success' | 'error';
@@ -20,15 +24,20 @@ interface VerificationStatus {
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderConfigProps) {
+export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatus = {} }: ProviderConfigProps) {
+  const { token } = useAuth();
   const [openaiKey, setOpenaiKey] = useState('');
   const [claudeKey, setClaudeKey] = useState('');
   const [geminiKey, setGeminiKey] = useState('');
+  const [v0Key, setV0Key] = useState('');
+  const [lovableKey, setLovableKey] = useState('');
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [verificationStatus, setVerificationStatus] = useState<Record<AIProvider, VerificationStatus>>({
+  const [verificationStatus, setVerificationStatus] = useState<Record<AIProvider | 'v0' | 'lovable', VerificationStatus>>({
     openai: { status: 'idle' },
     claude: { status: 'idle' },
     gemini: { status: 'idle' },
+    v0: { status: 'idle' },
+    lovable: { status: 'idle' },
   });
   const [verificationInfoVisible, setVerificationInfoVisible] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -45,12 +54,21 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
       openaiKey: openaiKey.trim() || null,
       claudeKey: claudeKey.trim() || null,
       geminiKey: geminiKey.trim() || null,
+      v0Key: v0Key.trim() || null,
+      lovableKey: lovableKey.trim() || null,
     };
 
     try {
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      const authToken = localStorage.getItem('auth_token');
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+      
       const response = await fetch(`${API_URL}/api/providers/configure`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -64,6 +82,8 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
         openaiKey: payload.openaiKey || undefined,
         claudeKey: payload.claudeKey || undefined,
         geminiKey: payload.geminiKey || undefined,
+        v0Key: payload.v0Key || undefined,
+        lovableKey: payload.lovableKey || undefined,
       });
 
       setSaveSuccess('Provider configuration updated successfully.');
@@ -81,13 +101,17 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
     }));
   };
 
-  const verifyProviderKey = async (provider: AIProvider) => {
+  const verifyProviderKey = async (provider: AIProvider | 'v0' | 'lovable') => {
     const key =
       provider === 'openai'
         ? openaiKey.trim()
         : provider === 'claude'
         ? claudeKey.trim()
-        : geminiKey.trim();
+        : provider === 'gemini'
+        ? geminiKey.trim()
+        : provider === 'v0'
+        ? v0Key.trim()
+        : lovableKey.trim();
 
     if (!key) {
       updateVerificationStatus(provider, {
@@ -130,9 +154,13 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
     setShowKeys((prev) => ({ ...prev, [provider]: !prev[provider] }));
   };
 
-  const isConfigured = (provider: AIProvider) => configuredProviders.includes(provider);
+  const isConfigured = (provider: AIProvider | 'v0' | 'lovable') => {
+    // First check apiKeysStatus (from database), then fallback to configuredProviders (in-memory)
+    const providerKey = provider === 'claude' ? 'anthropic' : provider === 'gemini' ? 'google' : provider;
+    return apiKeysStatus[providerKey] || configuredProviders.includes(provider as AIProvider);
+  };
 
-  const renderVerificationFeedback = (provider: AIProvider) => {
+  const renderVerificationFeedback = (provider: AIProvider | 'v0' | 'lovable') => {
     const status = verificationStatus[provider];
     if (!status || status.status === 'idle') return null;
 
@@ -140,7 +168,7 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
       return (
         <span className="text-xs text-blue-600 flex items-center gap-1">
           <Loader2 className="w-3 h-3 animate-spin" />
-          Verifying with {provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'OpenAI'}...
+          Verifying with {provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'v0' ? 'V0' : provider === 'lovable' ? 'Lovable' : 'OpenAI'}...
         </span>
       );
     }
@@ -176,11 +204,19 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               OpenAI API Key
             </label>
             {isConfigured('openai') ? (
-              <CheckCircle2 className="w-5 h-5 text-green-500" />
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+                <span className="text-xs text-green-600 font-medium">Configured</span>
+              </div>
             ) : (
               <XCircle className="w-5 h-5 text-gray-300" />
             )}
           </div>
+          {isConfigured('openai') && !openaiKey && (
+            <div className="mb-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+              ✓ API key is already configured. Leave blank to keep existing key, or enter a new key to update.
+            </div>
+          )}
           <div className="relative">
             <div className="absolute left-3 top-1/2 -translate-y-1/2">
               <Key className="w-4 h-4 text-gray-400" />
@@ -189,7 +225,7 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               type={showKeys.openai ? 'text' : 'password'}
               value={openaiKey}
               onChange={(e) => setOpenaiKey(e.target.value)}
-              placeholder="sk-..."
+              placeholder={isConfigured('openai') ? "Leave blank to keep existing key, or enter new key..." : "sk-..."}
               className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
             />
             <button
@@ -235,11 +271,19 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               Anthropic Claude API Key
             </label>
             {isConfigured('claude') ? (
-              <CheckCircle2 className="w-5 h-5 text-green-500" />
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+                <span className="text-xs text-green-600 font-medium">Configured</span>
+              </div>
             ) : (
               <XCircle className="w-5 h-5 text-gray-300" />
             )}
           </div>
+          {isConfigured('claude') && !claudeKey && (
+            <div className="mb-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+              ✓ API key is already configured. Leave blank to keep existing key, or enter a new key to update.
+            </div>
+          )}
           <div className="relative">
             <div className="absolute left-3 top-1/2 -translate-y-1/2">
               <Key className="w-4 h-4 text-gray-400" />
@@ -248,7 +292,7 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               type={showKeys.claude ? 'text' : 'password'}
               value={claudeKey}
               onChange={(e) => setClaudeKey(e.target.value)}
-              placeholder="sk-ant-..."
+              placeholder={isConfigured('claude') ? "Leave blank to keep existing key, or enter new key..." : "sk-ant-..."}
               className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
             />
             <button
@@ -294,11 +338,19 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               Google Gemini API Key
             </label>
             {isConfigured('gemini') ? (
-              <CheckCircle2 className="w-5 h-5 text-green-500" />
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+                <span className="text-xs text-green-600 font-medium">Configured</span>
+              </div>
             ) : (
               <XCircle className="w-5 h-5 text-gray-300" />
             )}
           </div>
+          {isConfigured('gemini') && !geminiKey && (
+            <div className="mb-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+              ✓ API key is already configured. Leave blank to keep existing key, or enter a new key to update.
+            </div>
+          )}
           <div className="relative">
             <div className="absolute left-3 top-1/2 -translate-y-1/2">
               <Key className="w-4 h-4 text-gray-400" />
@@ -307,7 +359,7 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               type={showKeys.gemini ? 'text' : 'password'}
               value={geminiKey}
               onChange={(e) => setGeminiKey(e.target.value)}
-              placeholder="AIza..."
+              placeholder={isConfigured('gemini') ? "Leave blank to keep existing key, or enter new key..." : "AIza..."}
               className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
             />
             <button
@@ -344,6 +396,140 @@ export function ProviderConfig({ onSaveConfig, configuredProviders }: ProviderCo
               Verify Key
             </button>
             {renderVerificationFeedback('gemini')}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-semibold text-gray-700">
+              V0 (Vercel) API Key
+            </label>
+            {isConfigured('v0') ? (
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+                <span className="text-xs text-green-600 font-medium">Configured</span>
+              </div>
+            ) : (
+              <XCircle className="w-5 h-5 text-gray-300" />
+            )}
+          </div>
+          {isConfigured('v0') && !v0Key && (
+            <div className="mb-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+              ✓ API key is already configured. Leave blank to keep existing key, or enter a new key to update.
+            </div>
+          )}
+          <div className="relative">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2">
+              <Key className="w-4 h-4 text-gray-400" />
+            </div>
+            <input
+              type={showKeys.v0 ? 'text' : 'password'}
+              value={v0Key}
+              onChange={(e) => setV0Key(e.target.value)}
+              placeholder={isConfigured('v0') ? "Leave blank to keep existing key, or enter new key..." : "Enter V0 API key"}
+              className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+            />
+            <button
+              type="button"
+              onClick={() => toggleShowKey('v0')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              {showKeys.v0 ? (
+                <EyeOff className="w-4 h-4" />
+              ) : (
+                <Eye className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-gray-500">
+            Get your API key from{' '}
+            <a
+              href="https://v0.dev"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-700"
+            >
+              V0 Platform
+            </a>
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => verifyProviderKey('v0')}
+              className="px-3 py-2 text-xs font-medium text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-50 disabled:opacity-50 flex items-center gap-2"
+              disabled={!v0Key.trim() || verificationStatus.v0.status === 'verifying'}
+            >
+              {verificationStatus.v0.status === 'verifying' && <Loader2 className="w-3 h-3 animate-spin" />}
+              Verify Key
+            </button>
+            {renderVerificationFeedback('v0')}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-semibold text-gray-700">
+              Lovable API Key
+            </label>
+            {isConfigured('lovable') ? (
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+                <span className="text-xs text-green-600 font-medium">Configured</span>
+              </div>
+            ) : (
+              <XCircle className="w-5 h-5 text-gray-300" />
+            )}
+          </div>
+          {isConfigured('lovable') && !lovableKey && (
+            <div className="mb-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+              ✓ API key is already configured. Leave blank to keep existing key, or enter a new key to update.
+            </div>
+          )}
+          <div className="relative">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2">
+              <Key className="w-4 h-4 text-gray-400" />
+            </div>
+            <input
+              type={showKeys.lovable ? 'text' : 'password'}
+              value={lovableKey}
+              onChange={(e) => setLovableKey(e.target.value)}
+              placeholder={isConfigured('lovable') ? "Leave blank to keep existing key, or enter new key..." : "Enter Lovable API key"}
+              className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+            />
+            <button
+              type="button"
+              onClick={() => toggleShowKey('lovable')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              {showKeys.lovable ? (
+                <EyeOff className="w-4 h-4" />
+              ) : (
+                <Eye className="w-4 h-4" />
+              )}
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-gray-500">
+            Get your API key from{' '}
+            <a
+              href="https://lovable.dev"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-700"
+            >
+              Lovable Platform
+            </a>
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => verifyProviderKey('lovable')}
+              className="px-3 py-2 text-xs font-medium text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-50 disabled:opacity-50 flex items-center gap-2"
+              disabled={!lovableKey.trim() || verificationStatus.lovable.status === 'verifying'}
+            >
+              {verificationStatus.lovable.status === 'verifying' && <Loader2 className="w-3 h-3 animate-spin" />}
+              Verify Key
+            </button>
+            {renderVerificationFeedback('lovable')}
           </div>
         </div>
 

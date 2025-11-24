@@ -597,8 +597,12 @@ npm run build
 ### Environment Variables
 
 ```env
-VITE_SUPABASE_URL=your_supabase_project_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+# API Configuration
+VITE_API_URL=http://localhost:8000
+
+# Optional: Okta OAuth/SSO (for enterprise authentication)
+VITE_OKTA_CLIENT_ID=your_okta_client_id
+VITE_OKTA_ISSUER=your_okta_issuer
 ```
 
 ## 📊 Metrics & Analytics

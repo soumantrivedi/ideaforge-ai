@@ -8,16 +8,12 @@ services:
       dockerfile: Dockerfile.frontend
       args:
         - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
-        - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
-        - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
         - VITE_OKTA_CLIENT_ID=${VITE_OKTA_CLIENT_ID}
         - VITE_OKTA_ISSUER=${VITE_OKTA_ISSUER}
     ports:
       - "3001:3000"
     environment:
       - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
-      - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
-      - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
       - VITE_OKTA_CLIENT_ID=${VITE_OKTA_CLIENT_ID}
       - VITE_OKTA_ISSUER=${VITE_OKTA_ISSUER}
     depends_on:
@@ -58,6 +54,8 @@ services:
       - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_ORG=${GITHUB_ORG}
+      - V0_API_KEY=${V0_API_KEY}
+      - LOVABLE_API_KEY=${LOVABLE_API_KEY}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - SESSION_SECRET=${SESSION_SECRET}
       - SESSION_EXPIRES_IN=${SESSION_EXPIRES_IN:-86400}

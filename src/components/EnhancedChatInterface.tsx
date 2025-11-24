@@ -13,7 +13,7 @@ interface EnhancedChatInterfaceProps {
 }
 
 export function EnhancedChatInterface({
-  messages,
+  messages = [],
   onSendMessage,
   isLoading,
   coordinationMode,
@@ -180,7 +180,7 @@ export function EnhancedChatInterface({
             </div>
           </div>
         ) : (
-          messages
+          (Array.isArray(messages) ? messages : [])
             .filter((msg) => !msg.isInternal)
             .map((message, index) => (
               <div
@@ -205,7 +205,7 @@ export function EnhancedChatInterface({
                       <span className="text-xs font-semibold text-gray-700">
                         {message.agentName}
                       </span>
-                      {message.interactions && message.interactions.length > 0 && (
+                      {message.interactions && Array.isArray(message.interactions) && message.interactions.length > 0 && (
                         <span className="text-xs text-gray-500 flex items-center gap-1">
                           <Zap className="w-3 h-3" />
                           {message.interactions.length} interactions

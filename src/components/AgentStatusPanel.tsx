@@ -54,13 +54,18 @@ export function AgentStatusPanel({
         <div>
           <h3 className="font-bold text-gray-900">Agent Network</h3>
           <p className="text-xs text-gray-600">
-            {agents.filter((a) => a.isActive).length} active
+            {Array.isArray(agents) ? agents.filter((a) => a.isActive).length : 0} active
           </p>
         </div>
       </div>
 
       <div className="space-y-3">
-        {agents.map((agent) => (
+        {!Array.isArray(agents) || agents.length === 0 ? (
+          <div className="text-center py-8 text-gray-500 text-sm">
+            <p>No active agents. Start a conversation to see agent activity.</p>
+          </div>
+        ) : (
+          agents.map((agent) => (
           <button
             key={agent.role}
             onClick={() => onAgentSelect?.(agent.role)}
@@ -125,7 +130,8 @@ export function AgentStatusPanel({
               </div>
             </div>
           </button>
-        ))}
+        ))
+        )}
       </div>
 
       <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border border-blue-100">

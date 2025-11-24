@@ -1,7 +1,7 @@
 # FastAPI Framework
 fastapi==0.115.0
 uvicorn[standard]==0.32.1
-pydantic==2.10.3
+pydantic[email]==2.10.3
 pydantic-settings==2.7.0
 
 # AI Provider SDKs
@@ -51,6 +51,7 @@ pyyaml==6.0.2
 tenacity==9.0.0
 structlog==24.4.0
 uuid7==0.1.0
+cryptography==43.0.1
 
 # Testing
 pytest==8.3.4

@@ -1,0 +1,15 @@
+<svg width="260" height="220" viewBox="0 0 260 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="IdeaForge AI prism icon">
+  <rect width="260" height="220" fill="#FFFFFF"/>
+  <g transform="translate(34,24)">
+    <line x1="-10" y1="86" x2="34" y2="86" stroke="#071B3D" stroke-width="6" stroke-linecap="round"/>
+    <polygon points="34,46 140,86 34,126" fill="#071B3D"/>
+    <polygon points="34,46 140,86 140,26 34,-14" fill="#0E2A5C"/>
+    <polygon points="34,126 140,86 140,146 34,186" fill="#0A214A"/>
+    <line x1="140" y1="86" x2="190" y2="56" stroke="#4A5875" stroke-width="5" stroke-linecap="round"/>
+    <line x1="140" y1="86" x2="202" y2="86" stroke="#4A5875" stroke-width="5" stroke-linecap="round"/>
+    <line x1="140" y1="86" x2="190" y2="116" stroke="#4A5875" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="190" cy="56" r="5" fill="#4A5875"/>
+    <circle cx="202" cy="86" r="5" fill="#4A5875"/>
+    <circle cx="190" cy="116" r="5" fill="#4A5875"/>
+  </g>
+</svg>

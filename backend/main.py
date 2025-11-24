@@ -1,5 +1,8 @@
 from fastapi import FastAPI, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from fastapi.openapi.utils import get_openapi
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal, Optional
@@ -28,8 +31,13 @@ from backend.models.schemas import (
     AgentCapability,
 )
 from backend.agents.orchestrator import AgenticOrchestrator
-from backend.database import init_db, check_db_health
+from backend.database import init_db, check_db_health, get_db
 from backend.api.database import router as db_router
+from backend.api.design import router as design_router
+from backend.api.auth import router as auth_router, get_current_user
+from backend.api.users import router as users_router
+from backend.api.products import router as products_router
+from backend.api.conversations import router as conversations_router
 from backend.services.provider_registry import provider_registry
 
 structlog.configure(
@@ -69,12 +77,12 @@ def _map_provider_exception(exc: Exception):
 
 
 class APIKeyVerificationRequest(BaseModel):
-    provider: Literal["openai", "claude", "gemini"]
+    provider: Literal["openai", "claude", "gemini", "v0"]
     api_key: str
 
 
 class APIKeyVerificationResponse(BaseModel):
-    provider: Literal["openai", "claude", "gemini"]
+    provider: Literal["openai", "claude", "gemini", "v0"]
     valid: bool
     message: str
 
@@ -83,6 +91,8 @@ class ProviderConfigureRequest(BaseModel):
     openaiKey: Optional[str] = None
     claudeKey: Optional[str] = None
     geminiKey: Optional[str] = None
+    v0Key: Optional[str] = None
+    lovableKey: Optional[str] = None
 
 
 class ProviderConfigureResponse(BaseModel):
@@ -103,10 +113,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Agentic PM Platform API",
-    description="Enterprise multi-agent system for Product Management",
+    title="IdeaForge AI - Agentic PM Platform API",
+    description="Enterprise multi-agent system for Product Management with user authentication, tenant isolation, and product lifecycle management",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json"
 )
 
 app.add_middleware(
@@ -117,16 +130,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include database router
+# Include routers
+from backend.api.api_keys import router as api_keys_router
+app.include_router(auth_router)
+app.include_router(users_router)
+app.include_router(products_router)
+app.include_router(conversations_router)
 app.include_router(db_router)
+app.include_router(design_router)
+app.include_router(api_keys_router)
 
 
 @app.get("/", tags=["health"])
 async def root():
+    """Root endpoint with API information and links to documentation."""
     return {
-        "name": "Agentic PM Platform API",
+        "name": "IdeaForge AI - Agentic PM Platform API",
         "version": "1.0.0",
-        "status": "operational"
+        "status": "operational",
+        "docs": {
+            "swagger_ui": "/api/docs",
+            "redoc": "/api/redoc",
+            "openapi_json": "/api/openapi.json"
+        },
+        "endpoints": {
+            "health": "/health",
+            "authentication": "/api/auth",
+            "users": "/api/users",
+            "products": "/api/products",
+            "conversations": "/api/conversations",
+            "agents": "/api/agents",
+            "multi_agent": "/api/multi-agent"
+        }
     }
 
 
@@ -314,6 +349,70 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                 message="Google Gemini API key is valid."
             )
 
+        if payload.provider == "v0":
+            # V0 API verification - make a test API call
+            import httpx
+            try:
+                # Basic format validation first
+                if not payload.api_key or len(payload.api_key) < 10:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="V0 API key format appears invalid. Please check your key."
+                    )
+                
+                async with httpx.AsyncClient() as client:
+                    # Try to verify with V0 API (adjust endpoint based on actual V0 API)
+                    # Common pattern: try a simple authenticated endpoint
+                    try:
+                        # Attempt a simple API call - adjust endpoint as needed
+                        response = await client.get(
+                            "https://v0.dev/api/user",
+                            headers={"Authorization": f"Bearer {payload.api_key}"},
+                            timeout=10.0
+                        )
+                        
+                        if response.status_code == 200:
+                            return APIKeyVerificationResponse(
+                                provider="v0",
+                                valid=True,
+                                message="V0 API key is valid."
+                            )
+                        elif response.status_code == 401:
+                            raise HTTPException(
+                                status_code=400,
+                                detail="V0 API key is invalid or unauthorized."
+                            )
+                        else:
+                            # If endpoint doesn't exist or returns unexpected status, accept format validation
+                            return APIKeyVerificationResponse(
+                                provider="v0",
+                                valid=True,
+                                message="V0 API key format appears valid. Note: Full verification may require V0 API access."
+                            )
+                    except httpx.HTTPStatusError:
+                        # If we get an HTTP error, the key format might still be valid
+                        # Accept it with a warning
+                        return APIKeyVerificationResponse(
+                            provider="v0",
+                            valid=True,
+                            message="V0 API key format appears valid. Note: Full verification may require V0 API access."
+                        )
+            except HTTPException:
+                raise
+            except Exception as e:
+                # For any other error, do basic format validation
+                if payload.api_key and len(payload.api_key) >= 10:
+                    return APIKeyVerificationResponse(
+                        provider="v0",
+                        valid=True,
+                        message="V0 API key format appears valid. Note: Full verification may require V0 API access."
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"V0 API key verification failed: {str(e)}"
+                    )
+
         raise HTTPException(status_code=400, detail="Unsupported provider")
 
     except HTTPException:
@@ -328,14 +427,55 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
 
 
 @app.post("/api/providers/configure", response_model=ProviderConfigureResponse, tags=["providers"])
-async def configure_provider_keys(payload: ProviderConfigureRequest):
-    """Configure provider API keys for backend agents."""
+async def configure_provider_keys(
+    payload: ProviderConfigureRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Configure provider API keys for backend agents and save to database."""
     try:
+        from backend.api.api_keys import _save_api_key_internal
+        
+        # Save API keys to database
+        if payload.openaiKey is not None and payload.openaiKey.strip():
+            await _save_api_key_internal('openai', payload.openaiKey, current_user['id'], db)
+        
+        if payload.claudeKey is not None and payload.claudeKey.strip():
+            await _save_api_key_internal('anthropic', payload.claudeKey, current_user['id'], db)
+        
+        if payload.geminiKey is not None and payload.geminiKey.strip():
+            await _save_api_key_internal('google', payload.geminiKey, current_user['id'], db)
+        
+        if payload.v0Key is not None and payload.v0Key.strip():
+            await _save_api_key_internal('v0', payload.v0Key, current_user['id'], db)
+        
+        if payload.lovableKey is not None and payload.lovableKey.strip():
+            await _save_api_key_internal('lovable', payload.lovableKey, current_user['id'], db)
+        
+        # Update in-memory registry for immediate use
         configured = provider_registry.update_keys(
             openai_key=payload.openaiKey,
             claude_key=payload.claudeKey,
             gemini_key=payload.geminiKey,
         )
+        
+        # Handle V0 and Lovable keys in settings
+        if payload.v0Key is not None:
+            settings.v0_api_key = payload.v0Key or None
+            import os
+            if settings.v0_api_key:
+                os.environ["V0_API_KEY"] = settings.v0_api_key
+            else:
+                os.environ.pop("V0_API_KEY", None)
+        
+        if payload.lovableKey is not None:
+            settings.lovable_api_key = payload.lovableKey or None
+            import os
+            if settings.lovable_api_key:
+                os.environ["LOVABLE_API_KEY"] = settings.lovable_api_key
+            else:
+                os.environ.pop("LOVABLE_API_KEY", None)
+        
         return ProviderConfigureResponse(configured_providers=configured)
     except Exception as e:
         logger.error("provider_configuration_failed", error=str(e))

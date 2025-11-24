@@ -56,10 +56,29 @@ export interface ExportedDocument {
 }
 
 export class ProductLifecycleService {
+  private token: string | null = null;
+
+  setToken(token: string | null) {
+    this.token = token;
+  }
+
+  private getHeaders(): HeadersInit {
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+    return headers;
+  }
+
   // Lifecycle Phases
   async getAllPhases(): Promise<LifecyclePhase[]> {
     try {
-      const response = await fetch(`${API_URL}/api/db/phases`);
+      const response = await fetch(`${API_URL}/api/db/phases`, {
+        headers: this.getHeaders(),
+        credentials: 'include',
+      });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -84,7 +103,10 @@ export class ProductLifecycleService {
   // Phase Submissions
   async getPhaseSubmissions(productId: string): Promise<PhaseSubmission[]> {
     try {
-      const response = await fetch(`${API_URL}/api/db/phase-submissions?product_id=${productId}`);
+      const response = await fetch(`${API_URL}/api/db/phase-submissions?product_id=${productId}`, {
+        headers: this.getHeaders(),
+        credentials: 'include',
+      });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -101,7 +123,10 @@ export class ProductLifecycleService {
     phaseId: string
   ): Promise<PhaseSubmission | null> {
     try {
-      const response = await fetch(`${API_URL}/api/db/phase-submissions/${productId}/${phaseId}`);
+      const response = await fetch(`${API_URL}/api/db/phase-submissions/${productId}/${phaseId}`, {
+        headers: this.getHeaders(),
+        credentials: 'include',
+      });
       
       if (!response.ok) {
         if (response.status === 404) {
@@ -143,9 +168,8 @@ export class ProductLifecycleService {
     try {
       const response = await fetch(`${API_URL}/api/db/phase-submissions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getHeaders(),
+        credentials: 'include',
         body: JSON.stringify({
           product_id: productId,
           phase_id: phaseId,
@@ -185,9 +209,8 @@ export class ProductLifecycleService {
     try {
       const response = await fetch(`${API_URL}/api/db/phase-submissions/${submissionId}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getHeaders(),
+        credentials: 'include',
         body: JSON.stringify(updates),
       });
       
@@ -232,9 +255,8 @@ export class ProductLifecycleService {
     try {
       const response = await fetch(`${API_URL}/api/db/conversation-history`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.getHeaders(),
+        credentials: 'include',
         body: JSON.stringify({
           session_id: sessionId,
           message_type: messageType,
@@ -292,7 +314,10 @@ export class ProductLifecycleService {
         params.append('product_id', options.productId);
       }
       
-      const response = await fetch(`${API_URL}/api/db/conversation-history?${params}`);
+      const response = await fetch(`${API_URL}/api/db/conversation-history?${params}`, {
+        headers: this.getHeaders(),
+        credentials: 'include',
+      });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -309,7 +334,10 @@ export class ProductLifecycleService {
     productId: string
   ): Promise<ConversationHistoryEntry[]> {
     try {
-      const response = await fetch(`${API_URL}/api/db/conversation-history?product_id=${productId}`);
+      const response = await fetch(`${API_URL}/api/db/conversation-history?product_id=${productId}`, {
+        headers: this.getHeaders(),
+        credentials: 'include',
+      });
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }

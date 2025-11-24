@@ -6,8 +6,6 @@ import os
 class Settings(BaseSettings):
     # Database Configuration
     database_url: str = os.getenv("DATABASE_URL", "postgresql://user:password@postgres:5432/agentic_pm_db")
-    supabase_url: str = os.getenv("VITE_SUPABASE_URL", "")
-    supabase_anon_key: str = os.getenv("VITE_SUPABASE_ANON_KEY", "")
 
     # AI Provider API Keys
     openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
@@ -32,6 +30,10 @@ class Settings(BaseSettings):
     # GitHub Integration
     github_token: str = os.getenv("GITHUB_TOKEN", "")
     github_org: str = os.getenv("GITHUB_ORG", "")
+
+    # Design Tool Integration
+    v0_api_key: Optional[str] = os.getenv("V0_API_KEY")
+    lovable_api_key: Optional[str] = os.getenv("LOVABLE_API_KEY")
 
     # Redis Configuration
     redis_url: str = os.getenv("REDIS_URL", "redis://redis:6379/0")

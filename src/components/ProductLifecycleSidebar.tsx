@@ -11,8 +11,8 @@ interface ProductLifecycleSidebarProps {
 }
 
 export function ProductLifecycleSidebar({
-  phases,
-  submissions,
+  phases = [],
+  submissions = [],
   currentPhaseId,
   onPhaseSelect,
   productId,
@@ -24,13 +24,15 @@ export function ProductLifecycleSidebar({
     const completed = new Set<string>();
     const inProgress = new Set<string>();
 
-    submissions.forEach((sub) => {
-      if (sub.status === 'completed' || sub.status === 'reviewed') {
-        completed.add(sub.phase_id);
-      } else if (sub.status === 'in_progress') {
-        inProgress.add(sub.phase_id);
-      }
-    });
+    if (Array.isArray(submissions)) {
+      submissions.forEach((sub) => {
+        if (sub.status === 'completed' || sub.status === 'reviewed') {
+          completed.add(sub.phase_id);
+        } else if (sub.status === 'in_progress') {
+          inProgress.add(sub.phase_id);
+        }
+      });
+    }
 
     setCompletedPhases(completed);
     setInProgressPhases(inProgress);
@@ -87,7 +89,7 @@ export function ProductLifecycleSidebar({
     : 0;
 
   return (
-    <div className="h-full bg-white border-r border-gray-200 flex flex-col">
+    <div className="h-full max-h-[calc(100vh-8rem)] bg-white border-r border-gray-200 flex flex-col">
       <div className="p-6 border-b border-gray-200">
         <h2 className="text-lg font-bold text-gray-900 mb-2">Product Lifecycle</h2>
         <p className="text-sm text-gray-600 mb-4">
@@ -111,7 +113,12 @@ export function ProductLifecycleSidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {phases.map((phase, index) => {
+        {!Array.isArray(phases) || phases.length === 0 ? (
+          <div className="text-center py-8" style={{ color: 'var(--text-secondary)' }}>
+            <p className="text-sm">No lifecycle phases available. Please select a product first.</p>
+          </div>
+        ) : (
+          phases.map((phase, index) => {
           const status = getPhaseStatus(phase, index);
           const isActive = phase.id === currentPhaseId;
           const isLocked = status === 'locked';
@@ -165,7 +172,8 @@ export function ProductLifecycleSidebar({
               </div>
             </button>
           );
-        })}
+        })
+        )}
       </div>
 
       {productId && (

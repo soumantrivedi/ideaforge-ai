@@ -1,0 +1,19 @@
+<svg width="1040" height="260" viewBox="0 0 1040 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="IdeaForge AI - Enterprise Agentic PM logo">
+  <g transform="translate(56,46)">
+    <line x1="-10" y1="74" x2="34" y2="74" stroke="#071B3D" stroke-width="6" stroke-linecap="round"/>
+    <polygon points="34,34 140,74 34,114" fill="#071B3D"/>
+    <polygon points="34,34 140,74 140,14 34,-26" fill="#0E2A5C"/>
+    <polygon points="34,114 140,74 140,134 34,174" fill="#0A214A"/>
+    <line x1="140" y1="74" x2="190" y2="44" stroke="#4A5875" stroke-width="5" stroke-linecap="round"/>
+    <line x1="140" y1="74" x2="202" y2="74" stroke="#4A5875" stroke-width="5" stroke-linecap="round"/>
+    <line x1="140" y1="74" x2="190" y2="104" stroke="#4A5875" stroke-width="5" stroke-linecap="round"/>
+    <circle cx="190" cy="44" r="5" fill="#4A5875"/>
+    <circle cx="202" cy="74" r="5" fill="#4A5875"/>
+    <circle cx="190" cy="104" r="5" fill="#4A5875"/>
+  </g>
+  <g transform="translate(290,112)">
+    <text x="0" y="0" font-family="Source Serif 4, Libre Baskerville, Georgia, 'Times New Roman', serif" font-weight="700" font-size="60" fill="#071B3D" letter-spacing="0.4">IdeaForge</text>
+    <text x="362" y="0" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="700" font-size="60" fill="#071B3D" letter-spacing="1.1">AI</text>
+    <text x="2" y="54" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-weight="500" font-size="22" fill="#4A5875" letter-spacing="1.0">Enterprise Agentic PM</text>
+  </g>
+</svg>
