@@ -31,6 +31,8 @@ from backend.models.schemas import (
     AgentCapability,
 )
 from backend.agents.orchestrator import AgenticOrchestrator
+from backend.agents.agno_orchestrator import AgnoAgenticOrchestrator
+from backend.agents import AGNO_AVAILABLE
 from backend.database import init_db, check_db_health, get_db
 from backend.api.database import router as db_router
 from backend.api.design import router as design_router
@@ -49,7 +51,17 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
-orchestrator = AgenticOrchestrator()
+# Initialize orchestrator based on feature flag
+if settings.feature_agno_framework and AGNO_AVAILABLE:
+    try:
+        orchestrator = AgnoAgenticOrchestrator(enable_rag=True)
+        logger.info("agno_orchestrator_initialized", framework="agno", rag_enabled=True)
+    except Exception as e:
+        logger.warning("agno_orchestrator_failed", error=str(e), falling_back="legacy")
+        orchestrator = AgenticOrchestrator()
+else:
+    orchestrator = AgenticOrchestrator()
+    logger.info("legacy_orchestrator_initialized", framework="legacy")
 
 
 def _map_provider_exception(exc: Exception):
