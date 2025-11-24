@@ -15,17 +15,19 @@ try:
     from agno.models.google import Gemini
     from agno.knowledge.knowledge import Knowledge
     from agno.vectordb.pgvector import PgVector, SearchType
-    from agno.embedder.openai import OpenAIEmbedder
-    # Try alternative import paths for embedders
+    # Embedders are in agno.knowledge.embedder
     try:
-        from agno.knowledge.embedder.openai import OpenAIEmbedder as KBOpenAIEmbedder
+        from agno.knowledge.embedder.openai import OpenAIEmbedder
         from agno.knowledge.embedder.anthropic import AnthropicEmbedder
         from agno.knowledge.embedder.google import GoogleEmbedder
-    except ImportError:
-        # Fallback to main embedder module
-        from agno.embedder.openai import OpenAIEmbedder as KBOpenAIEmbedder
+        KBOpenAIEmbedder = OpenAIEmbedder
+    except ImportError as e:
+        # If embedders are not available, set to None
+        OpenAIEmbedder = None
+        KBOpenAIEmbedder = None
         AnthropicEmbedder = None
         GoogleEmbedder = None
+        structlog.get_logger().warning("agno_embedders_not_available", error=str(e))
     AGNO_AVAILABLE = True
 except ImportError as e:
     AGNO_AVAILABLE = False
@@ -120,22 +122,25 @@ class AgnoBaseAgent(ABC):
         try:
             # Get embedder based on available provider
             embedder = None
-            if provider_registry.has_openai_key():
+            if provider_registry.has_openai_key() and OpenAIEmbedder:
                 try:
-                    embedder = KBOpenAIEmbedder() if 'KBOpenAIEmbedder' in globals() else OpenAIEmbedder()
-                except:
                     embedder = OpenAIEmbedder()
+                except Exception as e:
+                    self.logger.warning("openai_embedder_init_failed", error=str(e))
             elif provider_registry.has_claude_key() and AnthropicEmbedder:
-                embedder = AnthropicEmbedder()
+                try:
+                    embedder = AnthropicEmbedder()
+                except Exception as e:
+                    self.logger.warning("anthropic_embedder_init_failed", error=str(e))
             elif provider_registry.has_gemini_key() and GoogleEmbedder:
-                embedder = GoogleEmbedder()
-            else:
-                # Fallback to OpenAI embedder if available
-                if provider_registry.has_openai_key():
-                    embedder = OpenAIEmbedder()
-                else:
-                    self.logger.warning("no_embedder_available", message="RAG enabled but no embedder available")
-                    return None
+                try:
+                    embedder = GoogleEmbedder()
+                except Exception as e:
+                    self.logger.warning("google_embedder_init_failed", error=str(e))
+            
+            if not embedder:
+                self.logger.warning("no_embedder_available", message="RAG enabled but no embedder available")
+                return None
             
             # Create pgvector database connection
             vector_db = PgVector(
