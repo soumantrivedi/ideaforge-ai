@@ -40,6 +40,7 @@ from backend.api.auth import router as auth_router, get_current_user
 from backend.api.users import router as users_router
 from backend.api.products import router as products_router
 from backend.api.conversations import router as conversations_router
+from backend.api.product_scoring import router as product_scoring_router
 from backend.services.provider_registry import provider_registry
 
 structlog.configure(
@@ -151,6 +152,7 @@ app.include_router(conversations_router)
 app.include_router(db_router)
 app.include_router(design_router)
 app.include_router(api_keys_router)
+app.include_router(product_scoring_router)
 
 
 @app.get("/", tags=["health"])

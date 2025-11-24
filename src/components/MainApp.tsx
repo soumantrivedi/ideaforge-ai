@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight, BarChart3 } from 'lucide-react';
 import { ProductChatInterface } from './ProductChatInterface';
 import { AgentStatusPanel } from './AgentStatusPanel';
 import { ProductLifecycleSidebar } from './ProductLifecycleSidebar';
@@ -10,10 +10,12 @@ import { ProductsDashboard } from './ProductsDashboard';
 import { PortfolioView } from './PortfolioView';
 import { ConversationHistory } from './ConversationHistory';
 import { UserProfile } from './UserProfile';
+import { IdeaScoreDashboard } from './IdeaScoreDashboard';
+import { ProductSummaryPRDGenerator } from './ProductSummaryPRDGenerator';
 import { useAuth } from '../contexts/AuthContext';
 import { lifecycleService, type LifecyclePhase, type PhaseSubmission } from '../lib/product-lifecycle-service';
 
-type View = 'dashboard' | 'chat' | 'settings' | 'knowledge' | 'portfolio' | 'history' | 'profile';
+type View = 'dashboard' | 'chat' | 'settings' | 'knowledge' | 'portfolio' | 'history' | 'profile' | 'scoring';
 
 export function MainApp() {
   const { user, logout, token } = useAuth();
@@ -166,7 +168,7 @@ export function MainApp() {
               <LayoutDashboard className="w-5 h-5" />
               <span>Dashboard</span>
             </button>
-            {(['portfolio', 'chat', 'history', 'profile', 'settings', 'knowledge'] as View[]).map((viewName) => {
+            {(['portfolio', 'chat', 'history', 'profile', 'settings', 'knowledge', 'scoring'] as View[]).map((viewName) => {
               const icons = {
                 portfolio: Folder,
                 chat: MessageSquare,
@@ -174,6 +176,7 @@ export function MainApp() {
                 profile: User,
                 settings: Settings,
                 knowledge: Database,
+                scoring: BarChart3,
               };
               const labels = {
                 portfolio: 'Portfolio',
@@ -182,6 +185,7 @@ export function MainApp() {
                 profile: 'Profile',
                 settings: 'Settings',
                 knowledge: 'Knowledge Base',
+                scoring: 'Idea Scoring',
               };
               const Icon = icons[viewName];
               return (
@@ -367,6 +371,90 @@ export function MainApp() {
                 </div>
               )}
               <KnowledgeBaseManagerWrapper productId={productId || undefined} />
+            </div>
+          )}
+          {view === 'scoring' && (
+            <div className="space-y-6">
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Idea Score Dashboard</h2>
+                <p className="text-gray-600">
+                  View product idea scores, generate summaries, and create standardized PRDs from conversation sessions.
+                </p>
+              </div>
+              
+              {!productId ? (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-md border" style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)' }}>
+                    <p className="text-sm mb-4" style={{ color: 'var(--text-primary)' }}>
+                      <strong>Select a product:</strong> Choose a product to view scores or generate summaries and PRDs.
+                    </p>
+                    <ProductsDashboard
+                      onProductSelect={(id) => {
+                        console.log('Scoring view: Product selected:', id);
+                        if (id) {
+                          setProductId(id);
+                        }
+                      }}
+                      compact={true}
+                    />
+                  </div>
+                  
+                  {user?.tenant_id && (
+                    <div className="mt-6">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Tenant-Level Scores</h3>
+                      <IdeaScoreDashboard
+                        tenantId={user.tenant_id}
+                        onProductSelect={(id) => {
+                          setProductId(id);
+                          setView('scoring');
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <button
+                        onClick={() => setProductId('')}
+                        className="text-sm text-blue-600 hover:text-blue-700 mb-2"
+                      >
+                        ← Back to all products
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Generate Summary & PRD</h3>
+                      <ProductSummaryPRDGenerator
+                        productId={productId}
+                        canEdit={true} // TODO: Check actual permissions
+                        onSummaryGenerated={(summaryId) => {
+                          console.log('Summary generated:', summaryId);
+                        }}
+                        onPRDGenerated={(prdId) => {
+                          console.log('PRD generated:', prdId);
+                        }}
+                        onScoreGenerated={(scoreId) => {
+                          console.log('Score generated:', scoreId);
+                        }}
+                      />
+                    </div>
+                    
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Product Scores</h3>
+                      <IdeaScoreDashboard
+                        productId={productId}
+                        onProductSelect={(id) => {
+                          setProductId(id);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </main>

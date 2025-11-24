@@ -8,8 +8,11 @@ from uuid import UUID
 import structlog
 
 from backend.agents.agno_coordinator_agent import AgnoCoordinatorAgent
+from backend.agents.agno_enhanced_coordinator import AgnoEnhancedCoordinator
 from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
 from backend.agents.agno_ideation_agent import AgnoIdeationAgent
+from backend.agents.agno_summary_agent import AgnoSummaryAgent
+from backend.agents.agno_scoring_agent import AgnoScoringAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.models.schemas import AgentMessage, AgentResponse, MultiAgentRequest, MultiAgentResponse, AgentInteraction
 
@@ -19,12 +22,18 @@ logger = structlog.get_logger()
 class AgnoAgenticOrchestrator:
     """Orchestrator using Agno framework for agent management."""
     
-    def __init__(self, enable_rag: bool = True):
+    def __init__(self, enable_rag: bool = True, use_enhanced: bool = True):
         """Initialize orchestrator with Agno coordinator and agents."""
-        self.coordinator = AgnoCoordinatorAgent(enable_rag=enable_rag)
+        if use_enhanced:
+            self.coordinator = AgnoEnhancedCoordinator(enable_rag=enable_rag)
+        else:
+            self.coordinator = AgnoCoordinatorAgent(enable_rag=enable_rag)
+        
         self.agents: Dict[str, Any] = {
             "prd_authoring": AgnoPRDAuthoringAgent(enable_rag=enable_rag),
             "ideation": AgnoIdeationAgent(enable_rag=enable_rag),
+            "summary": AgnoSummaryAgent(enable_rag=enable_rag),
+            "scoring": AgnoScoringAgent(enable_rag=enable_rag),
             "rag": RAGAgent(),  # RAG agent always has RAG enabled
         }
         self.logger = logger.bind(component="agno_orchestrator")
