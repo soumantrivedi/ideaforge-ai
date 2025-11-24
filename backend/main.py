@@ -8,8 +8,15 @@ import structlog
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from openai import AsyncOpenAI
+from openai import AuthenticationError as OpenAIAuthenticationError
+from openai import APIError as OpenAIAPIError
+from openai import APIConnectionError as OpenAIConnectionError
 from anthropic import AsyncAnthropic
+from anthropic import AuthenticationError as ClaudeAuthenticationError
+from anthropic import APIError as ClaudeAPIError
+from anthropic import APIConnectionError as ClaudeConnectionError
 import google.generativeai as genai
+from google.api_core.exceptions import GoogleAPIError, PermissionDenied, Unauthenticated
 
 from backend.config import settings
 from backend.models.schemas import (
@@ -35,6 +42,30 @@ structlog.configure(
 logger = structlog.get_logger()
 
 orchestrator = AgenticOrchestrator()
+
+
+def _map_provider_exception(exc: Exception):
+    """Translate upstream LLM provider errors into actionable HTTP responses."""
+    if isinstance(exc, OpenAIAuthenticationError):
+        raise HTTPException(
+            status_code=401,
+            detail="OpenAI rejected the API key. Please verify the key in Settings → Providers."
+        )
+    if isinstance(exc, ClaudeAuthenticationError):
+        raise HTTPException(
+            status_code=401,
+            detail="Anthropic Claude rejected the API key. Please verify the key in Settings → Providers."
+        )
+    if isinstance(exc, (PermissionDenied, Unauthenticated)):
+        raise HTTPException(
+            status_code=401,
+            detail="Google Gemini rejected the API key. Please verify the key in Settings → Providers."
+        )
+    if isinstance(exc, (OpenAIConnectionError, ClaudeConnectionError, GoogleAPIError, OpenAIAPIError, ClaudeAPIError)):
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to reach the configured LLM provider. Please retry or update the provider settings."
+        )
 
 
 class APIKeyVerificationRequest(BaseModel):
@@ -163,6 +194,7 @@ async def process_agent_request(request: AgentRequest):
         logger.error("invalid_request", error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        _map_provider_exception(e)
         logger.error("processing_error", error=str(e))
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -203,6 +235,7 @@ async def execute_workflow(
         logger.error("invalid_workflow", error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        _map_provider_exception(e)
         logger.error("workflow_error", error=str(e))
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -230,6 +263,7 @@ async def process_multi_agent_request(request: MultiAgentRequest):
         logger.error("invalid_multi_agent_request", error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        _map_provider_exception(e)
         logger.error("multi_agent_error", error=str(e))
         raise HTTPException(status_code=500, detail="Internal server error")
 
