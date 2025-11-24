@@ -339,14 +339,6 @@ async def process_multi_agent_request(
         # Create a new request with authenticated user ID for security
         # Use copy of request but with authenticated user ID
         authenticated_request = request.model_copy(update={"user_id": authenticated_user_id})
-            user_id=authenticated_user_id,
-            product_id=request.product_id,
-            query=request.query,
-            coordination_mode=request.coordination_mode,
-            primary_agent=request.primary_agent,
-            supporting_agents=request.supporting_agents,
-            context=request.context
-        )
 
         response = await orchestrator.process_multi_agent_request(
             user_id=authenticated_user_id,
