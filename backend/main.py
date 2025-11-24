@@ -932,7 +932,7 @@ class AgnoStatusResponse(BaseModel):
     agno_available: bool
     agno_enabled: bool
     providers_configured: bool
-    configured_providers: List[str]
+    configured_providers: list[str]
     can_initialize: bool
     message: str
 
