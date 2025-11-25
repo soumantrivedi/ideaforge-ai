@@ -360,19 +360,19 @@ Provide your validation response in this format:
           // After validation (and refinement if needed), generate prototypes
           console.log('Generating prototypes with validated prompts...');
           
-          // Generate V0 prototype
+          // Generate V0 prototype using multi-agent enhanced prompts
           try {
-            await handleGenerateMockup('v0');
+            await handleCreateProject('v0', promptsObj['v0_prompt']);
           } catch (error) {
-            console.error('Error generating V0 prototype:', error);
+            console.error('Error creating V0 project:', error);
             // Continue with Lovable even if V0 fails
           }
           
-          // Generate Lovable prototype
+          // Generate Lovable prototype using multi-agent enhanced prompts
           try {
-            await handleGenerateMockup('lovable');
+            await handleCreateProject('lovable', promptsObj['lovable_prompt']);
           } catch (error) {
-            console.error('Error generating Lovable prototype:', error);
+            console.error('Error creating Lovable project:', error);
             // Continue with submission even if Lovable fails
           }
           
@@ -838,6 +838,102 @@ Provide your validation response in this format:
       alert(`Failed to generate ${provider} prompt: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsGeneratingPrompt({ ...isGeneratingPrompt, [provider]: false });
+    }
+  };
+
+  const handleCreateProject = async (provider: 'v0' | 'lovable', prompt: string) => {
+    if (!productId || !sessionId) {
+      alert('Product ID and Session ID are required');
+      return;
+    }
+    if (!user || !user.id) {
+      alert('User not authenticated. Please log in to create projects.');
+      return;
+    }
+    if (!prompt.trim()) {
+      alert(`Please generate a ${provider} prompt first using "Help with AI"`);
+      return;
+    }
+
+    setIsGeneratingMockup({ ...isGeneratingMockup, [provider]: true });
+
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+      // Use the new create-project endpoint with multi-agent enhancement
+      const response = await fetch(`${API_URL}/api/design/create-project`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          product_id: productId,
+          phase_submission_id: selectedSubmissionId,
+          provider,
+          prompt,
+          use_multi_agent: true, // Use multi-agent to enhance prompt
+          context: {
+            phase_name: phase.phase_name,
+            form_data: formData,
+            all_form_fields: phase.required_fields,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to create project: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+
+      // For V0, show the generated code and project URL
+      if (provider === 'v0' && result.project_url) {
+        const v0Message = `V0 (Vercel) project created!\n\n**Project URL:** ${result.project_url}\n\n**Enhanced Prompt Used:**\n${result.enhanced_prompt || prompt}\n\n${result.code ? `**Generated Code:**\n\`\`\`\n${result.code.substring(0, 1000)}${result.code.length > 1000 ? '...' : ''}\n\`\`\`\n` : ''}Click the project URL to view your prototype.`;
+
+        window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+          detail: {
+            message: v0Message,
+            productId,
+          }
+        }));
+        
+        // Open project URL in new tab
+        if (result.project_url) {
+          window.open(result.project_url, '_blank');
+        }
+      }
+
+      // For Lovable, open project URL if available
+      if (provider === 'lovable' && result.project_url) {
+        const lovableMessage = `Lovable AI project created!\n\n**Project URL:** ${result.project_url}\n\n**Enhanced Prompt Used:**\n${result.enhanced_prompt || prompt}\n\nClick the project URL to view your prototype.`;
+
+        window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+          detail: {
+            message: lovableMessage,
+            productId,
+          }
+        }));
+        
+        // Open project URL in new tab
+        window.open(result.project_url, '_blank');
+      }
+
+      alert(`${provider === 'v0' ? 'V0' : 'Lovable'} project created successfully! ${result.project_url ? 'Opening project in new tab...' : ''}`);
+
+      // Trigger refresh of mockup gallery
+      setMockupRefreshTrigger(prev => prev + 1);
+    } catch (error) {
+      console.error(`Error creating ${provider} project:`, error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (errorMessage.includes('API key is not configured')) {
+        alert(`${provider === 'v0' ? 'V0' : 'Lovable'} API key is not configured. Please configure it in Settings.`);
+      } else {
+        alert(`Failed to create ${provider} project: ${errorMessage}`);
+      }
+    } finally {
+      setIsGeneratingMockup({ ...isGeneratingMockup, [provider]: false });
     }
   };
 

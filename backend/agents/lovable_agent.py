@@ -255,6 +255,44 @@ The prompt should be ready to paste directly into Lovable for generating prototy
                         "has_project": project_id is not None
                     }
                 }
+    
+    async def create_lovable_project(
+        self,
+        lovable_prompt: str,
+        lovable_api_key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        product_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a Lovable AI project using the Lovable API.
+        This generates a full prototype and returns the project URL.
+        """
+        api_key = lovable_api_key or settings.lovable_api_key
+        
+        if not api_key:
+            raise ValueError("Lovable API key is not configured")
+        
+        # Use the existing generate_design_mockup which creates projects
+        result = await self.generate_design_mockup(
+            lovable_prompt=lovable_prompt,
+            lovable_api_key=api_key,
+            user_id=user_id,
+            generate_thumbnails=True
+        )
+        
+        # Ensure we have a project URL - Lovable API should return this
+        if not result.get("project_url"):
+            # If no project URL, construct one from project_id if available
+            project_id = result.get("project_id")
+            if project_id:
+                result["project_url"] = f"https://lovable.dev/projects/{project_id}"
+            else:
+                # Fallback: generate a link that opens Lovable with the prompt
+                import urllib.parse
+                encoded_prompt = urllib.parse.quote(lovable_prompt)
+                result["project_url"] = f"https://lovable.dev/generate?prompt={encoded_prompt}"
+        
+        return result
                 
             except httpx.TimeoutException:
                 raise ValueError("Lovable API request timed out. Please try again.")

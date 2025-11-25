@@ -43,6 +43,15 @@ class GenerateThumbnailsRequest(BaseModel):
     num_previews: int = 3
 
 
+class CreateProjectRequest(BaseModel):
+    product_id: str
+    phase_submission_id: Optional[str] = None
+    provider: str  # "v0" or "lovable"
+    prompt: str
+    use_multi_agent: bool = True  # Use multi-agent to enhance prompt
+    context: Optional[Dict[str, Any]] = None
+
+
 @router.post("/generate-prompt")
 async def generate_design_prompt(
     request: GeneratePromptRequest,
@@ -339,4 +348,175 @@ async def delete_design_mockup(
     except Exception as e:
         await db.rollback()
         logger.error("error_deleting_design_mockup", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/create-project")
+async def create_design_project(
+    request: CreateProjectRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create a V0 or Lovable project using multi-agent enhanced prompts.
+    Uses multi-agent system to refine prompts before submission.
+    """
+    try:
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        from backend.agents.agno_orchestrator import AgnoAgenticOrchestrator
+        from backend.models.schemas import MultiAgentRequest
+        
+        # Load user-specific API keys
+        user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+        
+        # Enhance prompt using multi-agent system if requested
+        enhanced_prompt = request.prompt
+        if request.use_multi_agent:
+            try:
+                orchestrator = AgnoAgenticOrchestrator()
+                
+                # Build context for multi-agent enhancement
+                enhancement_context = request.context or {}
+                enhancement_context.update({
+                    "product_id": request.product_id,
+                    "provider": request.provider,
+                    "original_prompt": request.prompt,
+                    "task": "enhance_prototype_prompt"
+                })
+                
+                # Determine primary agent based on provider
+                primary_agent = "v0_design" if request.provider == "v0" else "lovable_design"
+                supporting_agents = ["rag", "analysis", "strategy"]
+                
+                # Create enhancement query
+                enhancement_query = f"""Enhance and optimize the following {request.provider.upper()} prototype generation prompt to ensure it will create a high-quality, production-ready prototype:
+
+Original Prompt:
+{request.prompt}
+
+Context:
+{enhancement_context.get('phase_name', 'Design phase')}
+{enhancement_context.get('form_data', {})}
+
+Please enhance this prompt to:
+1. Be more specific and detailed
+2. Include all necessary technical requirements
+3. Ensure it follows {request.provider.upper()} best practices
+4. Include all context from previous phases
+5. Be optimized for the {request.provider.upper()} API
+
+Return only the enhanced prompt, ready to use with the {request.provider.upper()} API."""
+                
+                multi_agent_request = MultiAgentRequest(
+                    query=enhancement_query,
+                    coordination_mode="enhanced_collaborative",
+                    primary_agent=primary_agent,
+                    supporting_agents=supporting_agents,
+                    context=enhancement_context
+                )
+                
+                multi_agent_response = await orchestrator.process_multi_agent_request(
+                    user_id=UUID(current_user["id"]),
+                    request=multi_agent_request
+                )
+                
+                enhanced_prompt = multi_agent_response.response.strip()
+                logger.info("prompt_enhanced", 
+                           provider=request.provider,
+                           original_length=len(request.prompt),
+                           enhanced_length=len(enhanced_prompt))
+            except Exception as e:
+                logger.warning("multi_agent_enhancement_failed", error=str(e))
+                # Continue with original prompt if enhancement fails
+                enhanced_prompt = request.prompt
+        
+        # Generate project using appropriate agent
+        if request.provider == "v0":
+            v0_key = user_keys.get("v0") or settings.v0_api_key
+            if not v0_key:
+                raise HTTPException(status_code=400, detail="V0 API key is not configured. Please configure it in Settings.")
+            
+            # Use V0 Platform API to create project
+            result = await v0_agent.create_v0_project_with_api(
+                v0_prompt=enhanced_prompt,
+                v0_api_key=v0_key,
+                user_id=str(current_user["id"]),
+                product_id=request.product_id
+            )
+        elif request.provider == "lovable":
+            lovable_key = user_keys.get("lovable") or settings.lovable_api_key
+            if not lovable_key:
+                raise HTTPException(status_code=400, detail="Lovable API key is not configured. Please configure it in Settings.")
+            
+            # Use Lovable API to create project
+            result = await lovable_agent.create_lovable_project(
+                lovable_prompt=enhanced_prompt,
+                lovable_api_key=lovable_key,
+                user_id=str(current_user["id"]),
+                product_id=request.product_id
+            )
+        else:
+            raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")
+        
+        # Save project to database
+        try:
+            import json
+            insert_query = text("""
+                INSERT INTO design_mockups 
+                (product_id, phase_submission_id, user_id, provider, prompt, image_url, thumbnail_url, project_url, metadata)
+                VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, :image_url, :thumbnail_url, :project_url, CAST(:metadata AS jsonb))
+                RETURNING id, created_at
+            """)
+            
+            image_url = result.get("image_url") or result.get("thumbnail_url") or ""
+            thumbnail_url = result.get("thumbnail_url") or image_url
+            project_url = result.get("project_url") or result.get("url") or result.get("demo") or ""
+            
+            metadata_json = json.dumps({
+                "enhanced_prompt": enhanced_prompt,
+                "original_prompt": request.prompt,
+                "use_multi_agent": request.use_multi_agent,
+                **result
+            })
+            
+            insert_result = await db.execute(insert_query, {
+                "product_id": request.product_id,
+                "phase_submission_id": request.phase_submission_id,
+                "user_id": str(current_user["id"]),
+                "provider": request.provider,
+                "prompt": enhanced_prompt,
+                "image_url": image_url,
+                "thumbnail_url": thumbnail_url,
+                "project_url": project_url,
+                "metadata": metadata_json
+            })
+            
+            await db.commit()
+            row = insert_result.fetchone()
+            project_id = str(row[0]) if row else None
+        except Exception as db_error:
+            if "does not exist" in str(db_error) or "relation" in str(db_error).lower():
+                logger.warning("design_mockups_table_not_found", error=str(db_error))
+                project_id = None
+            else:
+                await db.rollback()
+                raise
+        
+        return {
+            "id": project_id,
+            "provider": request.provider,
+            "project_url": project_url,
+            "image_url": image_url,
+            "thumbnail_url": thumbnail_url,
+            "code": result.get("code", ""),
+            "enhanced_prompt": enhanced_prompt,
+            "original_prompt": request.prompt,
+            "metadata": result
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error("error_creating_design_project", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

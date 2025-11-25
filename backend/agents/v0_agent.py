@@ -297,4 +297,85 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
             "instructions": "Code generated. To deploy: 1) Create a new Vercel project, 2) Paste the generated code, 3) Deploy",
             "metadata": mockup_result.get("metadata", {})
         }
+    
+    async def create_v0_project_with_api(
+        self,
+        v0_prompt: str,
+        v0_api_key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        product_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a V0 project using the V0 Platform API.
+        Uses v0.chats.create() to create a project and get a live demo URL.
+        """
+        api_key = v0_api_key or settings.v0_api_key
+        
+        if not api_key:
+            raise ValueError("V0 API key is not configured")
+        
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            try:
+                # V0 Platform API endpoint for creating projects
+                # Documentation: https://v0.dev/api
+                response = await client.post(
+                    "https://api.v0.dev/v1/chats",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "message": v0_prompt,
+                        "model": "v0-1.5-md"
+                    }
+                )
+                
+                if response.status_code == 401:
+                    raise ValueError("V0 API key is invalid or unauthorized")
+                elif response.status_code != 200 and response.status_code != 201:
+                    error_text = response.text
+                    try:
+                        error_json = response.json()
+                        error_text = error_json.get("error", {}).get("message", error_text)
+                    except:
+                        pass
+                    raise ValueError(f"V0 API error: {response.status_code} - {error_text}")
+                
+                result = response.json()
+                
+                # Extract project information
+                chat_id = result.get("id") or result.get("chat_id")
+                web_url = result.get("webUrl") or result.get("web_url") or result.get("url")
+                demo_url = result.get("demo") or result.get("demoUrl") or result.get("demo_url")
+                files = result.get("files", [])
+                code = "\n\n".join([f.get("content", "") for f in files if f.get("content")])
+                
+                # Use demo URL if available, otherwise web URL
+                project_url = demo_url or web_url or f"https://v0.dev/chat/{chat_id}" if chat_id else None
+                
+                return {
+                    "chat_id": chat_id,
+                    "project_url": project_url,
+                    "web_url": web_url,
+                    "demo_url": demo_url,
+                    "code": code,
+                    "files": files,
+                    "prompt": v0_prompt,
+                    "image_url": None,  # V0 doesn't provide images directly
+                    "thumbnail_url": None,
+                    "metadata": {
+                        "api_version": "v1",
+                        "model_used": "v0-1.5-md",
+                        "num_files": len(files),
+                        "has_demo": demo_url is not None
+                    }
+                }
+                
+            except httpx.TimeoutException:
+                raise ValueError("V0 API request timed out. Please try again.")
+            except httpx.RequestError as e:
+                raise ValueError(f"V0 API connection error: {str(e)}")
+            except Exception as e:
+                logger.error("v0_project_creation_error", error=str(e), api_key_length=len(api_key) if api_key else 0)
+                raise ValueError(f"V0 API error: {str(e)}")
 
