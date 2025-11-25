@@ -47,17 +47,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Get Git SHA
+        id: git-sha
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Get branch name (sanitized)
+        id: branch-name
+        run: |
+          BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
+          if [ -z "$BRANCH_NAME" ] || [ "$BRANCH_NAME" = "head" ]; then
+            BRANCH_NAME="main"
+          fi
+          echo "name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "Branch name (sanitized): $BRANCH_NAME"
+
       - name: Extract metadata for backend
         id: meta-backend
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix={{branch}}-
+            type=sha,format=short,prefix=
+            type=raw,value=${{ steps.branch-name.outputs.name }}-${{ steps.git-sha.outputs.sha }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Extract metadata for frontend
@@ -66,11 +77,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix={{branch}}-
+            type=sha,format=short,prefix=
+            type=raw,value=${{ steps.branch-name.outputs.name }}-${{ steps.git-sha.outputs.sha }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Get Git SHA

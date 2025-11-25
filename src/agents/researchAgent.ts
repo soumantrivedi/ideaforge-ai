@@ -30,7 +30,7 @@ Your role is to:
 
 Provide comprehensive but concise research that will inform product requirements.
 Format your response as a structured JSON object with competitors, marketTrends, userNeeds, and technologicalConsiderations.`,
-    model: 'gpt-4o',
+    model: 'gpt-5.1',
   });
 
   return agent;

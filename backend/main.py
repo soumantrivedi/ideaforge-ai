@@ -187,12 +187,34 @@ app = FastAPI(
     openapi_url="/api/openapi.json"
 )
 
+# Build CORS allowed origins list
+cors_origins = [
+    settings.frontend_url,
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:5173",
+    "http://localhost",  # For ingress access (port 80)
+    "http://localhost:80",  # Explicit port 80
+    "http://localhost:8080",  # For kind cluster with port 8080
+    "http://ideaforge.local",  # For hostname-based access
+    "http://api.ideaforge.local",  # For API hostname
+]
+
+# Add environment variable origins if set
+import os
+env_origins = os.getenv("CORS_ORIGINS", "").split(",")
+cors_origins.extend([origin.strip() for origin in env_origins if origin.strip()])
+
+# Remove duplicates and empty strings
+cors_origins = list(set([origin for origin in cors_origins if origin]))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://localhost:3000", "http://localhost:3001", "http://localhost:5173"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include routers

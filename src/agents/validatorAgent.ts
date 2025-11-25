@@ -30,7 +30,7 @@ Your role is to:
 
 Be thorough but constructive. Focus on making the PRD actionable for engineering teams.
 Format your response as a structured JSON object.`,
-    model: 'gpt-4o',
+    model: 'gpt-5.1',
   });
 
   return agent;

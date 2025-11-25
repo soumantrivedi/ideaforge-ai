@@ -33,7 +33,7 @@ Your role is to:
 Use the market research to inform your analysis.
 Provide strategic insights that will guide PRD development.
 Format your response as a structured JSON object.`,
-    model: 'gpt-4o',
+    model: 'gpt-5.1',
   });
 
   return agent;

@@ -20,7 +20,7 @@ spec:
       containers:
       - name: backend
         # Image will be updated by make kind-update-images
-        image: ideaforge-ai-backend:f6b23ea
+        image: ideaforge-ai-backend:da359d6
         imagePullPolicy: Never
         ports:
         - containerPort: 8000
@@ -178,6 +178,19 @@ spec:
             secretKeyRef:
               name: ideaforge-ai-secrets
               key: GITHUB_ORG
+              optional: true
+        # Atlassian Configuration (can use ATLASSIAN_EMAIL + ATLASSIAN_API_TOKEN or separate JIRA/CONFLUENCE)
+        - name: ATLASSIAN_EMAIL
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: ATLASSIAN_EMAIL
+              optional: true
+        - name: ATLASSIAN_API_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: ATLASSIAN_API_TOKEN
               optional: true
         # Application Configuration
         - name: BACKEND_PORT

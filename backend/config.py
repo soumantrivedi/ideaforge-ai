@@ -43,9 +43,13 @@ class Settings(BaseSettings):
     session_expires_in: int = int(os.getenv("SESSION_EXPIRES_IN", "86400"))
 
     # Agent Configuration
-    agent_model_primary: str = os.getenv("AGENT_MODEL_PRIMARY", "gpt-4o")
-    agent_model_secondary: str = os.getenv("AGENT_MODEL_SECONDARY", "claude-sonnet-4-5-20250929")
-    agent_model_tertiary: str = os.getenv("AGENT_MODEL_TERTIARY", "gemini-2.0-flash-exp")
+    # Updated to latest models as of November 2025:
+    # - GPT-5.1: Best for product requirements, ideation, reasoning, and discovery
+    # - Claude 4 Sonnet: Advanced reasoning and ideation capabilities
+    # - Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
+    agent_model_primary: str = os.getenv("AGENT_MODEL_PRIMARY", "gpt-5.1")
+    agent_model_secondary: str = os.getenv("AGENT_MODEL_SECONDARY", "claude-sonnet-4-20250522")
+    agent_model_tertiary: str = os.getenv("AGENT_MODEL_TERTIARY", "gemini-3.0-pro")
 
     # MCP Server Configuration
     mcp_github_url: str = os.getenv("MCP_GITHUB_URL", "http://mcp-github:8001")
