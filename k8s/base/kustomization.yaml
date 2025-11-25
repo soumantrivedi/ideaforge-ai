@@ -13,11 +13,10 @@ resources:
   - frontend.yaml
   - db-setup-job.yaml  # Database setup job (migrations + seeding) - runs automatically
 
-# Common labels (using modern syntax)
-labels:
-  - pairs:
-      app: ideaforge-ai
-      managed-by: kustomize
+# Common labels (commonLabels is deprecated but still works; modern alternative would be labels transformer)
+commonLabels:
+  app: ideaforge-ai
+  managed-by: kustomize
 
 # Image replacements (update these with your actual image tags)
 images:
