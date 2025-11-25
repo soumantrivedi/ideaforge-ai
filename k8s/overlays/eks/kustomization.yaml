@@ -6,20 +6,13 @@ namespace: ideaforge-ai
 resources:
   - ../../base
 
-# EKS-specific configurations (using modern patches syntax)
-patches:
-  - path: postgres-eks-patch.yaml
-    target:
-      kind: Deployment
-      name: postgres
-  - path: redis-eks-patch.yaml
-    target:
-      kind: Deployment
-      name: redis
-  - path: ingress-eks-patch.yaml
-    target:
-      kind: Ingress
-      name: ideaforge-ai-ingress
+# EKS-specific configurations
+# Using patchesStrategicMerge for strategic merge patches (deprecated but works)
+# Alternative: use patches with just path (no target) for strategic merge patches
+patchesStrategicMerge:
+  - postgres-eks-patch.yaml
+  - redis-eks-patch.yaml
+  - ingress-eks-patch.yaml
 
 # Override namespace (will be set by make target)
 # namespace: ideaforge-ai
