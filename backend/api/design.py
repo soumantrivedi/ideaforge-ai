@@ -385,7 +385,8 @@ async def create_design_project(
                 })
                 
                 # Determine primary agent based on provider
-                primary_agent = "v0_design" if request.provider == "v0" else "lovable_design"
+                # Use ideation agent for prompt enhancement (it's available in orchestrator)
+                primary_agent = "ideation"  # Generic agent for design prompt enhancement
                 supporting_agents = ["rag", "analysis", "strategy"]
                 
                 # Create enhancement query
