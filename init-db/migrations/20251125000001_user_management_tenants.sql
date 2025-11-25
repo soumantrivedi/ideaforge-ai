@@ -142,3 +142,35 @@ WHERE tenant_id IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_phase_submissions_tenant_id ON phase_submissions(tenant_id);
 
+-- ========================================
+-- 9. USER API KEYS TABLE
+-- ========================================
+CREATE TABLE IF NOT EXISTS user_api_keys (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+  provider text NOT NULL CHECK (provider IN ('openai', 'anthropic', 'google', 'v0', 'lovable', 'github', 'atlassian')),
+  api_key_encrypted text NOT NULL,
+  is_active boolean DEFAULT true,
+  metadata jsonb DEFAULT '{}',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(user_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_api_keys_user_id ON user_api_keys(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_api_keys_provider ON user_api_keys(provider);
+
+-- Create trigger for updated_at
+CREATE OR REPLACE FUNCTION update_user_api_keys_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_user_api_keys_updated_at
+  BEFORE UPDATE ON user_api_keys
+  FOR EACH ROW
+  EXECUTE FUNCTION update_user_api_keys_updated_at();
+
