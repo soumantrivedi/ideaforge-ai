@@ -852,16 +852,16 @@ eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates 
 	fi
 	@echo "📝 Updating namespace and image tags in EKS manifests..."
 	@for file in $$(find $(K8S_DIR)/eks -name "*.yaml" -type f); do \
-		if [ "$(uname)" = "Darwin" ]; then \
-			sed -i '' "s|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g" "$$file"; \
-			sed -i '' "s|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g" "$$file"; \
-			sed -i '' "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" "$$file"; \
-			sed -i '' "s|name: ideaforge-ai$$|name: $(EKS_NAMESPACE)|g" "$$file"; \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			sed -i '' 's|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g' "$$file"; \
+			sed -i '' 's|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g' "$$file"; \
+			sed -i '' 's|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g' "$$file"; \
+			sed -i '' 's|name: ideaforge-ai$$|name: $(EKS_NAMESPACE)|g' "$$file"; \
 		else \
-			sed -i "s|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g" "$$file"; \
-			sed -i "s|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g" "$$file"; \
-			sed -i "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" "$$file"; \
-			sed -i "s|name: ideaforge-ai$$|name: $(EKS_NAMESPACE)|g" "$$file"; \
+			sed -i 's|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g' "$$file"; \
+			sed -i 's|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g' "$$file"; \
+			sed -i 's|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g' "$$file"; \
+			sed -i 's|name: ideaforge-ai$$|name: $(EKS_NAMESPACE)|g' "$$file"; \
 		fi; \
 	done
 	@echo "✅ EKS manifests prepared for namespace: $(EKS_NAMESPACE)"
