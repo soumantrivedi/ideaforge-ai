@@ -81,13 +81,19 @@ jobs:
             type=raw,value=${{ steps.branch-name.outputs.name }}-${{ steps.git-sha.outputs.sha }}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Get Git SHA
-        id: git-sha
-        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
       - name: Get Version
         id: version
-        run: echo "version=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        run: echo "version=${{ steps.git-sha.outputs.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Set frontend build args
+        id: frontend-args
+        run: |
+          VITE_API_URL="${{ secrets.VITE_API_URL }}"
+          if [ -z "$VITE_API_URL" ]; then
+            VITE_API_URL="http://localhost:8000"
+          fi
+          echo "vite_api_url=$VITE_API_URL" >> $GITHUB_OUTPUT
+          echo "VITE_API_URL set to: $VITE_API_URL"
 
       - name: Build and push backend image
         uses: docker/build-push-action@v5
@@ -112,6 +118,9 @@ jobs:
           tags: ${{ steps.meta-frontend.outputs.tags }}
           labels: ${{ steps.meta-frontend.outputs.labels }}
           build-args: |
+            VITE_API_URL=${{ steps.frontend-args.outputs.vite_api_url }}
+            VITE_OKTA_CLIENT_ID=${{ secrets.VITE_OKTA_CLIENT_ID }}
+            VITE_OKTA_ISSUER=${{ secrets.VITE_OKTA_ISSUER }}
             GIT_SHA=${{ steps.git-sha.outputs.sha }}
             VERSION=${{ steps.version.outputs.version }}
           cache-from: type=gha

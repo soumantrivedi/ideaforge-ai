@@ -488,7 +488,17 @@ async def process_multi_agent_request(
 ):
     """Process a multi-agent coordination request."""
     try:
+        # First, check if providers are already configured from environment variables (Kubernetes secrets)
+        configured_providers = provider_registry.get_configured_providers()
+        logger.info(
+            "checking_providers",
+            user_id=str(current_user["id"]),
+            env_providers=configured_providers,
+            has_env_keys=True if configured_providers else False
+        )
+        
         # Load user-specific API keys from database and update provider registry
+        # Only update if user has keys in database (user keys take precedence)
         from backend.services.api_key_loader import load_user_api_keys_from_db
         
         user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
@@ -500,7 +510,8 @@ async def process_multi_agent_request(
             key_count=len(user_keys) if user_keys else 0
         )
         
-        # Update provider registry with user's keys (temporarily for this request)
+        # Update provider registry with user's keys ONLY if they exist
+        # This allows user keys to override environment keys, but preserves env keys if user has none
         if user_keys:
             provider_registry.update_keys(
                 openai_key=user_keys.get("openai"),
@@ -514,13 +525,14 @@ async def process_multi_agent_request(
                 configured_providers=provider_registry.get_configured_providers()
             )
         else:
-            logger.warning(
-                "no_user_api_keys_found",
+            logger.info(
+                "using_environment_keys",
                 user_id=str(current_user["id"]),
-                message="No API keys found in database for user"
+                message="No user keys found, using environment-configured keys",
+                configured_providers=provider_registry.get_configured_providers()
             )
         
-        # Check if any provider is configured after loading user keys
+        # Check if any provider is configured (either from env or user keys)
         configured_providers = provider_registry.get_configured_providers()
         if not configured_providers:
             logger.error(
