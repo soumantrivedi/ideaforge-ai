@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Settings, Key, Eye, EyeOff, CheckCircle2, XCircle, Loader2, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import type { AIProvider } from '../lib/ai-providers';
+import { apiFetch } from '../lib/api-client';
 
 interface ProviderConfigProps {
   onSaveConfig: (config: {
