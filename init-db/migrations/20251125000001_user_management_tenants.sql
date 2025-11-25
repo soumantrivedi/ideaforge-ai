@@ -34,7 +34,46 @@ CREATE INDEX IF NOT EXISTS idx_user_profiles_email ON user_profiles(email);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_external_id ON user_profiles(external_id) WHERE external_id IS NOT NULL;
 
 -- ========================================
--- 3. CREATE DEFAULT TENANTS AND USERS
+-- 3. PRODUCT SHARES TABLE (for collaboration)
+-- ========================================
+CREATE TABLE IF NOT EXISTS product_shares (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  product_id uuid NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  shared_with_user_id uuid NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+  shared_by_user_id uuid NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
+  permission text DEFAULT 'view' CHECK (permission IN ('view', 'edit', 'admin')),
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(product_id, shared_with_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_shares_product_id ON product_shares(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_shares_shared_with_user_id ON product_shares(shared_with_user_id);
+CREATE INDEX IF NOT EXISTS idx_product_shares_shared_by_user_id ON product_shares(shared_by_user_id);
+
+-- ========================================
+-- 4. UPDATE PRODUCTS TABLE
+-- ========================================
+-- Add tenant_id to products for tenant isolation
+ALTER TABLE products 
+  ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id) ON DELETE RESTRICT;
+
+-- Update existing products to have tenant_id (set to default tenant)
+DO $$
+DECLARE
+  default_tenant_id uuid;
+BEGIN
+  -- Get default tenant ID
+  SELECT id INTO default_tenant_id FROM tenants WHERE slug = 'default' LIMIT 1;
+  
+  -- Update existing products
+  UPDATE products SET tenant_id = default_tenant_id WHERE tenant_id IS NULL;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_products_tenant_id ON products(tenant_id);
+
+-- ========================================
+-- 5. CREATE DEFAULT TENANTS AND USERS
 -- ========================================
 -- Create default tenant
 INSERT INTO tenants (id, name, slug, description)
