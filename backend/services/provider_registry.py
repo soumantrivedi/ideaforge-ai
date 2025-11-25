@@ -27,14 +27,28 @@ class ProviderRegistry:
         self._rebuild_clients()
 
     def _rebuild_clients(self) -> None:
-        self._openai_client = OpenAI(api_key=self._openai_key) if self._openai_key else None
-        self._claude_client = Anthropic(api_key=self._claude_key) if self._claude_key else None
+        # Only create clients if keys are non-empty after stripping
+        self._openai_client = None
+        if self._openai_key and self._openai_key.strip():
+            try:
+                self._openai_client = OpenAI(api_key=self._openai_key.strip())
+            except Exception:
+                self._openai_client = None
+        
+        self._claude_client = None
+        if self._claude_key and self._claude_key.strip():
+            try:
+                self._claude_client = Anthropic(api_key=self._claude_key.strip())
+            except Exception:
+                self._claude_client = None
 
-        if self._gemini_key:
-            genai.configure(api_key=self._gemini_key)
-            self._gemini_configured = True
-        else:
-            self._gemini_configured = False
+        self._gemini_configured = False
+        if self._gemini_key and self._gemini_key.strip():
+            try:
+                genai.configure(api_key=self._gemini_key.strip())
+                self._gemini_configured = True
+            except Exception:
+                self._gemini_configured = False
 
     def update_keys(
         self,
