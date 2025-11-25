@@ -258,16 +258,28 @@ async def get_design_mockups(
     try:
         # Check if table exists, if not return empty list
         try:
-            query = text("""
-                SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
-                       image_url, thumbnail_url, project_url, metadata, created_at, updated_at
-                FROM design_mockups
-                WHERE product_id = :product_id
-                AND (:provider IS NULL OR provider = :provider)
-                ORDER BY created_at DESC
-            """)
+            # Build query conditionally to avoid PostgreSQL type inference issues with NULL
+            if provider:
+                query = text("""
+                    SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
+                           image_url, thumbnail_url, project_url, metadata, created_at, updated_at
+                    FROM design_mockups
+                    WHERE product_id = :product_id
+                    AND provider = :provider
+                    ORDER BY created_at DESC
+                """)
+                params = {"product_id": product_id, "provider": provider}
+            else:
+                query = text("""
+                    SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
+                           image_url, thumbnail_url, project_url, metadata, created_at, updated_at
+                    FROM design_mockups
+                    WHERE product_id = :product_id
+                    ORDER BY created_at DESC
+                """)
+                params = {"product_id": product_id}
             
-            result = await db.execute(query, {"product_id": product_id, "provider": provider})
+            result = await db.execute(query, params)
             rows = result.fetchall()
             
             mockups = [
