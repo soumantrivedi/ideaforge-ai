@@ -1,0 +1,47 @@
+-- Seed Sample Data Script
+-- Run this after database clean to restore sample products and data
+-- Usage: docker-compose exec postgres psql -U agentic_pm -d agentic_pm_db -f /path/to/seed_sample_data.sql
+
+-- Ensure default tenant exists
+INSERT INTO tenants (id, name, slug, description)
+VALUES 
+  ('00000000-0000-0000-0000-000000000001', 'Default Tenant', 'default', 'Default tenant for existing data')
+ON CONFLICT (id) DO NOTHING;
+
+-- Ensure admin user exists with correct password
+INSERT INTO user_profiles (id, email, full_name, tenant_id, password_hash, is_active, persona)
+VALUES
+  ('00000000-0000-0000-0000-000000000001', 'admin@ideaforge.ai', 'Admin User', '00000000-0000-0000-0000-000000000001', '$2b$12$eTMKjfsd8Hi2uERGM8/LZed4I0LlacMvnLx/9Xg9Mbu8NYqfaGNo.', true, 'product_manager')
+ON CONFLICT (id) DO UPDATE SET
+  password_hash = EXCLUDED.password_hash,
+  is_active = true,
+  tenant_id = EXCLUDED.tenant_id;
+
+-- Create sample products (if they don't exist)
+-- Note: Adjust product IDs and names as needed
+INSERT INTO products (id, user_id, name, description, status, tenant_id, metadata)
+VALUES
+  ('b9e09ba1-e062-470e-aa8e-a9c98022dab2', '00000000-0000-0000-0000-000000000001', 'AI Product Manager Assistant', 'An intelligent assistant for product managers', 'ideation', '00000000-0000-0000-0000-000000000001', '{}'),
+  ('fc184f51-14d5-43b5-b9d1-8f4833e8133a', '00000000-0000-0000-0000-000000000001', 'Smart Analytics Platform', 'Advanced analytics for product insights', 'build', '00000000-0000-0000-0000-000000000001', '{}'),
+  (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', 'Customer Feedback System', 'System for collecting and analyzing customer feedback', 'ideation', '00000000-0000-0000-0000-000000000001', '{}'),
+  (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', 'Product Roadmap Tool', 'Tool for managing product roadmaps', 'ideation', '00000000-0000-0000-0000-000000000001', '{}'),
+  (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', 'Feature Request Manager', 'Manage and prioritize feature requests', 'ideation', '00000000-0000-0000-0000-000000000001', '{}'),
+  (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', 'User Research Platform', 'Platform for conducting user research', 'ideation', '00000000-0000-0000-0000-000000000001', '{}'),
+  (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', 'A/B Testing Framework', 'Framework for running A/B tests', 'build', '00000000-0000-0000-0000-000000000001', '{}'),
+  (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', 'Product Metrics Dashboard', 'Dashboard for tracking product metrics', 'operate', '00000000-0000-0000-0000-000000000001', '{}'),
+  (uuid_generate_v4(), '00000000-0000-0000-0000-000000000001', 'Release Management System', 'System for managing product releases', 'operate', '00000000-0000-0000-0000-000000000001', '{}')
+ON CONFLICT (id) DO NOTHING;
+
+-- Create user preferences for admin user
+INSERT INTO user_preferences (user_id, theme, language, notifications_enabled, email_notifications)
+VALUES
+  ('00000000-0000-0000-0000-000000000001', 'light', 'en', true, false)
+ON CONFLICT (user_id) DO NOTHING;
+
+-- Display summary
+SELECT 
+  (SELECT COUNT(*) FROM products) as total_products,
+  (SELECT COUNT(*) FROM user_profiles) as total_users,
+  (SELECT COUNT(*) FROM user_api_keys) as total_api_keys,
+  (SELECT COUNT(*) FROM tenants) as total_tenants;
+
