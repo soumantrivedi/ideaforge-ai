@@ -800,8 +800,10 @@ kind-cleanup: ## Clean up kind cluster deployment (keeps cluster)
 	@kubectl delete namespace $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
 	@echo "✅ Cleanup complete (cluster still exists, use 'make kind-delete' to remove cluster)"
 
-eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespace (use EKS_NAMESPACE=your-namespace)
+eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespace (use EKS_NAMESPACE=your-namespace). Uses GitHub PAT from .env or EKS_GITHUB_TOKEN env var.
 	@echo "🔐 Setting up GitHub Container Registry secret..."
+	@echo "ℹ️  Note: GitHub Personal Access Token (PAT) can be used for GHCR authentication"
+	@echo "   Required PAT scope: read:packages (or write:packages if also pushing)"
 	@if [ -z "$(EKS_NAMESPACE)" ]; then \
 		echo "❌ EKS_NAMESPACE is required. Example: make eks-setup-ghcr-secret EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50"; \
 		exit 1; \
@@ -818,17 +820,25 @@ eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespac
 	GITHUB_TOKEN=""; \
 	if [ -n "$$EKS_GITHUB_TOKEN" ]; then \
 		GITHUB_TOKEN="$$EKS_GITHUB_TOKEN"; \
+		echo "   Using GITHUB_TOKEN from EKS_GITHUB_TOKEN environment variable"; \
 	elif [ -f .env ]; then \
 		GITHUB_TOKEN=$$(grep "^GITHUB_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs || echo ""); \
+		if [ -n "$$GITHUB_TOKEN" ]; then \
+			echo "   Using GITHUB_TOKEN from .env file"; \
+		fi; \
 	fi; \
 	if [ -z "$$GITHUB_TOKEN" ]; then \
-		echo "❌ GITHUB_TOKEN is required"; \
+		echo "❌ GITHUB_TOKEN (GitHub PAT) is required"; \
 		echo "   Options:"; \
-		echo "   1. Export: export EKS_GITHUB_TOKEN=ghp_your_token_here"; \
-		echo "   2. Add to .env: GITHUB_TOKEN=ghp_your_token_here"; \
+		echo "   1. Export: export EKS_GITHUB_TOKEN=ghp_your_pat_token_here"; \
+		echo "   2. Add to .env: GITHUB_TOKEN=ghp_your_pat_token_here"; \
+		echo ""; \
+		echo "   Create PAT at: https://github.com/settings/tokens"; \
+		echo "   Required scope: read:packages"; \
 		exit 1; \
 	fi; \
 	echo "   Using GitHub username: $$GITHUB_USERNAME"; \
+	echo "   Docker server: ghcr.io"; \
 	kubectl delete secret ghcr-secret -n $(EKS_NAMESPACE) --ignore-not-found=true; \
 	kubectl create secret docker-registry ghcr-secret \
 		--docker-server=ghcr.io \
@@ -837,6 +847,7 @@ eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespac
 		--namespace=$(EKS_NAMESPACE) || \
 		(echo "❌ Failed to create secret" && exit 1)
 	@echo "✅ GitHub Container Registry secret created: ghcr-secret in namespace $(EKS_NAMESPACE)"
+	@echo "   This secret allows Kubernetes to pull images from ghcr.io/soumantrivedi/ideaforge-ai"
 
 eks-prepare-namespace: ## Prepare namespace-specific kustomization for EKS
 	@echo "📝 Preparing EKS deployment for namespace: $(EKS_NAMESPACE)"
