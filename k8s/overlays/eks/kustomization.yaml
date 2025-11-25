@@ -24,15 +24,16 @@ patches:
 # Override namespace (will be set by make target)
 # namespace: ideaforge-ai
 
-# Override secrets from .env file
-# Users can create secrets.yaml in this directory with their API keys
-secretGenerator:
-  - name: ideaforge-ai-secrets
-    behavior: merge
-    files:
-      - secrets.yaml
-    options:
-      disableNameSuffixHash: true
+# Secrets are loaded via 'make eks-load-secrets' which uses .env file
+# If you want to use kustomize secretGenerator instead, create secrets.yaml
+# and uncomment the secretGenerator section below:
+# secretGenerator:
+#   - name: ideaforge-ai-secrets
+#     behavior: merge
+#     files:
+#       - secrets.yaml
+#     options:
+#       disableNameSuffixHash: true
 
 # EKS-specific image tags (can be overridden)
 images:
