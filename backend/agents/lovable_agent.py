@@ -293,14 +293,6 @@ The prompt should be ready to paste directly into Lovable for generating prototy
                 result["project_url"] = f"https://lovable.dev/generate?prompt={encoded_prompt}"
         
         return result
-                
-            except httpx.TimeoutException:
-                raise ValueError("Lovable API request timed out. Please try again.")
-            except httpx.RequestError as e:
-                raise ValueError(f"Lovable API connection error: {str(e)}")
-            except Exception as e:
-                logger.error("lovable_api_error", error=str(e), api_key_length=len(api_key) if api_key else 0)
-                raise ValueError(f"Lovable API error: {str(e)}")
     
     async def generate_thumbnail_previews(
         self,
