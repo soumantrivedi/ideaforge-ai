@@ -426,6 +426,7 @@ EKS_REGION ?= us-east-1
 EKS_NAMESPACE ?= $(K8S_NAMESPACE)
 EKS_IMAGE_REGISTRY ?= ghcr.io/soumantrivedi/ideaforge-ai
 EKS_IMAGE_TAG ?= latest
+EKS_STORAGE_CLASS ?= default-storage-class  # Default to default-storage-class (EBS), but can be overridden (e.g., gp2, gp3)
 EKS_GITHUB_USERNAME ?= $(shell git config user.name 2>/dev/null || echo "")
 EKS_GITHUB_TOKEN ?= $(shell grep "^GITHUB_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 
@@ -850,8 +851,8 @@ eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates 
 		echo "❌ k8s/eks/ directory not found"; \
 		exit 1; \
 	fi
-	@echo "📝 Updating namespace and image tags in EKS manifests..."
-	@python3 $(K8S_DIR)/update-eks-namespace.py $(K8S_DIR)/eks $(EKS_NAMESPACE) $(EKS_IMAGE_TAG) || \
+	@echo "📝 Updating namespace, image tags, and storage class in EKS manifests..."
+	@python3 $(K8S_DIR)/update-eks-namespace.py $(K8S_DIR)/eks $(EKS_NAMESPACE) $(EKS_IMAGE_TAG) $(EKS_STORAGE_CLASS) || \
 		(echo "⚠️  Python script failed, trying sed fallback..." && \
 		 for file in $$(find $(K8S_DIR)/eks -name "*.yaml" -type f); do \
 			if [ "$$(uname)" = "Darwin" ]; then \

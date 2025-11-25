@@ -2,11 +2,11 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: redis-pvc
-  namespace: ideaforge-ai
+  namespace: 20890-ideaforge-ai-dev-58a50
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: gp3  # EKS uses gp3 storage class
+  storageClassName: default-storage-class  # EKS uses gp3 storage class
   resources:
     requests:
       storage: 5Gi
@@ -16,7 +16,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis
-  namespace: ideaforge-ai
+  namespace: 20890-ideaforge-ai-dev-58a50
   labels:
     app: redis
     component: cache
@@ -83,7 +83,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis
-  namespace: ideaforge-ai
+  namespace: 20890-ideaforge-ai-dev-58a50
   labels:
     app: redis
     component: cache
