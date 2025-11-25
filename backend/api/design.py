@@ -107,7 +107,10 @@ async def generate_design_prompt(
                 product_context=product_context
             )
         elif request.provider == "lovable":
-            prompt = await lovable_agent.generate_lovable_prompt(
+            # Use Agno Lovable agent for prompt generation
+            from backend.agents.agno_lovable_agent import AgnoLovableAgent
+            agno_lovable_agent = AgnoLovableAgent()
+            prompt = await agno_lovable_agent.generate_lovable_prompt(
                 product_context=product_context
             )
         else:
@@ -151,15 +154,14 @@ async def generate_design_mockup(
                 user_id=str(current_user["id"])
             )
         elif request.provider == "lovable":
-            lovable_key = user_keys.get("lovable") or settings.lovable_api_key
-            if not lovable_key:
-                raise HTTPException(status_code=400, detail="Lovable API key is not configured. Please configure it in Settings.")
+            # Use Lovable Link Generator (no API key needed)
+            # Based on: https://docs.lovable.dev/integrations/build-with-url
+            from backend.agents.agno_lovable_agent import AgnoLovableAgent
             
-            result = await lovable_agent.generate_design_mockup(
+            lovable_agent = AgnoLovableAgent()
+            result = lovable_agent.generate_lovable_link(
                 lovable_prompt=request.prompt,
-                lovable_api_key=lovable_key,
-                user_id=str(current_user["id"]),
-                generate_thumbnails=True
+                image_urls=None  # Can be extended to support images in the future
             )
         else:
             raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")
@@ -175,9 +177,15 @@ async def generate_design_mockup(
             
             # Extract URLs from result
             import json
-            image_url = result.get("image_url") or result.get("thumbnail_url") or ""
-            thumbnail_url = result.get("thumbnail_url") or image_url
-            project_url = result.get("project_url") or result.get("url") or ""
+            # Handle different result formats for V0 vs Lovable
+            if request.provider == "lovable":
+                image_url = ""  # Lovable links don't have images
+                thumbnail_url = ""
+                project_url = result.get("project_url", "")
+            else:  # V0
+                image_url = result.get("image_url") or result.get("thumbnail_url") or ""
+                thumbnail_url = result.get("thumbnail_url") or image_url
+                project_url = result.get("project_url") or result.get("url") or ""
             
             # Convert metadata to JSON string
             metadata_json = json.dumps(result) if isinstance(result, dict) else json.dumps({"result": str(result)})
