@@ -97,3 +97,48 @@ UPDATE user_profiles
 SET tenant_id = '00000000-0000-0000-0000-000000000001'
 WHERE tenant_id IS NULL;
 
+-- ========================================
+-- 6. USER PREFERENCES TABLE
+-- ========================================
+CREATE TABLE IF NOT EXISTS user_preferences (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id uuid NOT NULL UNIQUE REFERENCES user_profiles(id) ON DELETE CASCADE,
+  theme text DEFAULT 'light' CHECK (theme IN ('light', 'dark', 'retro')),
+  language text DEFAULT 'en',
+  notifications_enabled boolean DEFAULT true,
+  email_notifications boolean DEFAULT false,
+  preferences jsonb DEFAULT '{}',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_preferences_user_id ON user_preferences(user_id);
+
+-- ========================================
+-- 7. UPDATE CONVERSATION_HISTORY TABLE
+-- ========================================
+-- Add tenant_id to conversation_history for tenant isolation
+ALTER TABLE conversation_history
+  ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id) ON DELETE RESTRICT;
+
+-- Update existing conversation_history to have default tenant
+UPDATE conversation_history 
+SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default' LIMIT 1)
+WHERE tenant_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_conversation_history_tenant_id ON conversation_history(tenant_id);
+
+-- ========================================
+-- 8. UPDATE PHASE_SUBMISSIONS TABLE
+-- ========================================
+-- Add tenant_id to phase_submissions for tenant isolation
+ALTER TABLE phase_submissions
+  ADD COLUMN IF NOT EXISTS tenant_id uuid REFERENCES tenants(id) ON DELETE RESTRICT;
+
+-- Update existing phase_submissions to have default tenant
+UPDATE phase_submissions 
+SET tenant_id = (SELECT id FROM tenants WHERE slug = 'default' LIMIT 1)
+WHERE tenant_id IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_phase_submissions_tenant_id ON phase_submissions(tenant_id);
+
