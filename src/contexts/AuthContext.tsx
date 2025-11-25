@@ -58,6 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('tenant_id');
     setToken(null);
     setUser(null);
+    setIsLoading(false); // Ensure loading state is cleared so login page shows
   };
 
   useEffect(() => {
