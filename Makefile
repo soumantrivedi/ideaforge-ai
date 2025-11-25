@@ -799,8 +799,12 @@ eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespac
 		echo "   Configure kubectl: aws eks update-kubeconfig --name $(EKS_CLUSTER_NAME) --region $(EKS_REGION)"; \
 		exit 1; \
 	fi
-	@echo "📦 Creating namespace: $(EKS_NAMESPACE)"
-	@kubectl create namespace $(EKS_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f - || true
+	@echo "⚠️  Note: Namespace $(EKS_NAMESPACE) must already exist in the cluster"
+	@if ! kubectl get namespace $(EKS_NAMESPACE) &>/dev/null; then \
+		echo "❌ Namespace $(EKS_NAMESPACE) does not exist"; \
+		echo "   Please create it first or ensure it exists in your EKS cluster"; \
+		exit 1; \
+	fi
 	@echo "🔐 Creating docker-registry secret for GitHub Container Registry..."
 	@GITHUB_USERNAME="$${EKS_GITHUB_USERNAME:-soumantrivedi}"; \
 	GITHUB_TOKEN=""; \
@@ -847,17 +851,19 @@ eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates 
 		exit 1; \
 	fi
 	@echo "📝 Updating namespace and image tags in EKS manifests..."
-	@if [ "$(uname)" = "Darwin" ]; then \
-		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i '' "s|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g" {} \; ; \
-		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i '' "s|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g" {} \; ; \
-		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i '' "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" {} \; ; \
-		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i '' "s|name: ideaforge-ai|name: $(EKS_NAMESPACE)|g" {} \; ; \
-	else \
-		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i "s|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g" {} \; ; \
-		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i "s|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g" {} \; ; \
-		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" {} \; ; \
-		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i "s|name: ideaforge-ai|name: $(EKS_NAMESPACE)|g" {} \; ; \
-	fi
+	@for file in $$(find $(K8S_DIR)/eks -name "*.yaml" -type f); do \
+		if [ "$(uname)" = "Darwin" ]; then \
+			sed -i '' "s|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g" "$$file"; \
+			sed -i '' "s|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g" "$$file"; \
+			sed -i '' "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" "$$file"; \
+			sed -i '' "s|name: ideaforge-ai|name: $(EKS_NAMESPACE)|g" "$$file"; \
+		else \
+			sed -i "s|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g" "$$file"; \
+			sed -i "s|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g" "$$file"; \
+			sed -i "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" "$$file"; \
+			sed -i "s|name: ideaforge-ai|name: $(EKS_NAMESPACE)|g" "$$file"; \
+		fi; \
+	done
 	@echo "✅ EKS manifests prepared for namespace: $(EKS_NAMESPACE)"
 
 eks-load-secrets: ## Load secrets from .env file for EKS deployment (use EKS_NAMESPACE=your-namespace)
@@ -891,7 +897,7 @@ eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=yo
 	fi
 	@echo "✅ kubectl is configured"
 	@echo "📦 Creating ConfigMaps for database setup..."
-	@bash $(K8S_DIR)/create-db-configmaps.sh
+	@EKS_NAMESPACE=$(EKS_NAMESPACE) bash $(K8S_DIR)/create-db-configmaps.sh
 	@echo "📦 Applying Kubernetes manifests from k8s/eks/ to namespace: $(EKS_NAMESPACE)"
 	@echo "⚠️  Note: Namespace $(EKS_NAMESPACE) must already exist in the cluster"
 	@echo "   (Skipping namespace.yaml - namespace must be pre-created)"
@@ -900,7 +906,7 @@ eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=yo
 	@kubectl wait --for=condition=ready pod -l app=postgres -n $(EKS_NAMESPACE) --timeout=300s || true
 	@kubectl wait --for=condition=ready pod -l app=redis -n $(EKS_NAMESPACE) --timeout=120s || true
 	@echo "🔄 Running database setup (migrations + seeding)..."
-	@kubectl apply -f $(K8S_DIR)/db-setup-job.yaml -n $(EKS_NAMESPACE)
+	@kubectl apply -f $(K8S_DIR)/eks/db-setup-job.yaml
 	@echo "⏳ Waiting for database setup job to complete..."
 	@kubectl wait --for=condition=complete job/db-setup -n $(EKS_NAMESPACE) --timeout=300s || \
 		(echo "⚠️  Database setup job may have failed. Check logs:" && \

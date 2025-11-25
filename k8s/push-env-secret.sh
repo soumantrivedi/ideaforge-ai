@@ -23,8 +23,12 @@ else
     KUBECTL_CMD="kubectl"
 fi
 
-# Create namespace if it doesn't exist
-$KUBECTL_CMD create namespace "$NAMESPACE" --dry-run=client -o yaml | $KUBECTL_CMD apply -f -
+# Verify namespace exists (don't create it - namespace must pre-exist)
+if ! $KUBECTL_CMD get namespace "$NAMESPACE" &>/dev/null; then
+    echo "❌ Namespace $NAMESPACE does not exist"
+    echo "   Please create it first or ensure it exists in your cluster"
+    exit 1
+fi
 
 # Create secret from .env file
 echo "🔐 Creating/updating Kubernetes secret: ideaforge-ai-secrets from $ENV_FILE"

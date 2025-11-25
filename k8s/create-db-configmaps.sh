@@ -4,14 +4,18 @@
 
 set -e
 
-NAMESPACE=${K8S_NAMESPACE:-ideaforge-ai}
+NAMESPACE=${EKS_NAMESPACE:-${K8S_NAMESPACE:-ideaforge-ai}}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "📦 Creating ConfigMaps for database setup in namespace: $NAMESPACE"
 
-# Create namespace if it doesn't exist
-kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+# Verify namespace exists (don't create it)
+if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
+  echo "❌ Namespace $NAMESPACE does not exist"
+  echo "   Please create it first or ensure it exists in your cluster"
+  exit 1
+fi
 
 # Create ConfigMap for migrations
 echo "🔄 Creating ConfigMap for database migrations..."
