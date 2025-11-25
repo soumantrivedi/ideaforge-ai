@@ -153,6 +153,12 @@ jobs:
         with:
           install_only: true
 
+      - name: Install Python and PyYAML
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip
+          pip3 install pyyaml
+
       - name: Get Git SHA
         id: git-sha
         run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
@@ -167,6 +173,14 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.git-sha.outputs.sha }} || \
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:latest
+
+      - name: Clean up Docker to free space
+        run: |
+          echo "🧹 Cleaning up Docker to free disk space..."
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          df -h
+          echo "✅ Cleanup complete"
 
       - name: Tag images for Kind
         run: |
@@ -183,13 +197,77 @@ jobs:
         run: |
           make kind-setup-ingress KIND_CLUSTER_NAME=ideaforge-ai-ci
 
-      - name: Load images into Kind
+      - name: Configure Kind to pull from registry
         run: |
-          GIT_SHA=${{ steps.git-sha.outputs.sha }} make kind-load-images KIND_CLUSTER_NAME=ideaforge-ai-ci
+          echo "🔐 Configuring Kind to pull images from registry..."
+          # Create image pull secret for GitHub Container Registry
+          kubectl create namespace ideaforge-ai --context kind-ideaforge-ai-ci --dry-run=client -o yaml | kubectl apply -f - --context kind-ideaforge-ai-ci || true
+          kubectl create secret docker-registry ghcr-secret \
+            --docker-server=${{ env.REGISTRY }} \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            --namespace=ideaforge-ai \
+            --context kind-ideaforge-ai-ci \
+            --dry-run=client -o yaml | kubectl apply -f - --context kind-ideaforge-ai-ci || true
+          echo "✅ Registry secret configured"
 
-      - name: Update image references in manifests
+      - name: Update manifests to use registry images
         run: |
-          GIT_SHA=${{ steps.git-sha.outputs.sha }} make kind-update-images KIND_CLUSTER_NAME=ideaforge-ai-ci
+          echo "📝 Updating manifests to pull from registry..."
+          BACKEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ steps.git-sha.outputs.sha }}"
+          FRONTEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.git-sha.outputs.sha }}"
+          
+          # Update image references
+          sed -i "s|image:.*ideaforge-ai-backend:.*|image: $$BACKEND_IMAGE|g" k8s/backend.yaml
+          sed -i "s|imagePullPolicy:.*|imagePullPolicy: IfNotPresent|g" k8s/backend.yaml
+          sed -i "s|image:.*ideaforge-ai-frontend:.*|image: $$FRONTEND_IMAGE|g" k8s/frontend.yaml
+          sed -i "s|imagePullPolicy:.*|imagePullPolicy: IfNotPresent|g" k8s/frontend.yaml
+          
+          # Add imagePullSecrets using Python for reliable YAML manipulation
+          python3 << 'PYEOF'
+          import yaml
+          import sys
+          
+          def add_image_pull_secrets(filepath):
+              try:
+                  with open(filepath, 'r') as f:
+                      content = f.read()
+                      doc = yaml.safe_load(content)
+                  
+                  # Find the pod spec (spec.template.spec)
+                  if 'spec' in doc and 'template' in doc['spec'] and 'spec' in doc['spec']['template']:
+                      pod_spec = doc['spec']['template']['spec']
+                      
+                      # Add imagePullSecrets if not present
+                      if 'imagePullSecrets' not in pod_spec:
+                          pod_spec['imagePullSecrets'] = [{'name': 'ghcr-secret'}]
+                          
+                          with open(filepath, 'w') as f:
+                              yaml.dump(doc, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                          print(f"✅ Added imagePullSecrets to {filepath}")
+                          return True
+                      else:
+                          print(f"ℹ️  imagePullSecrets already exists in {filepath}")
+                          return True
+                  else:
+                      print(f"⚠️  Could not find pod spec in {filepath}")
+                      return False
+              except Exception as e:
+                  print(f"⚠️  Error updating {filepath}: {e}")
+                  return False
+          
+          success = True
+          success = add_image_pull_secrets('k8s/backend.yaml') and success
+          success = add_image_pull_secrets('k8s/frontend.yaml') and success
+          
+          if not success:
+              print("⚠️  Some files could not be updated")
+              sys.exit(1)
+          PYEOF
+          
+          echo "✅ Manifests updated to use registry images"
+          echo "   Backend: $$BACKEND_IMAGE"
+          echo "   Frontend: $$FRONTEND_IMAGE"
 
       - name: Create database ConfigMaps
         run: |
