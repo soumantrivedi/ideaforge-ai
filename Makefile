@@ -590,16 +590,14 @@ kind-load-secrets: ## Load secrets from .env file for kind deployment
 	@echo "✅ Secrets pushed to Kubernetes secret: ideaforge-ai-secrets"
 
 kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manifests to kind (assumes cluster exists and images are loaded)
-	@echo "📦 Applying Kubernetes manifests..."
-	@kubectl apply -f $(K8S_DIR)/namespace.yaml --context kind-$(KIND_CLUSTER_NAME)
-	@kubectl apply -f $(K8S_DIR)/configmap.yaml --context kind-$(KIND_CLUSTER_NAME)
-	@if [ -f $(K8S_DIR)/overlays/kind/secrets.yaml ]; then \
-		echo "📦 Loading secrets from kustomize overlay..."; \
-		cd $(K8S_DIR)/overlays/kind && kubectl kustomize . | kubectl apply -f - --context kind-$(KIND_CLUSTER_NAME); \
-	elif [ -f $(K8S_DIR)/secrets.yaml ]; then \
-		kubectl apply -f $(K8S_DIR)/secrets.yaml --context kind-$(KIND_CLUSTER_NAME); \
-	else \
-		echo "⚠️  secrets.yaml not found, creating default secrets..."; \
+	@echo "📦 Applying Kubernetes manifests from k8s/kind/..."
+	@if [ ! -d $(K8S_DIR)/kind ]; then \
+		echo "❌ k8s/kind/ directory not found"; \
+		exit 1; \
+	fi
+	@kubectl apply -f $(K8S_DIR)/kind/ --context kind-$(KIND_CLUSTER_NAME) --recursive
+	@if ! kubectl get secret ideaforge-ai-secrets -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) &>/dev/null; then \
+		echo "⚠️  secrets not found, creating default secrets..."; \
 		echo "   Run 'make kind-load-secrets' to load from .env file"; \
 		kubectl create secret generic ideaforge-ai-secrets \
 			--from-literal=POSTGRES_PASSWORD=devpassword \
@@ -608,18 +606,6 @@ kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manif
 			--namespace $(K8S_NAMESPACE) \
 			--context kind-$(KIND_CLUSTER_NAME) \
 			--dry-run=client -o yaml | kubectl apply -f - --context kind-$(KIND_CLUSTER_NAME); \
-	fi
-	@echo "📦 Deploying PostgreSQL (using kind-optimized config)..."
-	@if [ -f $(K8S_DIR)/postgres-kind.yaml ]; then \
-		kubectl apply -f $(K8S_DIR)/postgres-kind.yaml --context kind-$(KIND_CLUSTER_NAME); \
-	else \
-		kubectl apply -f $(K8S_DIR)/postgres.yaml --context kind-$(KIND_CLUSTER_NAME); \
-	fi
-	@echo "📦 Deploying Redis (using kind-optimized config)..."
-	@if [ -f $(K8S_DIR)/redis-kind.yaml ]; then \
-		kubectl apply -f $(K8S_DIR)/redis-kind.yaml --context kind-$(KIND_CLUSTER_NAME); \
-	else \
-		kubectl apply -f $(K8S_DIR)/redis.yaml --context kind-$(KIND_CLUSTER_NAME); \
 	fi
 	@echo "⏳ Waiting for database services to be ready..."
 	@echo "   Waiting for PostgreSQL (this may take 60-90 seconds for first startup)..."
@@ -849,17 +835,27 @@ eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespac
 	@echo "✅ GitHub Container Registry secret created: ghcr-secret in namespace $(EKS_NAMESPACE)"
 	@echo "   This secret allows Kubernetes to pull images from ghcr.io/soumantrivedi/ideaforge-ai"
 
-eks-prepare-namespace: ## Prepare namespace-specific kustomization for EKS
+eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates namespace in all manifests)
 	@echo "📝 Preparing EKS deployment for namespace: $(EKS_NAMESPACE)"
 	@if [ -z "$(EKS_NAMESPACE)" ] || [ "$(EKS_NAMESPACE)" = "ideaforge-ai" ]; then \
 		echo "⚠️  Using default namespace: ideaforge-ai"; \
 		EKS_NAMESPACE="ideaforge-ai"; \
 	fi
-	@mkdir -p $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)
-	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nnamespace: %s\n\nresources:\n  - ../eks\n\n# Override namespace\nnamespace: %s\n\n# Override image tags if provided\nimages:\n  - name: ideaforge-ai-backend\n    newName: %s/backend\n    newTag: %s\n  - name: ideaforge-ai-frontend\n    newName: %s/frontend\n    newTag: %s\n\n# Namespace-specific patches (strategic merge patches)\npatchesStrategicMerge:\n  - namespace-patch.yaml\n  - imagepullsecret-patch.yaml\n' "$(EKS_NAMESPACE)" "$(EKS_NAMESPACE)" "$(EKS_IMAGE_REGISTRY)" "$(EKS_IMAGE_TAG)" "$(EKS_IMAGE_REGISTRY)" "$(EKS_IMAGE_TAG)" > $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)/kustomization.yaml
-	@printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n  labels:\n    name: %s\n    app: ideaforge-ai\n    environment: production\n' "$(EKS_NAMESPACE)" "$(EKS_NAMESPACE)" > $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)/namespace-patch.yaml
-	@printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: backend\nspec:\n  template:\n    spec:\n      imagePullSecrets:\n      - name: ghcr-secret\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: frontend\nspec:\n  template:\n    spec:\n      imagePullSecrets:\n      - name: ghcr-secret\n' > $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)/imagepullsecret-patch.yaml
-	@echo "✅ Namespace-specific kustomization created: $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)/"
+	@if [ ! -d $(K8S_DIR)/eks ]; then \
+		echo "❌ k8s/eks/ directory not found"; \
+		exit 1; \
+	fi
+	@echo "📝 Updating image tags in EKS manifests..."
+	@if [ "$(uname)" = "Darwin" ]; then \
+		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i '' "s|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g" {} \; ; \
+		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i '' "s|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g" {} \; ; \
+		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i '' "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" {} \; ; \
+	else \
+		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i "s|ghcr.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(EKS_IMAGE_TAG)|g" {} \; ; \
+		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i "s|ghcr.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(EKS_IMAGE_TAG)|g" {} \; ; \
+		find $(K8S_DIR)/eks -name "*.yaml" -type f -exec sed -i "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" {} \; ; \
+	fi
+	@echo "✅ EKS manifests prepared for namespace: $(EKS_NAMESPACE)"
 
 eks-load-secrets: ## Load secrets from .env file for EKS deployment (use EKS_NAMESPACE=your-namespace)
 	@if [ ! -f .env ]; then \
@@ -891,15 +887,10 @@ eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=yo
 		exit 1; \
 	fi
 	@echo "✅ kubectl is configured"
-	@echo "📦 Building kustomization for namespace: $(EKS_NAMESPACE)"
-	@cd $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE) && \
-		kubectl kustomize . > /tmp/eks-deploy-$(EKS_NAMESPACE).yaml || \
-		(echo "❌ Kustomize build failed. Using base EKS overlay..." && \
-		 cd ../eks && kubectl kustomize . > /tmp/eks-deploy-$(EKS_NAMESPACE).yaml)
 	@echo "📦 Creating ConfigMaps for database setup..."
 	@bash $(K8S_DIR)/create-db-configmaps.sh
-	@echo "📦 Applying Kubernetes manifests to namespace: $(EKS_NAMESPACE)"
-	@kubectl apply -f /tmp/eks-deploy-$(EKS_NAMESPACE).yaml
+	@echo "📦 Applying Kubernetes manifests from k8s/eks/ to namespace: $(EKS_NAMESPACE)"
+	@kubectl apply -f $(K8S_DIR)/eks/ --recursive
 	@echo "⏳ Waiting for database services to be ready..."
 	@kubectl wait --for=condition=ready pod -l app=postgres -n $(EKS_NAMESPACE) --timeout=300s || true
 	@kubectl wait --for=condition=ready pod -l app=redis -n $(EKS_NAMESPACE) --timeout=120s || true
