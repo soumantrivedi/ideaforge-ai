@@ -30,11 +30,7 @@ spec:
           protocol: TCP
         env:
         # Database Configuration
-        - name: DATABASE_URL
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: DATABASE_URL
+        # DATABASE_URL will be constructed by backend from POSTGRES_* env vars
         - name: POSTGRES_HOST
           valueFrom:
             configMapKeyRef:
