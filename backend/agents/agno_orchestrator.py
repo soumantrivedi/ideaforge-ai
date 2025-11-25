@@ -17,6 +17,8 @@ from backend.agents.agno_summary_agent import AgnoSummaryAgent
 from backend.agents.agno_scoring_agent import AgnoScoringAgent
 from backend.agents.agno_github_agent import AgnoGitHubAgent
 from backend.agents.agno_atlassian_agent import AgnoAtlassianAgent
+from backend.agents.agno_v0_agent import AgnoV0Agent
+from backend.agents.agno_lovable_agent import AgnoLovableAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.models.schemas import AgentMessage, AgentResponse, MultiAgentRequest, MultiAgentResponse, AgentInteraction
 
@@ -49,6 +51,8 @@ class AgnoAgenticOrchestrator:
             "scoring": AgnoScoringAgent(enable_rag=self.enable_rag),
             "github_mcp": AgnoGitHubAgent(enable_rag=self.enable_rag),
             "atlassian_mcp": AgnoAtlassianAgent(enable_rag=self.enable_rag),
+            "v0": AgnoV0Agent(enable_rag=self.enable_rag),
+            "lovable": AgnoLovableAgent(enable_rag=self.enable_rag),
             "rag": RAGAgent(),  # RAG agent always has RAG enabled
         }
     
@@ -148,6 +152,25 @@ class AgnoAgenticOrchestrator:
             # Get interaction history
             interactions = self.coordinator.get_interaction_history()
             
+            # Convert interactions to dict format for JSON serialization
+            interaction_dicts = []
+            for interaction in interactions[-10:]:  # Last 10 interactions
+                if hasattr(interaction, 'dict'):
+                    interaction_dict = interaction.dict()
+                elif hasattr(interaction, '__dict__'):
+                    interaction_dict = {
+                        "from_agent": getattr(interaction, 'from_agent', ''),
+                        "to_agent": getattr(interaction, 'to_agent', ''),
+                        "query": getattr(interaction, 'query', ''),
+                        "response": getattr(interaction, 'response', ''),
+                        "timestamp": getattr(interaction, 'timestamp', datetime.utcnow()).isoformat() if hasattr(getattr(interaction, 'timestamp', None), 'isoformat') else str(getattr(interaction, 'timestamp', datetime.utcnow())),
+                        "metadata": getattr(interaction, 'metadata', {}) or {}
+                    }
+                else:
+                    # Already a dict
+                    interaction_dict = interaction
+                interaction_dicts.append(interaction_dict)
+            
             metadata = dict(response.metadata or {})
             metadata.update({
                 "supporting_agents": request.supporting_agents,
@@ -157,7 +180,7 @@ class AgnoAgenticOrchestrator:
             return MultiAgentResponse(
                 primary_agent=request.primary_agent or response.agent_type,
                 response=response.response,
-                agent_interactions=interactions[-10:],  # Last 10 interactions
+                agent_interactions=interaction_dicts,
                 coordination_mode=request.coordination_mode,
                 metadata=metadata
             )

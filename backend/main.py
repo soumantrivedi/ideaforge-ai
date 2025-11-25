@@ -44,6 +44,7 @@ from backend.api.conversations import router as conversations_router
 from backend.api.product_scoring import router as product_scoring_router
 from backend.api.integrations import router as integrations_router
 from backend.api.documents import router as documents_router
+from backend.api.export import router as export_router
 from backend.services.provider_registry import provider_registry
 
 structlog.configure(
@@ -206,6 +207,7 @@ app.include_router(api_keys_router)
 app.include_router(product_scoring_router)
 app.include_router(integrations_router)
 app.include_router(documents_router)
+app.include_router(export_router)
 
 
 @app.get("/", tags=["health"])
@@ -421,6 +423,68 @@ async def process_multi_agent_request(
             user_id=authenticated_user_id,
             request=authenticated_request
         )
+
+        # Save conversation messages to database for historical access
+        try:
+            from backend.api.database import router as db_router
+            import json
+            from sqlalchemy import text
+            
+            session_id = request.context.get("session_id") if request.context else None
+            product_id_str = str(request.product_id) if request.product_id else None
+            
+            # Save user message
+            user_message_query = text("""
+                INSERT INTO conversation_history
+                (session_id, product_id, message_type, agent_name, agent_role, content, tenant_id)
+                VALUES (:session_id, :product_id, :message_type, :agent_name, :agent_role, :content, :tenant_id)
+            """)
+            await db.execute(user_message_query, {
+                "session_id": session_id,
+                "product_id": product_id_str,
+                "message_type": "user",
+                "agent_name": None,
+                "agent_role": None,
+                "content": request.query,
+                "tenant_id": current_user.get("tenant_id")
+            })
+            
+            # Save assistant response with agent interactions metadata
+            interaction_metadata = {
+                "primary_agent": response.primary_agent,
+                "coordination_mode": response.coordination_mode,
+                "agent_interactions": [
+                    {
+                        "from_agent": i.get('from_agent') if isinstance(i, dict) else (i.from_agent if hasattr(i, 'from_agent') else ''),
+                        "to_agent": i.get('to_agent') if isinstance(i, dict) else (i.to_agent if hasattr(i, 'to_agent') else ''),
+                        "query": i.get('query') if isinstance(i, dict) else (i.query if hasattr(i, 'query') else ''),
+                        "response": i.get('response') if isinstance(i, dict) else (i.response if hasattr(i, 'response') else ''),
+                        "metadata": i.get('metadata', {}) if isinstance(i, dict) else (i.metadata if hasattr(i, 'metadata') else {})
+                    }
+                    for i in (response.agent_interactions or [])
+                ] if response.agent_interactions else []
+            }
+            
+            assistant_message_query = text("""
+                INSERT INTO conversation_history
+                (session_id, product_id, message_type, agent_name, agent_role, content, interaction_metadata, tenant_id)
+                VALUES (:session_id, :product_id, :message_type, :agent_name, :agent_role, :content, CAST(:interaction_metadata AS jsonb), :tenant_id)
+            """)
+            await db.execute(assistant_message_query, {
+                "session_id": session_id,
+                "product_id": product_id_str,
+                "message_type": "assistant",
+                "agent_name": response.primary_agent,
+                "agent_role": response.primary_agent,
+                "content": response.response,
+                "interaction_metadata": json.dumps(interaction_metadata),
+                "tenant_id": current_user.get("tenant_id")
+            })
+            
+            await db.commit()
+        except Exception as e:
+            logger.warning("failed_to_save_conversation", error=str(e), user_id=str(authenticated_user_id))
+            await db.rollback()
 
         return response
 

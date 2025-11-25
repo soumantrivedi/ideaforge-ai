@@ -43,6 +43,8 @@ class AgnoCoordinatorAgent:
         self.analysis_agent = AgnoAnalysisAgent(enable_rag=enable_rag)
         self.ideation_agent = AgnoIdeationAgent(enable_rag=enable_rag)
         self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=enable_rag)
+        self.v0_agent = AgnoV0Agent(enable_rag=enable_rag)
+        self.lovable_agent = AgnoLovableAgent(enable_rag=enable_rag)
         self.rag_agent = RAGAgent()  # RAG agent always has RAG enabled
         
         # Register all agents
@@ -51,6 +53,8 @@ class AgnoCoordinatorAgent:
             "analysis": self.analysis_agent,
             "ideation": self.ideation_agent,
             "prd_authoring": self.prd_agent,
+            "v0": self.v0_agent,
+            "lovable": self.lovable_agent,
             "rag": self.rag_agent,
         }
         

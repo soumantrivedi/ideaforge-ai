@@ -57,6 +57,7 @@ tenacity==9.0.0
 structlog==24.4.0
 uuid7==0.1.0
 cryptography==43.0.1
+markdown==3.7
 
 # Testing
 pytest==8.3.4

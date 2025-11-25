@@ -19,14 +19,20 @@ graph TB
     end
 
     subgraph "Agent Layer"
-        Coordinator[Coordinator Agent]
+        Coordinator[Enhanced Coordinator Agent]
         Research[Research Agent]
         Analysis[Analysis Agent]
         Validation[Validation Agent]
-        Strategy[Strategy Agent]
         Ideation[Ideation Agent]
         PRD[PRD Authoring Agent]
-        Jira[Jira Agent]
+        Summary[Summary Agent]
+        Scoring[Scoring Agent]
+        Export[Export Agent]
+        RAG[RAG Agent]
+        V0[V0 Design Agent]
+        Lovable[Lovable AI Agent]
+        GitHub[GitHub MCP Agent]
+        Atlassian[Atlassian MCP Agent]
     end
 
     subgraph "Data Layer"
@@ -50,10 +56,16 @@ graph TB
     Coordinator --> Research
     Coordinator --> Analysis
     Coordinator --> Validation
-    Coordinator --> Strategy
     Coordinator --> Ideation
     Coordinator --> PRD
-    Coordinator --> Jira
+    Coordinator --> Summary
+    Coordinator --> Scoring
+    Coordinator --> Export
+    Coordinator --> RAG
+    Coordinator --> V0
+    Coordinator --> Lovable
+    Coordinator --> GitHub
+    Coordinator --> Atlassian
     Backend --> PostgreSQL
     Backend --> Redis
     Research --> OpenAI
@@ -61,12 +73,16 @@ graph TB
     Research --> Google
     Analysis --> OpenAI
     Validation --> OpenAI
-    Strategy --> OpenAI
     Ideation --> OpenAI
     PRD --> OpenAI
-    Jira --> JiraAPI
-    Jira --> GitHub
-    Jira --> Confluence
+    Summary --> OpenAI
+    Scoring --> OpenAI
+    Export --> OpenAI
+    RAG --> OpenAI
+    V0 --> OpenAI
+    Lovable --> OpenAI
+    GitHub --> GitHub
+    Atlassian --> Confluence
 
     style UI fill:#e1f5ff
     style Frontend fill:#c8e6c9

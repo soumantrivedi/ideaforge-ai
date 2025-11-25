@@ -133,6 +133,38 @@ Your output should:
             ]
         )
 
+    async def generate_comprehensive_prd(
+        self,
+        product_id: str,
+        product_info: Dict[str, Any],
+        phase_data: List[Dict[str, Any]],
+        conversation_history: List[Dict[str, Any]],
+        knowledge_base: List[Dict[str, Any]],
+        context: Optional[Dict[str, Any]] = None
+    ) -> str:
+        """
+        Generate comprehensive PRD and return as string (markdown).
+        
+        Args:
+            product_id: Product ID
+            product_info: Product information (name, description, metadata)
+            phase_data: Phase submissions data
+            conversation_history: Chatbot conversation history
+            knowledge_base: Knowledge base articles
+            context: Additional context
+            
+        Returns:
+            PRD content as markdown string
+        """
+        response = await self.export_prd(
+            product_id=product_id,
+            phase_submissions=phase_data,
+            conversation_history=conversation_history,
+            knowledge_articles=knowledge_base,
+            context={**(context or {}), "product_info": product_info}
+        )
+        return response.response
+
     async def export_prd(
         self,
         product_id: str,

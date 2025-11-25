@@ -16,6 +16,7 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
   const [isLoading, setIsLoading] = useState(false);
   const [coordinationMode, setCoordinationMode] = useState<CoordinationMode>('collaborative');
   const [activeAgents, setActiveAgents] = useState<string[]>([]);
+  const [agentInteractions, setAgentInteractions] = useState<any[]>([]);
 
   // Listen for phase form generation events
   useEffect(() => {
@@ -131,10 +132,25 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
           content: data.response || 'No response',
           agentName: data.primary_agent || 'Assistant',
           timestamp: new Date().toISOString(),
-          interactions: data.interactions || [],
+          interactions: data.agent_interactions || [],
         };
         setMessages((prev) => [...prev, assistantMessage]);
-        setActiveAgents(data.active_agents || []);
+        
+        // Extract active agents from interactions
+        const interactions = data.agent_interactions || [];
+        const uniqueAgents = new Set<string>();
+        interactions.forEach((interaction: any) => {
+          if (interaction.to_agent) uniqueAgents.add(interaction.to_agent);
+          if (interaction.from_agent) uniqueAgents.add(interaction.from_agent);
+        });
+        if (data.primary_agent) uniqueAgents.add(data.primary_agent);
+        setActiveAgents(Array.from(uniqueAgents));
+        setAgentInteractions(interactions);
+        
+        // Dispatch event to update agent panel
+        window.dispatchEvent(new CustomEvent('agentInteractionsUpdated', {
+          detail: { interactions, activeAgents: Array.from(uniqueAgents) }
+        }));
       } else {
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Failed to get response');
@@ -151,6 +167,96 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
     }
   };
 
+  // Load conversation history on mount
+  useEffect(() => {
+    const loadConversationHistory = async () => {
+      if (!token || !productId) return;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/conversations/history?product_id=${productId}&limit=100`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.conversations && Array.isArray(data.conversations)) {
+            // Convert conversation history to MultiAgentMessage format
+            const historyMessages: MultiAgentMessage[] = data.conversations
+              .reverse() // Reverse to get chronological order
+              .map((conv: any) => ({
+                role: conv.message_type === 'user' ? 'user' : 'assistant',
+                content: conv.content || conv.formatted_content || '',
+                agentName: conv.agent_name || 'Assistant',
+                timestamp: conv.created_at || new Date().toISOString(),
+              }));
+            
+            setMessages(historyMessages);
+            
+            // Extract agent interactions from history
+            const interactions: any[] = [];
+            historyMessages.forEach((msg, idx) => {
+              if (msg.interactions && Array.isArray(msg.interactions)) {
+                interactions.push(...msg.interactions);
+              }
+            });
+            setAgentInteractions(interactions);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading conversation history:', error);
+      }
+    };
+    
+    loadConversationHistory();
+  }, [token, productId]);
+
+  const handleExport = async () => {
+    if (!token || !productId) return;
+    
+    try {
+      // Get all conversation messages for export
+      const conversationText = messages
+        .map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+        .join('\n\n');
+      
+      // Call export endpoint
+      const response = await fetch(`${API_URL}/api/products/${productId}/export-prd`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          conversation_history: messages,
+          format: 'html', // Request HTML format
+        }),
+      });
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `PRD_${productId}_${new Date().toISOString().split('T')[0]}.html`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to export PRD');
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      alert(`Failed to export PRD: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   return (
     <EnhancedChatInterface
       messages={messages}
@@ -159,6 +265,8 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
       coordinationMode={coordinationMode}
       onCoordinationModeChange={setCoordinationMode}
       activeAgents={activeAgents}
+      productId={productId}
+      onExport={handleExport}
     />
   );
 }

@@ -26,6 +26,8 @@ export function MainApp() {
   const [currentPhase, setCurrentPhase] = useState<LifecyclePhase | null>(null);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [activeAgents, setActiveAgents] = useState<any[]>([]);
+  const [agentInteractions, setAgentInteractions] = useState<any[]>([]);
 
   useEffect(() => {
     if (token) {
@@ -33,6 +35,41 @@ export function MainApp() {
       loadPhases();
     }
   }, [token]);
+
+  // Listen for agent interactions updates
+  useEffect(() => {
+    const handleAgentInteractionsUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail) {
+        const { interactions, activeAgents: agents } = customEvent.detail;
+        
+        // Convert active agents to AgentStatus format
+        const agentStatuses = agents.map((agentName: string) => {
+          const role = agentName.toLowerCase().replace(/\s+/g, '_');
+          const latestInteraction = interactions
+            .filter((i: any) => i.to_agent === agentName || i.from_agent === agentName)
+            .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+          
+          return {
+            role,
+            name: agentName,
+            isActive: true,
+            lastActivity: latestInteraction ? new Date(latestInteraction.timestamp).toLocaleString() : undefined,
+            interactions: interactions.filter((i: any) => i.to_agent === agentName || i.from_agent === agentName).length,
+            latestInteraction,
+          };
+        });
+        
+        setActiveAgents(agentStatuses);
+        setAgentInteractions(interactions);
+      }
+    };
+
+    window.addEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
+    return () => {
+      window.removeEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
+    };
+  }, []);
 
   useEffect(() => {
     if (productId && token) {
@@ -597,7 +634,10 @@ export function MainApp() {
               </div>
               <div className="w-64">
                 <div className="sticky top-0 h-[calc(100vh-8rem)] overflow-y-auto">
-                <AgentStatusPanel agents={[]} />
+                <AgentStatusPanel 
+                  agents={activeAgents} 
+                  agentInteractions={agentInteractions}
+                />
                 </div>
               </div>
             </div>

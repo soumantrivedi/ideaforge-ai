@@ -11,14 +11,20 @@ from backend.database import get_db
 from backend.api.auth import get_current_user
 from backend.agents.v0_agent import V0Agent
 from backend.agents.lovable_agent import LovableAgent
+from backend.agents.agno_v0_agent import AgnoV0Agent
+from backend.agents.agno_lovable_agent import AgnoLovableAgent
 from backend.config import settings
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/design", tags=["design"])
 
-# Initialize agents
+# Initialize agents (use Agno agents for multi-agent integration)
+# Keep legacy agents for backward compatibility
 v0_agent = V0Agent()
 lovable_agent = LovableAgent()
+
+# Initialize Agno agents (these are registered in the orchestrator)
+# These will be accessed through the orchestrator for multi-agent coordination
 
 
 class GeneratePromptRequest(BaseModel):
@@ -373,7 +379,12 @@ async def create_design_project(
         enhanced_prompt = request.prompt
         if request.use_multi_agent:
             try:
-                orchestrator = AgnoAgenticOrchestrator()
+                # Use global orchestrator from main.py
+                from backend.main import orchestrator, agno_enabled
+                
+                # If Agno is not enabled, create a temporary orchestrator
+                if not agno_enabled:
+                    orchestrator = AgnoAgenticOrchestrator()
                 
                 # Build context for multi-agent enhancement
                 enhancement_context = request.context or {}

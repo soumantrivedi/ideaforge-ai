@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, Sparkles, Users, Zap } from 'lucide-react';
+import { Send, Bot, User, Loader2, Sparkles, Users, Zap, Download, FileText } from 'lucide-react';
 import type { MultiAgentMessage, CoordinationMode } from '../agents/multi-agent-system';
 import { ContentFormatter } from '../lib/content-formatter';
 
@@ -10,6 +10,8 @@ interface EnhancedChatInterfaceProps {
   coordinationMode: CoordinationMode;
   onCoordinationModeChange: (mode: CoordinationMode) => void;
   activeAgents?: string[];
+  productId?: string;
+  onExport?: () => void;
 }
 
 export function EnhancedChatInterface({
@@ -19,6 +21,8 @@ export function EnhancedChatInterface({
   coordinationMode,
   onCoordinationModeChange,
   activeAgents = [],
+  productId,
+  onExport,
 }: EnhancedChatInterfaceProps) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);

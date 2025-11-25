@@ -26,6 +26,8 @@ from backend.agents.agno_summary_agent import AgnoSummaryAgent
 from backend.agents.agno_scoring_agent import AgnoScoringAgent
 from backend.agents.agno_validation_agent import AgnoValidationAgent
 from backend.agents.agno_export_agent import AgnoExportAgent
+from backend.agents.agno_v0_agent import AgnoV0Agent
+from backend.agents.agno_lovable_agent import AgnoLovableAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.models.schemas import AgentMessage, AgentResponse, AgentInteraction, AgentCapability
 from backend.services.provider_registry import provider_registry
@@ -54,6 +56,8 @@ class AgnoEnhancedCoordinator:
         self.scoring_agent = AgnoScoringAgent(enable_rag=enable_rag)
         self.validation_agent = AgnoValidationAgent(enable_rag=enable_rag)
         self.export_agent = AgnoExportAgent(enable_rag=enable_rag)
+        self.v0_agent = AgnoV0Agent(enable_rag=enable_rag)
+        self.lovable_agent = AgnoLovableAgent(enable_rag=enable_rag)
         self.rag_agent = RAGAgent()
         
         # Register all agents
@@ -66,6 +70,8 @@ class AgnoEnhancedCoordinator:
             "scoring": self.scoring_agent,
             "validation": self.validation_agent,
             "export": self.export_agent,
+            "v0": self.v0_agent,
+            "lovable": self.lovable_agent,
             "rag": self.rag_agent,
         }
         
@@ -290,12 +296,25 @@ INSTRUCTIONS:
         
         response = await target_agent.process([consultation_message], context=enhanced_context)
         
+        # Build comprehensive metadata
+        interaction_metadata = {
+            "shared_context_used": True,
+            "system_context": str(enhanced_context) if enhanced_context else None,
+            "system_prompt": target_agent.system_prompt if hasattr(target_agent, 'system_prompt') else None,
+            "rag_context": enhanced_context.get("rag_context") if enhanced_context else None,
+            "user_prompt": query,
+        }
+        
+        # Add response metadata if available
+        if response.metadata:
+            interaction_metadata.update(response.metadata)
+        
         interaction = AgentInteraction(
             from_agent=from_agent,
             to_agent=to_agent,
             query=query,
             response=response.response,
-            metadata={**(response.metadata or {}), "shared_context_used": True}
+            metadata=interaction_metadata
         )
         
         self.interaction_history.append(interaction)

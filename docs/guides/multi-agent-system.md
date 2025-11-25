@@ -55,37 +55,96 @@ Each agent now has:
 
 ## Agent Network
 
-### Available Agents
+### Available Agents (Agno Framework)
 
-1. **🤖 General Assistant**
-   - Role: General conversation and task coordination
-   - Confidence: High for general queries
-   - Capabilities: Broad knowledge, task routing
+The IdeaForge AI platform uses the Agno framework with the following specialized agents:
 
-2. **🔬 Research Specialist**
-   - Role: In-depth research and analysis
+1. **🔬 Research Agent** (`research`)
+   - Role: In-depth research, market analysis, competitive intelligence
    - Confidence: High for research queries
-   - Capabilities: Data gathering, trend analysis, sourcing
+   - Capabilities: Data gathering, trend analysis, sourcing, market research
+   - RAG Enabled: Yes
 
-3. **💻 Code Expert**
-   - Role: Software development and debugging
-   - Confidence: High for programming tasks
-   - Capabilities: Code generation, debugging, optimization
-
-4. **✨ Creative Writer**
-   - Role: Creative content generation
-   - Confidence: High for creative tasks
-   - Capabilities: Storytelling, brainstorming, content creation
-
-5. **📊 Data Analyst**
-   - Role: Data analysis and insights
+2. **📊 Analysis Agent** (`analysis`)
+   - Role: Data analysis, SWOT analysis, feasibility studies
    - Confidence: High for analytical tasks
-   - Capabilities: Pattern recognition, statistical analysis, recommendations
+   - Capabilities: Pattern recognition, statistical analysis, recommendations, risk assessment
+   - RAG Enabled: Yes
 
-6. **📚 Knowledge Retrieval Agent**
-   - Role: Knowledge base search and synthesis
+3. **💡 Ideation Agent** (`ideation`)
+   - Role: Brainstorming, idea generation, feature ideation
+   - Confidence: High for creative ideation tasks
+   - Capabilities: Creative thinking, feature brainstorming, innovation
+   - RAG Enabled: Yes
+
+4. **📝 PRD Authoring Agent** (`prd_authoring`)
+   - Role: Product Requirements Document creation
+   - Confidence: High for documentation tasks
+   - Capabilities: PRD generation, requirement documentation, industry standards compliance
+   - RAG Enabled: Yes
+
+5. **📄 Summary Agent** (`summary`)
+   - Role: Creating summaries from conversation sessions
+   - Confidence: High for summarization tasks
+   - Capabilities: Multi-session summarization, key point extraction, synthesis
+   - RAG Enabled: Yes
+
+6. **⭐ Scoring Agent** (`scoring`)
+   - Role: Product idea scoring and evaluation
+   - Confidence: High for scoring tasks
+   - Capabilities: Idea evaluation, success probability, risk assessment, recommendations
+   - RAG Enabled: Yes
+
+7. **✅ Validation Agent** (`validation`)
+   - Role: Validating AI-generated content and responses
+   - Confidence: High for validation tasks
+   - Capabilities: Content validation, quality checks, refinement suggestions
+   - RAG Enabled: Yes
+
+8. **📤 Export Agent** (`export`)
+   - Role: Generating comprehensive PRD documents in HTML format
+   - Confidence: High for export tasks
+   - Capabilities: PRD export, HTML generation, markdown conversion, document synthesis
+   - RAG Enabled: Yes
+
+9. **📚 RAG Agent** (`rag`)
+   - Role: Retrieval-Augmented Generation for knowledge base access
    - Confidence: High for knowledge queries
-   - Capabilities: Document search, context retrieval, information synthesis
+   - Capabilities: Vector search, document retrieval, context synthesis, knowledge base management
+   - RAG Enabled: Always (core functionality)
+
+10. **🎨 V0 Design Agent** (`v0`)
+    - Role: Vercel V0 integration for UI prototype generation
+    - Confidence: High for design tasks
+    - Capabilities: V0 prompt generation, code generation, project creation, UI prototyping
+    - RAG Enabled: Yes
+
+11. **🎭 Lovable AI Agent** (`lovable`)
+    - Role: Lovable AI integration for full prototype generation
+    - Confidence: High for design tasks
+    - Capabilities: Lovable prompt generation, thumbnail previews, project creation, prototype generation
+    - RAG Enabled: Yes
+
+12. **🐙 GitHub MCP Agent** (`github_mcp`)
+    - Role: GitHub integration via MCP server
+    - Confidence: High for GitHub-related tasks
+    - Capabilities: Repository access, file retrieval, documentation extraction, code analysis
+    - RAG Enabled: Yes
+
+13. **🔷 Atlassian MCP Agent** (`atlassian_mcp`)
+    - Role: Atlassian Confluence integration via MCP server
+    - Confidence: High for Confluence-related tasks
+    - Capabilities: Page retrieval, documentation access, knowledge extraction, Confluence search
+    - RAG Enabled: Yes
+
+### Agent Coordination
+
+All agents are coordinated through the **AgnoEnhancedCoordinator** which:
+- Routes queries to appropriate agents based on content analysis
+- Enables agent-to-agent consultation and context sharing
+- Tracks all agent interactions for transparency
+- Provides comprehensive context from RAG, conversations, and phase submissions
+- Supports multiple coordination modes (sequential, parallel, collaborative, debate, enhanced_collaborative)
 
 ## Architecture
 
