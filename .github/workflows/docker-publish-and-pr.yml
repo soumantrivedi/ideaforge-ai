@@ -167,13 +167,6 @@ jobs:
         id: version
         run: echo "version=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-      - name: Pull published images
-        run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ steps.git-sha.outputs.sha }} || \
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.git-sha.outputs.sha }} || \
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:latest
-
       - name: Clean up Docker to free space
         run: |
           echo "🧹 Cleaning up Docker to free disk space..."
@@ -181,13 +174,6 @@ jobs:
           docker builder prune -af || true
           df -h
           echo "✅ Cleanup complete"
-
-      - name: Tag images for Kind
-        run: |
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ steps.git-sha.outputs.sha }} ideaforge-ai-backend:${{ steps.git-sha.outputs.sha }} || \
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest ideaforge-ai-backend:${{ steps.git-sha.outputs.sha }}
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.git-sha.outputs.sha }} ideaforge-ai-frontend:${{ steps.git-sha.outputs.sha }} || \
-          docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:latest ideaforge-ai-frontend:${{ steps.git-sha.outputs.sha }}
 
       - name: Create Kind cluster
         run: |
