@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ideaforge-ai
+  labels:
+    name: ideaforge-ai
+    app: ideaforge-ai
+

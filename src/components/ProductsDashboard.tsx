@@ -379,7 +379,7 @@ export function ProductsDashboard({ onProductSelect, compact = false }: Products
                     console.log('Open Product button clicked for product:', product.id, 'onProductSelect:', !!onProductSelect);
                     if (onProductSelect && product.id) {
                       try {
-                        onProductSelect(product.id);
+                          onProductSelect(product.id);
                       } catch (error) {
                         console.error('Error in onProductSelect:', error);
                         alert('Failed to open product. Please try again.');

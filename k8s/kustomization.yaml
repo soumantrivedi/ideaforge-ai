@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ideaforge-ai
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - postgres.yaml
+  - redis.yaml
+  - backend.yaml
+  - frontend.yaml
+  - ingress.yaml
+
+# Common labels
+commonLabels:
+  app: ideaforge-ai
+  managed-by: kustomize
+
+# Image replacements (update these with your actual image tags)
+images:
+  - name: ghcr.io/YOUR_ORG/YOUR_REPO/backend
+    newName: ghcr.io/YOUR_ORG/YOUR_REPO/backend
+    newTag: latest
+  - name: ghcr.io/YOUR_ORG/YOUR_REPO/frontend
+    newName: ghcr.io/YOUR_ORG/YOUR_REPO/frontend
+    newTag: latest
+

@@ -107,11 +107,22 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
           </form>
 
           <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-            <p className="text-xs text-blue-900 font-medium mb-2">Demo Accounts:</p>
+            <p className="text-xs text-blue-900 font-medium mb-2">Demo Accounts (Password: password123):</p>
             <div className="text-xs text-blue-700 space-y-1">
-              <p>• admin@ideaforge.ai / password123</p>
-              <p>• user1@ideaforge.ai / password123</p>
-              <p>• alice@acme.com / password123</p>
+              <div className="mb-2">
+                <p className="font-semibold text-blue-900 mb-1">Admin Accounts:</p>
+                <p>• admin@ideaforge.ai</p>
+                <p>• admin2@ideaforge.ai</p>
+                <p>• admin3@ideaforge.ai</p>
+              </div>
+              <div>
+                <p className="font-semibold text-blue-900 mb-1">User Accounts:</p>
+                <p>• user1@ideaforge.ai</p>
+                <p>• user2@ideaforge.ai</p>
+                <p>• user3@ideaforge.ai</p>
+                <p>• user4@ideaforge.ai</p>
+                <p>• user5@ideaforge.ai</p>
+              </div>
             </div>
           </div>
         </div>

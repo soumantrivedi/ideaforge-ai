@@ -1,0 +1,293 @@
+name: Build and Publish Docker Images
+
+on:
+  workflow_dispatch:  # Manual trigger
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'backend/**'
+      - 'src/**'
+      - 'Dockerfile.*'
+      - 'docker-compose.yml'
+      - 'Makefile'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_BACKEND: ${{ github.repository }}/backend
+  IMAGE_NAME_FRONTEND: ${{ github.repository }}/frontend
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      git-sha: ${{ steps.git-sha.outputs.sha }}
+      branch-name: ${{ steps.branch-name.outputs.name }}
+      version: ${{ steps.version.outputs.version }}
+      vite-api-url: ${{ steps.frontend-args.outputs.vite_api_url }}
+      is-default-branch: ${{ steps.branch-check.outputs.is-default }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get Git SHA
+        id: git-sha
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Get branch name (sanitized)
+        id: branch-name
+        run: |
+          BRANCH_NAME=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9]/-/g' | tr '[:upper:]' '[:lower:]' | sed 's/--*/-/g' | sed 's/^-\|-$//g')
+          if [ -z "$BRANCH_NAME" ] || [ "$BRANCH_NAME" = "head" ]; then
+            BRANCH_NAME="main"
+          fi
+          echo "name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "Branch name (sanitized): $BRANCH_NAME"
+
+      - name: Check if default branch
+        id: branch-check
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/main" ] || [ "${{ github.ref }}" == "refs/heads/master" ]; then
+            echo "is-default=true" >> $GITHUB_OUTPUT
+          else
+            echo "is-default=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get Version
+        id: version
+        run: echo "version=${{ steps.git-sha.outputs.sha }}" >> $GITHUB_OUTPUT
+
+      - name: Set frontend build args
+        id: frontend-args
+        run: |
+          VITE_API_URL="${{ secrets.VITE_API_URL }}"
+          if [ -z "$VITE_API_URL" ]; then
+            VITE_API_URL="http://localhost:8000"
+          fi
+          echo "vite_api_url=$VITE_API_URL" >> $GITHUB_OUTPUT
+          echo "VITE_API_URL set to: $VITE_API_URL"
+
+  build-backend:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for backend
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}
+          tags: |
+            type=sha,format=short,prefix=
+            type=raw,value=${{ needs.prepare.outputs.branch-name }}-${{ needs.prepare.outputs.git-sha }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is-default-branch }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.backend
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ needs.prepare.outputs.git-sha }}
+            VERSION=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output backend image info
+        run: |
+          echo "✅ Backend image built and pushed:"
+          echo "   Tags: ${{ steps.meta-backend.outputs.tags }}"
+
+  build-frontend:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for frontend
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}
+          tags: |
+            type=sha,format=short,prefix=
+            type=raw,value=${{ needs.prepare.outputs.branch-name }}-${{ needs.prepare.outputs.git-sha }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is-default-branch }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          build-args: |
+            VITE_API_URL=${{ needs.prepare.outputs.vite-api-url }}
+            VITE_OKTA_CLIENT_ID=${{ secrets.VITE_OKTA_CLIENT_ID }}
+            VITE_OKTA_ISSUER=${{ secrets.VITE_OKTA_ISSUER }}
+            GIT_SHA=${{ needs.prepare.outputs.git-sha }}
+            VERSION=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output frontend image info
+        run: |
+          echo "✅ Frontend image built and pushed:"
+          echo "   Tags: ${{ steps.meta-frontend.outputs.tags }}"
+
+  prepare-release-notes:
+    needs: [prepare, build-backend, build-frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          GIT_SHA="${{ needs.prepare.outputs.git-sha }}"
+          BRANCH_NAME="${{ needs.prepare.outputs.branch-name }}"
+          BACKEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ needs.prepare.outputs.git-sha }}"
+          FRONTEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ needs.prepare.outputs.git-sha }}"
+          
+          # Get commit messages since last tag (or last 10 commits if no tags)
+          if git describe --tags --abbrev=0 > /dev/null 2>&1; then
+            LAST_TAG=$(git describe --tags --abbrev=0)
+            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          else
+            COMMITS=$(git log -10 --pretty=format:"- %s (%h)" --no-merges)
+          fi
+          
+          # Create release notes
+          cat > release-notes.md << EOF
+          # 🐳 Docker Images Published
+          
+          ## 📦 Published Images
+          
+          - **Backend**: \`${BACKEND_IMAGE}\`
+          - **Frontend**: \`${FRONTEND_IMAGE}\`
+          
+          ## 📝 Build Information
+          
+          - **Git SHA**: \`${GIT_SHA}\`
+          - **Branch**: \`${BRANCH_NAME}\`
+          - **Workflow Run**: [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - **Triggered by**: ${{ github.actor }}
+          - **Timestamp**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ## 📋 Recent Changes
+          
+          ${COMMITS}
+          
+          ## 🚀 Usage
+          
+          ### Backend
+          \`\`\`bash
+          docker pull ${BACKEND_IMAGE}
+          \`\`\`
+          
+          ### Frontend
+          \`\`\`bash
+          docker pull ${FRONTEND_IMAGE}
+          \`\`\`
+          
+          ## 📌 Tags
+          
+          Images are tagged with:
+          - \`${GIT_SHA}\` - Git SHA (short)
+          - \`${BRANCH_NAME}-${GIT_SHA}\` - Branch and SHA
+          $([ "${{ needs.prepare.outputs.is-default-branch }}" == "true" ] && echo "- \`latest\` - Latest on default branch")
+          EOF
+          
+          cat release-notes.md
+          
+          # Output for potential use in other steps
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat release-notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 30
+
+      - name: Output release notes summary
+        run: |
+          echo "📝 Release notes prepared:"
+          echo "   Artifact: release-notes"
+          echo "   File: release-notes.md"
+
+  summary:
+    needs: [prepare, build-backend, build-frontend, prepare-release-notes]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Build Summary
+        run: |
+          echo "## 🎉 Build and Publish Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Completed Jobs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Prepare**: Metadata and build args prepared" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Build Backend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Build Frontend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Release Notes**: Release notes prepared" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Published Images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ needs.prepare.outputs.git-sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ needs.prepare.outputs.git-sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Git SHA**: \`${{ needs.prepare.outputs.git-sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: \`${{ needs.prepare.outputs.branch-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow Run**: [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📋 Release notes are available as an artifact: \`release-notes\`" >> $GITHUB_STEP_SUMMARY

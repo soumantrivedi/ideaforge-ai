@@ -1,16 +1,21 @@
 # FastAPI Framework
 fastapi==0.115.0
 uvicorn[standard]==0.32.1
+click>=8.0.0  # Required by uvicorn[standard]
 pydantic[email]==2.10.3
 pydantic-settings==2.7.0
 
 # AI Provider SDKs
-openai==1.59.5
-anthropic==0.42.0
-google-generativeai==0.8.3
+# Updated versions for Agno 2.3.2 compatibility
+openai>=2.0.0  # Agno 2.3.2 requires openai>=2.0.0 for openai.types.responses
+anthropic>=0.50.0  # Agno requires newer anthropic for streaming types
+google-generativeai==0.8.3  # Legacy Google AI SDK
+google-genai>=1.0.0  # Required by Agno for Gemini models
 
-# Agno Framework for Multi-Agent Systems
-agno==0.1.0
+# Agno Framework for Multi-Agent Systems (phidata)
+agno>=2.0.0
+# Vector database and embeddings for RAG
+sentence-transformers>=2.2.0
 
 # FastMCP for MCP Server Integration
 fastmcp==0.2.0
@@ -52,6 +57,7 @@ tenacity==9.0.0
 structlog==24.4.0
 uuid7==0.1.0
 cryptography==43.0.1
+markdown==3.7
 
 # Testing
 pytest==8.3.4

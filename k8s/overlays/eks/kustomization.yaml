@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ideaforge-ai
+
+resources:
+  - ../../base
+
+# EKS-specific configurations
+# Using patchesStrategicMerge for strategic merge patches (deprecated but works)
+# Alternative: use patches with just path (no target) for strategic merge patches
+patchesStrategicMerge:
+  - postgres-eks-patch.yaml
+  - redis-eks-patch.yaml
+  - ingress-eks-patch.yaml
+
+# Override namespace (will be set by make target)
+# namespace: ideaforge-ai
+
+# Secrets are loaded via 'make eks-load-secrets' which uses .env file
+# If you want to use kustomize secretGenerator instead, create secrets.yaml
+# and uncomment the secretGenerator section below:
+# secretGenerator:
+#   - name: ideaforge-ai-secrets
+#     behavior: merge
+#     files:
+#       - secrets.yaml
+#     options:
+#       disableNameSuffixHash: true
+
+# EKS-specific image tags (can be overridden)
+images:
+  - name: ideaforge-ai-backend
+    newName: ghcr.io/soumantrivedi/ideaforge-ai/backend
+    newTag: latest
+  - name: ideaforge-ai-frontend
+    newName: ghcr.io/soumantrivedi/ideaforge-ai/frontend
+    newTag: latest
+

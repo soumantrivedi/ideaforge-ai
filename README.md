@@ -25,6 +25,8 @@ For deeper diagrams, see:
 
 ## Quick Start
 
+### Local Development (Docker Compose)
+
 ```bash
 git clone <repo> ideaforge-ai
 cd ideaforge-ai
@@ -43,7 +45,25 @@ make health
 open http://localhost:3001
 ```
 
-Full walkthrough: `docs/guides/quick-start.md`
+### Kubernetes Deployment (EKS)
+
+```bash
+# 1. Create namespace (REQUIRED - deployment will NOT create it)
+kubectl create namespace 20890-ideaforge-ai-dev-58a50
+
+# 2. Configure kubectl for EKS
+aws eks update-kubeconfig --name ideaforge-ai --region us-east-1
+
+# 3. Deploy with specific image tags
+make eks-deploy-full \
+  EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 \
+  BACKEND_IMAGE_TAG=fab20a2 \
+  FRONTEND_IMAGE_TAG=e1dc1da
+```
+
+Full walkthrough: `docs/guides/quick-start.md`  
+EKS Deployment Guide: `k8s/EKS_DEPLOYMENT_GUIDE.md`  
+Image Tag Configuration: `k8s/EKS_IMAGE_TAGS.md`
 
 ---
 

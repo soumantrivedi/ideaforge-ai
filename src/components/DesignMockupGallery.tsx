@@ -7,6 +7,7 @@ interface DesignMockup {
   prompt: string;
   image_url: string;
   thumbnail_url: string;
+  project_url?: string;
   created_at: string;
   metadata?: Record<string, any>;
 }
@@ -42,6 +43,12 @@ export function DesignMockupGallery({
       const response = await fetch(`${API_URL}/api/design/mockups/${productId}${providerParam}`);
       
       if (!response.ok) {
+        // If 500 error, table might not exist - return empty array
+        if (response.status === 500) {
+          console.warn('Design mockups table may not exist yet');
+          setMockups([]);
+          return;
+        }
         throw new Error('Failed to load mockups');
       }
       
@@ -172,9 +179,9 @@ export function DesignMockupGallery({
               </button>
             </div>
             <div className="flex-1 overflow-auto p-4">
-              {expandedMockup.image_url ? (
+              {expandedMockup.image_url || expandedMockup.thumbnail_url ? (
                 <img
-                  src={expandedMockup.image_url}
+                  src={expandedMockup.image_url || expandedMockup.thumbnail_url}
                   alt="Design mockup"
                   className="w-full h-auto rounded-lg shadow-lg"
                 />
@@ -187,6 +194,25 @@ export function DesignMockupGallery({
                 <div className="mt-4 p-4 bg-gray-50 rounded-lg">
                   <h4 className="font-semibold mb-2">Prompt Used:</h4>
                   <p className="text-sm text-gray-700 whitespace-pre-wrap">{expandedMockup.prompt}</p>
+                </div>
+              )}
+              {expandedMockup.project_url && (
+                <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                  <h4 className="font-semibold mb-2">Project URL:</h4>
+                  <a
+                    href={expandedMockup.project_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-600 hover:text-blue-800 underline break-all"
+                  >
+                    {expandedMockup.project_url}
+                  </a>
+                  <button
+                    onClick={() => window.open(expandedMockup.project_url, '_blank')}
+                    className="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+                  >
+                    Open in Browser
+                  </button>
                 </div>
               )}
             </div>

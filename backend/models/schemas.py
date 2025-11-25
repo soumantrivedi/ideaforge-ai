@@ -147,7 +147,7 @@ class MultiAgentRequest(BaseModel):
     user_id: UUID
     product_id: Optional[UUID] = None
     query: str
-    coordination_mode: Literal["sequential", "parallel", "collaborative", "debate"] = "collaborative"
+    coordination_mode: Literal["sequential", "parallel", "collaborative", "debate", "enhanced_collaborative"] = "collaborative"
     primary_agent: Optional[str] = None
     supporting_agents: Optional[List[str]] = None
     context: Optional[Dict[str, Any]] = None

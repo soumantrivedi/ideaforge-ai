@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: 20890-ideaforge-ai-dev-58a50
+
+resources:
+  - ../eks
+
+# Override namespace
+namespace: 20890-ideaforge-ai-dev-58a50
+
+# Override image tags if provided
+images:
+  - name: ideaforge-ai-backend
+    newName: ghcr.io/soumantrivedi/ideaforge-ai/backend
+    newTag: latest
+  - name: ideaforge-ai-frontend
+    newName: ghcr.io/soumantrivedi/ideaforge-ai/frontend
+    newTag: latest
+
+# Namespace-specific patches (strategic merge patches)
+patchesStrategicMerge:
+  - namespace-patch.yaml
+  - imagepullsecret-patch.yaml

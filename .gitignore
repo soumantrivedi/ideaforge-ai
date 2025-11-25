@@ -21,3 +21,6 @@ dist-ssr
 *.sln
 *.sw?
 .env
+backups/*.sql
+!backups/README.md
+!backups/.gitkeep

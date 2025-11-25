@@ -1,29 +1,48 @@
 import { useState, useEffect } from 'react';
-import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight, BarChart3, Star } from 'lucide-react';
 import { ProductChatInterface } from './ProductChatInterface';
 import { AgentStatusPanel } from './AgentStatusPanel';
 import { ProductLifecycleSidebar } from './ProductLifecycleSidebar';
 import { PhaseFormModal } from './PhaseFormModal';
+import { ValidationModal } from './ValidationModal';
 import { EnhancedSettings } from './EnhancedSettings';
 import { KnowledgeBaseManagerWrapper } from './KnowledgeBaseManagerWrapper';
 import { ProductsDashboard } from './ProductsDashboard';
 import { PortfolioView } from './PortfolioView';
 import { ConversationHistory } from './ConversationHistory';
 import { UserProfile } from './UserProfile';
+import { IdeaScoreDashboard } from './IdeaScoreDashboard';
+import { ProductSummaryPRDGenerator } from './ProductSummaryPRDGenerator';
 import { useAuth } from '../contexts/AuthContext';
 import { lifecycleService, type LifecyclePhase, type PhaseSubmission } from '../lib/product-lifecycle-service';
+import { saveAppState, loadAppState } from '../lib/session-storage';
 
-type View = 'dashboard' | 'chat' | 'settings' | 'knowledge' | 'portfolio' | 'history' | 'profile';
+type View = 'dashboard' | 'chat' | 'settings' | 'knowledge' | 'portfolio' | 'history' | 'profile' | 'scoring';
 
 export function MainApp() {
   const { user, logout, token } = useAuth();
-  const [view, setView] = useState<View>('dashboard');
-  const [productId, setProductId] = useState<string>('');
+  
+  // Load app state from sessionStorage on mount
+  const savedState = loadAppState();
+  const [view, setView] = useState<View>((savedState?.view as View) || 'dashboard');
+  const [productId, setProductId] = useState<string>(savedState?.productId || '');
   const [phases, setPhases] = useState<LifecyclePhase[]>([]);
   const [submissions, setSubmissions] = useState<PhaseSubmission[]>([]);
   const [currentPhase, setCurrentPhase] = useState<LifecyclePhase | null>(null);
+  const [savedPhaseId, setSavedPhaseId] = useState<string | undefined>(savedState?.currentPhaseId);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [activeAgents, setActiveAgents] = useState<any[]>([]);
+  const [agentInteractions, setAgentInteractions] = useState<any[]>([]);
+  const [validationModalOpen, setValidationModalOpen] = useState(false);
+  const [validationData, setValidationData] = useState<{
+    generatedContent: string;
+    phaseName: string;
+    formData: Record<string, string>;
+    previousQuestions: Array<{ question: string; answer: string }>;
+    agentInteractions: any[];
+    submissionId?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (token) {
@@ -31,6 +50,51 @@ export function MainApp() {
       loadPhases();
     }
   }, [token]);
+
+  // Listen for agent interactions updates
+  useEffect(() => {
+    const handleAgentInteractionsUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail) {
+        const { interactions, activeAgents: agents } = customEvent.detail;
+        
+        // Convert active agents to AgentStatus format
+        const agentStatuses = agents.map((agentName: string) => {
+          const role = agentName.toLowerCase().replace(/\s+/g, '_');
+          const latestInteraction = interactions
+            .filter((i: any) => i.to_agent === agentName || i.from_agent === agentName)
+            .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+          
+          return {
+            role,
+            name: agentName,
+            isActive: true,
+            lastActivity: latestInteraction ? new Date(latestInteraction.timestamp).toLocaleString() : undefined,
+            interactions: interactions.filter((i: any) => i.to_agent === agentName || i.from_agent === agentName).length,
+            latestInteraction,
+          };
+        });
+        
+        setActiveAgents(agentStatuses);
+        setAgentInteractions(interactions);
+      }
+    };
+
+    window.addEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
+    return () => {
+      window.removeEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
+    };
+  }, []);
+
+  // Save app state to sessionStorage whenever it changes
+  useEffect(() => {
+    saveAppState({
+      productId,
+      currentPhaseId: currentPhase?.id,
+      view,
+      // Don't save phases/submissions - they should be loaded fresh from backend
+    });
+  }, [productId, currentPhase, view]);
 
   useEffect(() => {
     if (productId && token) {
@@ -44,10 +108,67 @@ export function MainApp() {
     }
   }, [productId, token]);
 
+  // Load agents for current phase
+  useEffect(() => {
+    const loadAgentsForPhase = async () => {
+      if (!currentPhase || !token) {
+        // If no phase selected, clear agents or show default
+        setActiveAgents([]);
+        return;
+      }
+
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const response = await fetch(
+          `${API_URL}/api/agents/by-phase?phase_name=${encodeURIComponent(currentPhase.phase_name)}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          // Convert backend agent format to frontend AgentStatus format
+          const agentStatuses = data.agents.map((agent: any) => ({
+            role: agent.role,
+            name: agent.name,
+            isActive: agent.isActive,
+            lastActivity: undefined,
+            interactions: 0,
+            latestInteraction: undefined,
+          }));
+          setActiveAgents(agentStatuses);
+        } else {
+          console.error('Failed to load agents for phase:', response.status);
+          setActiveAgents([]);
+        }
+      } catch (error) {
+        console.error('Error loading agents for phase:', error);
+        setActiveAgents([]);
+      }
+    };
+
+    loadAgentsForPhase();
+  }, [currentPhase, token]);
+
   const loadPhases = async () => {
     try {
       const loadedPhases = await lifecycleService.getAllPhases();
-      setPhases(Array.isArray(loadedPhases) ? loadedPhases : []);
+      const phasesArray = Array.isArray(loadedPhases) ? loadedPhases : [];
+      setPhases(phasesArray);
+      
+      // Restore current phase from saved state if available
+      if (savedPhaseId && phasesArray.length > 0) {
+        const phase = phasesArray.find(p => p.id === savedPhaseId);
+        if (phase) {
+          setCurrentPhase(phase);
+          setSavedPhaseId(undefined); // Clear after restoring
+        }
+      }
     } catch (error) {
       console.error('Error loading phases:', error);
       setPhases([]);
@@ -72,15 +193,258 @@ export function MainApp() {
   };
 
   const handleFormSubmit = async (formData: Record<string, string>) => {
-    if (!productId || !currentPhase) return;
+    if (!productId || !currentPhase || !user || !token) return;
     
     try {
-      await lifecycleService.submitPhaseData(productId, currentPhase.id, formData);
-      await loadSubmissions();
-      setIsFormModalOpen(false);
+      // First, save the form data
+      await lifecycleService.submitPhaseData(productId, currentPhase.id, formData, user.id);
+      
+      // Build a comprehensive query for agent processing
+      const formDataSummary = Object.entries(formData)
+        .map(([key, value]) => `${key.replace(/_/g, ' ')}: ${value}`)
+        .join('\n');
+      
+      const query = `Generate comprehensive content for the ${currentPhase.phase_name} phase based on the following information:\n\n${formDataSummary}\n\nPlease provide a detailed, well-structured response that synthesizes this information and adds valuable insights using knowledge from the RAG knowledge base, research findings, and analysis from relevant agents.`;
+      
+      // Determine appropriate agents based on phase
+      let primaryAgent = 'ideation';
+      let supportingAgents: string[] = ['rag', 'research'];
+      
+      if (currentPhase.phase_name.toLowerCase().includes('research')) {
+        primaryAgent = 'research';
+        supportingAgents = ['rag', 'analysis'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('requirement')) {
+        primaryAgent = 'analysis';
+        supportingAgents = ['rag', 'research'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('design')) {
+        primaryAgent = 'ideation';
+        supportingAgents = ['rag', 'analysis'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('development')) {
+        primaryAgent = 'prd_authoring';
+        supportingAgents = ['rag', 'analysis'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('market')) {
+        primaryAgent = 'research';
+        supportingAgents = ['rag', 'analysis'];
+      }
+      
+      // Trigger agent processing
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${API_URL}/api/multi-agent/process`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          user_id: user.id,
+          product_id: productId,
+          query: query,
+          coordination_mode: 'enhanced_collaborative',
+          primary_agent: primaryAgent,
+          supporting_agents: supportingAgents,
+          context: {
+            product_id: productId,
+            phase_id: currentPhase.id,
+            phase_name: currentPhase.phase_name,
+            form_data: formData,
+          },
+        }),
+      });
+      
+      if (!response.ok) {
+        let errorMessage = `Failed to generate content: ${response.status}`;
+        let errorDetails: any = null;
+        
+        try {
+          const errorText = await response.text();
+          try {
+            errorDetails = JSON.parse(errorText);
+            if (errorDetails.detail) {
+              // Handle Pydantic validation errors
+              if (typeof errorDetails.detail === 'object' && Array.isArray(errorDetails.detail)) {
+                const validationErrors = errorDetails.detail.map((err: any) => {
+                  const field = err.loc ? err.loc.join('.') : 'unknown';
+                  const msg = err.msg || 'validation error';
+                  return `${field}: ${msg}`;
+                }).join(', ');
+                errorMessage = `Validation error: ${validationErrors}`;
+              } else if (typeof errorDetails.detail === 'string') {
+                errorMessage = errorDetails.detail;
+              } else {
+                errorMessage = JSON.stringify(errorDetails.detail);
+              }
+            } else if (errorDetails.message) {
+              errorMessage = errorDetails.message;
+            }
+          } catch {
+            errorMessage = errorText || errorMessage;
+          }
+        } catch (e) {
+          console.error('Error parsing error response:', e);
+        }
+        
+        console.error('Multi-agent API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorMessage,
+          details: errorDetails
+        });
+        
+        throw new Error(errorMessage);
+      }
+      
+      const data = await response.json();
+      console.log('Multi-agent response received:', {
+        hasResponse: !!data.response,
+        responseLength: data.response?.length || 0,
+        primaryAgent: data.primary_agent,
+        metadata: data.metadata
+      });
+      
+      const generatedContent = data.response || '';
+      const agentInteractions = data.agent_interactions || [];
+      
+      if (!generatedContent) {
+        console.warn('Generated content is empty');
+        alert('AI generated an empty response. Please try again or check your AI provider configuration.');
+        return;
+      }
+      
+      // Extract previous questions and answers from form data
+      const previousQuestions: Array<{ question: string; answer: string }> = [];
+      if (currentPhase.required_fields && currentPhase.template_prompts) {
+        currentPhase.required_fields.forEach((field, idx) => {
+          const prompt = currentPhase.template_prompts?.[idx] || field;
+          const answer = formData[field] || '';
+          if (answer) {
+            previousQuestions.push({
+              question: prompt,
+              answer: answer,
+            });
+          }
+        });
+      }
+      
+      // Get submission ID for updating later
+      const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
+      
+      // Show validation modal
+      setValidationData({
+        generatedContent,
+        phaseName: currentPhase.phase_name,
+        formData,
+        previousQuestions,
+        agentInteractions,
+        submissionId: submission?.id,
+      });
+      setValidationModalOpen(true);
     } catch (error) {
       console.error('Error submitting form:', error);
-      alert('Failed to submit form data');
+      alert(`Failed to process form: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleValidationAccept = async (score: number, feedback?: string) => {
+    if (!validationData || !productId || !currentPhase || !token) return;
+    
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      
+      // Update phase submission with generated content and score
+      const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
+      if (submission) {
+        // Store score in metadata
+        const metadata = {
+          ...(submission.metadata || {}),
+          validation_score: score,
+          validation_feedback: feedback || '',
+          validated_at: new Date().toISOString(),
+        };
+        
+        await lifecycleService.updatePhaseContent(
+          submission.id,
+          validationData.generatedContent,
+          'completed',
+          metadata
+        );
+      }
+      
+      // Reload submissions to update UI
+      await loadSubmissions();
+      
+      // Close modals
+      setIsFormModalOpen(false);
+      setValidationModalOpen(false);
+      
+      // Send to chatbot with score
+      const chatbotMessage = `Generated content for ${currentPhase.phase_name} phase (Score: ${score}/5):\n\n${validationData.generatedContent}`;
+      
+      window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+        detail: {
+          message: chatbotMessage,
+          productId,
+        }
+      }));
+      
+      console.log('Form submission completed with score:', score);
+    } catch (error) {
+      console.error('Error accepting validation:', error);
+      alert(`Failed to save validation: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleValidationRefine = async (refinementFeedback: string) => {
+    if (!validationData || !productId || !currentPhase || !user || !token) return;
+    
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      
+      // Refine the response
+      const refinedResponse = await fetch(`${API_URL}/api/multi-agent/process`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          user_id: user.id,
+          product_id: productId,
+          query: `Refine this response based on user feedback:\n\nOriginal Response:\n${validationData.generatedContent}\n\nUser Feedback:\n${refinementFeedback}`,
+          coordination_mode: 'enhanced_collaborative',
+          primary_agent: 'ideation', // Use appropriate agent based on phase
+          supporting_agents: ['rag', 'validation'],
+          context: {
+            product_id: productId,
+            phase_id: currentPhase.id,
+            phase_name: currentPhase.phase_name,
+            form_data: validationData.formData,
+            original_content: validationData.generatedContent,
+            refinement_feedback: refinementFeedback,
+          },
+        }),
+      });
+      
+      if (refinedResponse.ok) {
+        const refinedData = await refinedResponse.json();
+        const refinedContent = refinedData.response || validationData.generatedContent;
+        
+        // Update validation data with refined content
+        setValidationData({
+          ...validationData,
+          generatedContent: refinedContent,
+        });
+        
+        // Show validation modal again with refined content
+        // (modal will stay open, just update the content)
+        console.log('Response refined, showing validation modal again');
+      } else {
+        throw new Error('Failed to refine response');
+      }
+    } catch (error) {
+      console.error('Error refining response:', error);
+      alert(`Failed to refine response: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -166,7 +530,7 @@ export function MainApp() {
               <LayoutDashboard className="w-5 h-5" />
               <span>Dashboard</span>
             </button>
-            {(['portfolio', 'chat', 'history', 'profile', 'settings', 'knowledge'] as View[]).map((viewName) => {
+            {(['portfolio', 'chat', 'history', 'profile', 'settings', 'knowledge', 'scoring'] as View[]).map((viewName) => {
               const icons = {
                 portfolio: Folder,
                 chat: MessageSquare,
@@ -174,6 +538,7 @@ export function MainApp() {
                 profile: User,
                 settings: Settings,
                 knowledge: Database,
+                scoring: BarChart3,
               };
               const labels = {
                 portfolio: 'Portfolio',
@@ -182,6 +547,7 @@ export function MainApp() {
                 profile: 'Profile',
                 settings: 'Settings',
                 knowledge: 'Knowledge Base',
+                scoring: 'Idea Scoring',
               };
               const Icon = icons[viewName];
               return (
@@ -271,16 +637,16 @@ export function MainApp() {
               <div className="flex-1">
                 {productId ? (
                   <div className="sticky top-0 h-[calc(100vh-8rem)] overflow-y-auto">
-                    <ProductLifecycleSidebar
-                      phases={phases || []}
-                      submissions={submissions || []}
-                      currentPhaseId={currentPhase?.id}
-                      onPhaseSelect={(phase) => {
-                        setCurrentPhase(phase);
-                        setIsFormModalOpen(true);
-                      }}
-                      productId={productId}
-                    />
+                  <ProductLifecycleSidebar
+                    phases={phases || []}
+                    submissions={submissions || []}
+                    currentPhaseId={currentPhase?.id}
+                    onPhaseSelect={(phase) => {
+                      setCurrentPhase(phase);
+                      setIsFormModalOpen(true);
+                    }}
+                    productId={productId}
+                  />
                   </div>
                 ) : (
                   <div className="h-full flex items-center justify-center rounded-xl border" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
@@ -332,7 +698,10 @@ export function MainApp() {
               </div>
               <div className="w-64">
                 <div className="sticky top-0 h-[calc(100vh-8rem)] overflow-y-auto">
-                  <AgentStatusPanel agents={[]} />
+                <AgentStatusPanel 
+                  agents={activeAgents} 
+                  agentInteractions={agentInteractions}
+                />
                 </div>
               </div>
             </div>
@@ -369,6 +738,92 @@ export function MainApp() {
               <KnowledgeBaseManagerWrapper productId={productId || undefined} />
             </div>
           )}
+          {view === 'scoring' && (
+            <div className="space-y-6">
+              <div className="mb-6">
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Idea Score Dashboard</h2>
+                <p className="text-gray-600">
+                  View product idea scores, generate summaries, and create standardized PRDs from conversation sessions.
+                </p>
+              </div>
+              
+              {!productId ? (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-md border" style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)' }}>
+                    <p className="text-sm mb-4" style={{ color: 'var(--text-primary)' }}>
+                      <strong>Select a product:</strong> Choose a product to view scores or generate summaries and PRDs.
+                    </p>
+                    <ProductsDashboard
+                      onProductSelect={(id) => {
+                        console.log('Scoring view: Product selected:', id);
+                        if (id) {
+                          setProductId(id);
+                        }
+                      }}
+                      compact={true}
+                    />
+                  </div>
+                  
+                  {user?.tenant_id && (
+                    <div className="mt-6">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Tenant-Level Scores</h3>
+                      <IdeaScoreDashboard
+                        tenantId={user.tenant_id}
+                        onProductSelect={(id) => {
+                          setProductId(id);
+                          setView('scoring');
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <button
+                        onClick={() => setProductId('')}
+                        className="text-sm text-blue-600 hover:text-blue-700 mb-2"
+                      >
+                        ← Back to all products
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Generate Summary & PRD</h3>
+                      <ProductSummaryPRDGenerator
+                        productId={productId}
+                        canEdit={true} // Will be checked internally
+                        onSummaryGenerated={(summaryId) => {
+                          console.log('Summary generated:', summaryId);
+                        }}
+                        onPRDGenerated={(prdId) => {
+                          console.log('PRD generated:', prdId);
+                        }}
+                        onScoreGenerated={(scoreId) => {
+                          console.log('Score generated:', scoreId);
+                          // Reload scores after generation
+                          window.dispatchEvent(new Event('scores-updated'));
+                        }}
+                      />
+                    </div>
+                    
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Product Scores</h3>
+                      <IdeaScoreDashboard
+                        productId={productId}
+                        onProductSelect={(id) => {
+                          setProductId(id);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </main>
       </div>
 
@@ -386,6 +841,24 @@ export function MainApp() {
             setIsFormModalOpen(false);
             setView('settings');
           }}
+        />
+      )}
+      
+      {/* Validation Modal */}
+      {validationData && (
+        <ValidationModal
+          isOpen={validationModalOpen}
+          onClose={() => {
+            setValidationModalOpen(false);
+            setValidationData(null);
+          }}
+          onAccept={handleValidationAccept}
+          onRefine={handleValidationRefine}
+          generatedContent={validationData.generatedContent}
+          phaseName={validationData.phaseName}
+          formData={validationData.formData}
+          previousQuestions={validationData.previousQuestions}
+          agentInteractions={validationData.agentInteractions}
         />
       )}
     </div>

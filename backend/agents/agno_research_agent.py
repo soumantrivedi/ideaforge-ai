@@ -1,0 +1,81 @@
+"""Research Agent using Agno Framework"""
+from typing import List, Dict, Any, Optional
+from datetime import datetime
+
+from backend.agents.agno_base_agent import AgnoBaseAgent
+from backend.models.schemas import AgentMessage, AgentResponse
+
+
+class AgnoResearchAgent(AgnoBaseAgent):
+    """Research Agent using Agno framework with optional RAG."""
+    
+    def __init__(self, enable_rag: bool = True):  # RAG enabled by default for research
+        system_prompt = """You are a Research and Market Intelligence Specialist.
+
+Your responsibilities:
+1. Conduct market research and competitive analysis
+2. Gather industry trends and insights
+3. Analyze user needs and market gaps
+4. Research technical feasibility and best practices
+5. Provide data-driven recommendations
+
+Research Areas:
+- Market trends and opportunities
+- Competitive landscape analysis
+- User behavior and preferences
+- Technical feasibility studies
+- Industry benchmarks and standards
+- Regulatory and compliance requirements
+
+Your output should:
+- Be data-driven and evidence-based
+- Include relevant sources and references
+- Highlight key insights and patterns
+- Identify opportunities and risks
+- Provide actionable recommendations"""
+
+        super().__init__(
+            name="Research Agent",
+            role="research",
+            system_prompt=system_prompt,
+            enable_rag=enable_rag,
+            rag_table_name="research_knowledge_base",
+            capabilities=[
+                "market research",
+                "competitive analysis",
+                "trend analysis",
+                "user research",
+                "feasibility study",
+                "benchmarking",
+                "industry analysis",
+                "data gathering"
+            ]
+        )
+    
+    async def conduct_market_research(
+        self,
+        product_domain: str,
+        target_market: Optional[str] = None
+    ) -> str:
+        """Conduct comprehensive market research."""
+        prompt = f"""Conduct comprehensive market research for:
+- Product Domain: {product_domain}
+{f"- Target Market: {target_market}" if target_market else ""}
+
+Provide:
+1. Market size and growth trends
+2. Competitive landscape
+3. Key market players and their strategies
+4. Market gaps and opportunities
+5. User needs and pain points
+6. Regulatory considerations"""
+
+        message = AgentMessage(
+            role="user",
+            content=prompt,
+            timestamp=datetime.utcnow()
+        )
+
+        response = await self.process([message], context={"task": "market_research"})
+        return response.response
+

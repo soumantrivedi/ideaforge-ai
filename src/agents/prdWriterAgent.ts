@@ -59,7 +59,7 @@ Your role is to:
 Create a professional, detailed PRD that engineering teams can use to build the product.
 Include specific user stories, acceptance criteria, and technical details.
 Format your response as a complete, structured JSON object.`,
-    model: 'gpt-4o',
+    model: 'gpt-5.1',
   });
 
   return agent;

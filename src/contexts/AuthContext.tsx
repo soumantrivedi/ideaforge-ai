@@ -1,4 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { apiFetch, setUnauthorizedHandler } from '../lib/api-client';
+import { clearAllSessionStorage } from '../lib/session-storage';
 
 interface User {
   id: string;
@@ -50,13 +52,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const handleUnauthorized = () => {
+    // Clear all auth data
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user_id');
+    localStorage.removeItem('tenant_id');
+    // Clear session storage (chat history, app state, etc.)
+    clearAllSessionStorage();
+    setToken(null);
+    setUser(null);
+    setIsLoading(false); // Ensure loading state is cleared so login page shows
+  };
+
+  useEffect(() => {
+    // Register unauthorized handler
+    setUnauthorizedHandler(handleUnauthorized);
+    
+    return () => {
+      setUnauthorizedHandler(null);
+    };
+  }, []);
+
   const fetchUserInfo = async (authToken: string) => {
     try {
-      const response = await fetch(`${API_URL}/api/auth/me`, {
+      const response = await apiFetch('/api/auth/me', {
         headers: {
           'Authorization': `Bearer ${authToken}`,
         },
-        credentials: 'include',
       });
 
       if (response.ok) {
@@ -67,29 +89,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (userData.tenant_id) localStorage.setItem('tenant_id', userData.tenant_id);
       } else {
         // Token invalid, clear storage
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user_id');
-        localStorage.removeItem('tenant_id');
-        setToken(null);
-        setUser(null);
+        handleUnauthorized();
       }
     } catch (error) {
       console.error('Failed to fetch user info:', error);
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('user_id');
-      localStorage.removeItem('tenant_id');
-      setToken(null);
-      setUser(null);
+      handleUnauthorized();
     } finally {
       setIsLoading(false);
     }
   };
 
   const login = async (email: string, password: string) => {
-    const response = await fetch(`${API_URL}/api/auth/login`, {
+    const response = await apiFetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
       body: JSON.stringify({ email, password }),
     });
 
@@ -126,19 +139,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
-      await fetch(`${API_URL}/api/auth/logout`, {
+      await apiFetch('/api/auth/logout', {
         method: 'POST',
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        credentials: 'include',
       });
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('user_id');
-      localStorage.removeItem('tenant_id');
-      setToken(null);
-      setUser(null);
+      // Clear session storage before clearing auth
+      clearAllSessionStorage();
+      handleUnauthorized();
     }
   };
 

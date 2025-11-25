@@ -81,7 +81,7 @@ export class AIProviderManager {
     if (!this.openai) throw new Error('OpenAI not configured');
 
     const response = await this.openai.chat.completions.create({
-      model: options?.model || 'gpt-4o',
+      model: options?.model || 'gpt-5.1',
       messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
       temperature: options?.temperature || 0.7,
       max_tokens: options?.maxTokens || 2000,
@@ -97,7 +97,7 @@ export class AIProviderManager {
     if (!this.openai) throw new Error('OpenAI not configured');
 
     const stream = await this.openai.chat.completions.create({
-      model: options?.model || 'gpt-4o',
+      model: options?.model || 'gpt-5.1',
       messages: messages as OpenAI.Chat.ChatCompletionMessageParam[],
       temperature: options?.temperature || 0.7,
       max_tokens: options?.maxTokens || 2000,
@@ -124,7 +124,7 @@ export class AIProviderManager {
     const conversationMessages = messages.filter((m) => m.role !== 'system');
 
     const response = await this.claude.messages.create({
-      model: options?.model || 'claude-sonnet-4-5-20250929',
+      model: options?.model || 'claude-sonnet-4-20250522',
       max_tokens: options?.maxTokens || 2000,
       temperature: options?.temperature || 0.7,
       system: systemMessage?.content,
@@ -147,7 +147,7 @@ export class AIProviderManager {
     const conversationMessages = messages.filter((m) => m.role !== 'system');
 
     const stream = await this.claude.messages.create({
-      model: options?.model || 'claude-sonnet-4-5-20250929',
+      model: options?.model || 'claude-sonnet-4-20250522',
       max_tokens: options?.maxTokens || 2000,
       temperature: options?.temperature || 0.7,
       system: systemMessage?.content,
@@ -182,7 +182,7 @@ export class AIProviderManager {
     }));
 
     const response = await this.gemini.models.generateContent({
-      model: options?.model || 'gemini-2.0-flash-exp',
+      model: options?.model || 'gemini-3.0-pro',
       contents,
       systemInstruction: systemMessage?.content,
       generationConfig: {
@@ -209,7 +209,7 @@ export class AIProviderManager {
     }));
 
     const stream = await this.gemini.models.generateContentStream({
-      model: options?.model || 'gemini-2.0-flash-exp',
+      model: options?.model || 'gemini-3.0-pro',
       contents,
       systemInstruction: systemMessage?.content,
       generationConfig: {

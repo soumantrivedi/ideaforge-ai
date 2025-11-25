@@ -634,6 +634,12 @@ async def create_phase_submission(
             if str(product_row[1]) != current_user["tenant_id"]:
                 raise HTTPException(status_code=403, detail="Product belongs to different tenant")
         
+        # Get tenant_id from product or current user
+        tenant_id = current_user["tenant_id"]
+        if product_id and product_row:
+            # Use product's tenant_id to ensure consistency
+            tenant_id = str(product_row[1])
+        
         # Convert JSONB fields to JSON strings
         form_data = submission.get("form_data", {})
         if isinstance(form_data, dict):
@@ -645,13 +651,14 @@ async def create_phase_submission(
         
         query = text("""
             INSERT INTO phase_submissions
-            (product_id, phase_id, user_id, form_data, status, metadata)
-            VALUES (:product_id, :phase_id, :user_id, CAST(:form_data AS jsonb), :status, CAST(:metadata AS jsonb))
+            (product_id, phase_id, user_id, tenant_id, form_data, status, metadata)
+            VALUES (:product_id, :phase_id, :user_id, :tenant_id, CAST(:form_data AS jsonb), :status, CAST(:metadata AS jsonb))
             ON CONFLICT (product_id, phase_id) 
             DO UPDATE SET 
                 form_data = EXCLUDED.form_data,
                 status = EXCLUDED.status,
                 metadata = EXCLUDED.metadata,
+                tenant_id = EXCLUDED.tenant_id,
                 updated_at = now()
             RETURNING id, created_at, updated_at
         """)
@@ -660,6 +667,7 @@ async def create_phase_submission(
             "product_id": submission.get("product_id"),
             "phase_id": submission.get("phase_id"),
             "user_id": submission.get("user_id"),
+            "tenant_id": tenant_id,
             "form_data": form_data,
             "status": submission.get("status", "draft"),
             "metadata": metadata,

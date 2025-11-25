@@ -7,10 +7,10 @@ class Settings(BaseSettings):
     # Database Configuration
     database_url: str = os.getenv("DATABASE_URL", "postgresql://user:password@postgres:5432/agentic_pm_db")
 
-    # AI Provider API Keys
-    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-    anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
-    google_api_key: Optional[str] = os.getenv("GOOGLE_API_KEY")
+    # AI Provider API Keys (strip whitespace to ensure proper detection)
+    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY", "").strip() or None
+    anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY", "").strip() or None
+    google_api_key: Optional[str] = os.getenv("GOOGLE_API_KEY", "").strip() or None
 
     # Okta OAuth/SSO Configuration
     okta_client_id: str = os.getenv("OKTA_CLIENT_ID", "")
@@ -43,9 +43,13 @@ class Settings(BaseSettings):
     session_expires_in: int = int(os.getenv("SESSION_EXPIRES_IN", "86400"))
 
     # Agent Configuration
-    agent_model_primary: str = os.getenv("AGENT_MODEL_PRIMARY", "gpt-4o")
-    agent_model_secondary: str = os.getenv("AGENT_MODEL_SECONDARY", "claude-sonnet-4-5-20250929")
-    agent_model_tertiary: str = os.getenv("AGENT_MODEL_TERTIARY", "gemini-2.0-flash-exp")
+    # Updated to latest models as of November 2025:
+    # - GPT-5.1: Best for product requirements, ideation, reasoning, and discovery
+    # - Claude 4 Sonnet: Advanced reasoning and ideation capabilities
+    # - Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
+    agent_model_primary: str = os.getenv("AGENT_MODEL_PRIMARY", "gpt-5.1")
+    agent_model_secondary: str = os.getenv("AGENT_MODEL_SECONDARY", "claude-sonnet-4-20250522")
+    agent_model_tertiary: str = os.getenv("AGENT_MODEL_TERTIARY", "gemini-3.0-pro")
 
     # MCP Server Configuration
     mcp_github_url: str = os.getenv("MCP_GITHUB_URL", "http://mcp-github:8001")
@@ -65,6 +69,9 @@ class Settings(BaseSettings):
     feature_fast_mcp: bool = os.getenv("FEATURE_FAST_MCP", "true").lower() == "true"
     feature_multi_tenant: bool = os.getenv("FEATURE_MULTI_TENANT", "true").lower() == "true"
     feature_leadership_view: bool = os.getenv("FEATURE_LEADERSHIP_VIEW", "true").lower() == "true"
+
+    # SSL Verification (for API key verification)
+    verify_ssl: bool = os.getenv("VERIFY_SSL", "false").lower() == "true"
 
     # Enterprise Settings
     tenant_mode: str = os.getenv("TENANT_MODE", "multi")

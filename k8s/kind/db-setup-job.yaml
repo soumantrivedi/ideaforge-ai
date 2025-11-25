@@ -1,0 +1,149 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-setup
+  namespace: ideaforge-ai
+  labels:
+    app: db-setup
+    component: database
+spec:
+  template:
+    metadata:
+      labels:
+        app: db-setup
+        component: database
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: db-setup
+        image: pgvector/pgvector:pg15
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "🔄 Starting database setup..."
+          
+          # Wait for PostgreSQL to be ready
+          echo "⏳ Waiting for PostgreSQL to be ready..."
+          until pg_isready -h postgres -U agentic_pm -d agentic_pm_db; do
+            echo "   PostgreSQL not ready, waiting..."
+            sleep 2
+          done
+          echo "✅ PostgreSQL is ready"
+          
+          # Run base schema first (if available)
+          echo "🔄 Running base schema initialization..."
+          TABLE_COUNT=$$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
+          if [ "$$TABLE_COUNT" = "0" ]; then
+            if [ -f /init-scripts/01-init-schema.sql ]; then
+              echo "   Running base schema from init-scripts: 01-init-schema.sql"
+              psql -h postgres -U agentic_pm -d agentic_pm_db -f /init-scripts/01-init-schema.sql 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
+              echo "   ✅ Base schema initialized"
+            else
+              echo "   ⚠️  Base schema not found at /init-scripts/01-init-schema.sql"
+              echo "   ⚠️  Migrations may fail without base schema"
+            fi
+          else
+            echo "   ✅ Tables already exist ($$TABLE_COUNT tables), skipping base schema"
+          fi
+          
+          # Run migrations
+          echo "🔄 Running database migrations..."
+          if [ -d /migrations ]; then
+            for migration in /migrations/*.sql; do
+              if [ -f "$$migration" ]; then
+                echo "   Running migration: $$(basename $$migration)"
+                psql -h postgres -U agentic_pm -d agentic_pm_db -f "$$migration" 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
+              fi
+            done
+          fi
+          echo "✅ Migrations complete"
+          
+          # Check if database is already seeded
+          echo "🔍 Checking if database needs seeding..."
+          PRODUCT_COUNT=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM products;" 2>/dev/null | xargs || echo "0")
+          
+          if [ "$PRODUCT_COUNT" = "0" ] || [ -z "$PRODUCT_COUNT" ]; then
+            echo "🌱 Seeding database with sample data..."
+            if [ -f /seed/seed_sample_data.sql ]; then
+              psql -h postgres -U agentic_pm -d agentic_pm_db -f /seed/seed_sample_data.sql 2>&1 | grep -v "NOTICE" || true
+              echo "✅ Database seeded"
+            else
+              echo "⚠️  Seed file not found at /seed/seed_sample_data.sql"
+            fi
+          else
+            echo "✅ Database already contains $PRODUCT_COUNT products, skipping seed"
+          fi
+          
+          # Verify setup
+          echo "📊 Verifying database setup..."
+          psql -h postgres -U agentic_pm -d agentic_pm_db -c "
+            SELECT 
+              (SELECT COUNT(*) FROM products) as products,
+              (SELECT COUNT(*) FROM user_profiles) as users,
+              (SELECT COUNT(*) FROM tenants) as tenants;
+          " 2>&1 | grep -E "[0-9]+" || true
+          
+          echo "✅ Database setup complete!"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_DB
+        volumeMounts:
+        - name: migrations
+          mountPath: /migrations
+          readOnly: true
+        - name: seed
+          mountPath: /seed
+          readOnly: true
+        - name: init-scripts
+          mountPath: /init-scripts
+          readOnly: true
+      volumes:
+      - name: migrations
+        configMap:
+          name: db-migrations
+      - name: seed
+        configMap:
+          name: db-seed
+      - name: init-scripts
+        configMap:
+          name: postgres-init-scripts
+          optional: true
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres -U agentic_pm; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+

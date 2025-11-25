@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle2, Circle, Lock, ChevronRight } from 'lucide-react';
+import { CheckCircle2, Circle, Lock, ChevronRight, Star } from 'lucide-react';
 import type { LifecyclePhase, PhaseSubmission } from '../lib/product-lifecycle-service';
 
 interface ProductLifecycleSidebarProps {
@@ -149,21 +149,44 @@ export function ProductLifecycleSidebar({
                     {phase.description}
                   </p>
 
-                  {status === 'completed' && !isActive && (
-                    <div className="mt-2 text-xs text-green-600 font-medium">
-                      ✓ Completed
-                    </div>
-                  )}
-                  {status === 'in_progress' && !isActive && (
-                    <div className="mt-2 text-xs text-blue-600 font-medium">
-                      ⚡ In Progress
-                    </div>
-                  )}
-                  {status === 'locked' && (
-                    <div className="mt-2 text-xs text-gray-400 font-medium">
-                      🔒 Complete previous phases first
-                    </div>
-                  )}
+                  {(() => {
+                    const submission = submissions.find(s => s.phase_id === phase.id);
+                    const score = submission?.metadata?.validation_score;
+                    
+                    return (
+                      <>
+                        {status === 'completed' && !isActive && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className="text-xs text-green-600 font-medium">
+                              ✓ Completed
+                            </span>
+                            {score !== undefined && (
+                              <div className="flex items-center gap-1 px-2 py-0.5 bg-yellow-50 rounded-full">
+                                <Star className={`w-3 h-3 ${score >= 4 ? 'text-yellow-500 fill-yellow-500' : score >= 3 ? 'text-yellow-400 fill-yellow-400' : 'text-yellow-300 fill-yellow-300'}`} />
+                                <span className="text-xs font-semibold text-yellow-700">{score}/5</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {status === 'in_progress' && !isActive && (
+                          <div className="mt-2 text-xs text-blue-600 font-medium">
+                            ⚡ In Progress
+                          </div>
+                        )}
+                        {status === 'locked' && (
+                          <div className="mt-2 text-xs text-gray-400 font-medium">
+                            🔒 Complete previous phases first
+                          </div>
+                        )}
+                        {isActive && score !== undefined && (
+                          <div className="mt-2 flex items-center gap-1">
+                            <Star className="w-3 h-3 text-yellow-300 fill-yellow-300" />
+                            <span className="text-xs font-semibold text-white">Score: {score}/5</span>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
 
                 {!isLocked && (

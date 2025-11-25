@@ -21,15 +21,21 @@ graph TB
         ORC3[Workflow Manager<br/>Collaborative Workflows]
     end
 
-    subgraph "Agent Layer"
-        AG1[BaseAgent<br/>Abstract Base Class]
-        AG2[ResearchAgent]
-        AG3[AnalysisAgent]
-        AG4[ValidationAgent]
-        AG5[StrategyAgent]
-        AG6[IdeationAgent]
-        AG7[PRDAuthoringAgent]
-        AG8[JiraAgent]
+    subgraph "Agent Layer (Agno Framework)"
+        AG1[AgnoBaseAgent<br/>Abstract Base Class]
+        AG2[AgnoResearchAgent]
+        AG3[AgnoAnalysisAgent]
+        AG4[AgnoValidationAgent]
+        AG5[AgnoIdeationAgent]
+        AG6[AgnoPRDAuthoringAgent]
+        AG7[AgnoSummaryAgent]
+        AG8[AgnoScoringAgent]
+        AG9[AgnoExportAgent]
+        AG10[AgnoV0Agent]
+        AG11[AgnoLovableAgent]
+        AG12[AgnoGitHubAgent]
+        AG13[AgnoAtlassianAgent]
+        AG14[RAGAgent]
     end
 
     subgraph "Data Access Layer"
@@ -63,6 +69,12 @@ graph TB
     AG1 --> AG6
     AG1 --> AG7
     AG1 --> AG8
+    AG1 --> AG9
+    AG1 --> AG10
+    AG1 --> AG11
+    AG1 --> AG12
+    AG1 --> AG13
+    AG1 --> AG14
     AG2 --> DAL1
     AG3 --> DAL1
     AG4 --> DAL1
@@ -305,6 +317,8 @@ sequenceDiagram
     Frontend->>Backend: POST /api/multi-agent/process
     Backend->>Coordinator: process_multi_agent_request()
     Coordinator->>Coordinator: Determine Coordination Mode
+    Coordinator->>RAGAgent: Always consult RAG first for knowledge base context
+    RAGAgent-->>Coordinator: Return knowledge base context
     
     alt Sequential Mode
         Coordinator->>PrimaryAgent: Process Step 1
