@@ -1187,39 +1187,145 @@ Provide your validation response in this format:
               </div>
             ) : isDesignMockupsSection ? (
               /* Special handling for Design phase - Design Mockups Section */
-              <div className="space-y-4">
-                <div className="flex items-start gap-3 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-r-lg">
-                  <Sparkles className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <div className="font-semibold text-blue-900 mb-1">
-                      {currentPrompt}
+              <div className="space-y-6">
+                {/* Prompts Section - Allow generating/regenerating prompts */}
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 p-4 bg-purple-50 border-l-4 border-purple-500 rounded-r-lg">
+                    <Sparkles className="w-5 h-5 text-purple-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <div className="font-semibold text-purple-900 mb-1">
+                        Generate V0 and Lovable Prompts
+                      </div>
+                      <div className="text-xs text-purple-700">
+                        Generate or regenerate contextualized prompts for V0 and Lovable. These prompts will be used to create prototypes.
+                      </div>
                     </div>
-                    <div className="text-xs text-blue-700">
-                      View and select design mockups generated from V0 and Lovable. Click on thumbnails to expand.
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* V0 Prompt */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-gray-700">V0 (Vercel) Prompt</label>
+                        <button
+                          type="button"
+                          onClick={() => handleGeneratePrompt('v0')}
+                          disabled={isGeneratingPrompt.v0 || isSubmitting || !productId}
+                          className="px-3 py-1.5 text-xs font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 rounded-lg hover:from-blue-700 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-sm flex items-center gap-1.5"
+                        >
+                          {isGeneratingPrompt.v0 ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <Wand2 className="w-3 h-3" />
+                              Generate
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <textarea
+                        value={(() => {
+                          const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                          return promptsObj['v0_prompt'] || '';
+                        })()}
+                        onChange={(e) => {
+                          const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : { v0_prompt: '', lovable_prompt: '' };
+                          promptsObj['v0_prompt'] = e.target.value;
+                          setFormData({
+                            ...formData,
+                            v0_lovable_prompts: JSON.stringify(promptsObj),
+                          });
+                        }}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                        rows={8}
+                        placeholder="V0 prompt will be generated here... Click 'Generate' to create based on all previous phases"
+                        disabled={isSubmitting || isGeneratingPrompt.v0}
+                      />
+                    </div>
+
+                    {/* Lovable Prompt */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-gray-700">Lovable Prompt</label>
+                        <button
+                          type="button"
+                          onClick={() => handleGeneratePrompt('lovable')}
+                          disabled={isGeneratingPrompt.lovable || isSubmitting || !productId}
+                          className="px-3 py-1.5 text-xs font-medium text-white bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-sm flex items-center gap-1.5"
+                        >
+                          {isGeneratingPrompt.lovable ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <Wand2 className="w-3 h-3" />
+                              Generate
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <textarea
+                        value={(() => {
+                          const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                          return promptsObj['lovable_prompt'] || '';
+                        })()}
+                        onChange={(e) => {
+                          const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : { v0_prompt: '', lovable_prompt: '' };
+                          promptsObj['lovable_prompt'] = e.target.value;
+                          setFormData({
+                            ...formData,
+                            v0_lovable_prompts: JSON.stringify(promptsObj),
+                          });
+                        }}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
+                        rows={8}
+                        placeholder="Lovable prompt will be generated here... Click 'Generate' to create based on all previous phases"
+                        disabled={isSubmitting || isGeneratingPrompt.lovable}
+                      />
                     </div>
                   </div>
                 </div>
-                {productId ? (
-                  <DesignMockupGallery
-                    productId={productId}
-                    phaseSubmissionId={selectedSubmissionId}
-                    refreshTrigger={mockupRefreshTrigger}
-                    onSelectMockup={(mockup) => {
-                      // Store selected mockup in form data
-                      setFormData({
-                        ...formData,
-                        design_mockups: JSON.stringify({
-                          selected_mockup_id: mockup.id,
-                          selected_provider: mockup.provider,
-                        }),
-                      });
-                    }}
-                  />
-                ) : (
-                  <div className="text-center p-8 text-gray-500">
-                    Product ID is required to view mockups
+
+                {/* Mockups Section */}
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3 p-4 bg-blue-50 border-l-4 border-blue-500 rounded-r-lg">
+                    <Sparkles className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <div className="font-semibold text-blue-900 mb-1">
+                        {currentPrompt}
+                      </div>
+                      <div className="text-xs text-blue-700">
+                        View and select design mockups generated from V0 and Lovable. Click on thumbnails to expand.
+                      </div>
+                    </div>
                   </div>
-                )}
+                  {productId ? (
+                    <DesignMockupGallery
+                      productId={productId}
+                      phaseSubmissionId={selectedSubmissionId}
+                      refreshTrigger={mockupRefreshTrigger}
+                      onSelectMockup={(mockup) => {
+                        // Store selected mockup in form data
+                        setFormData({
+                          ...formData,
+                          design_mockups: JSON.stringify({
+                            selected_mockup_id: mockup.id,
+                            selected_provider: mockup.provider,
+                          }),
+                        });
+                      }}
+                    />
+                  ) : (
+                    <div className="text-center p-8 text-gray-500">
+                      Product ID is required to view mockups
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               /* Standard form field */
@@ -1379,27 +1485,36 @@ Provide your validation response in this format:
               );
               const isLastQuestion = currentPromptIndex >= maxIndex;
               
-              // For Design phase, show "Generate with AI" on question 2 (v0_lovable_prompts) instead of question 3
+              // For Design phase, show "Generate with AI" on question 2 (v0_lovable_prompts) or question 3 (design_mockups)
               const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
               const isV0LovableQuestion = isDesignPhase && currentField === 'v0_lovable_prompts';
-              const shouldShowGenerateButton = isLastQuestion || isV0LovableQuestion;
+              const isDesignMockupsQuestion = isDesignPhase && currentField === 'design_mockups';
+              const shouldShowGenerateButton = isLastQuestion || isV0LovableQuestion || isDesignMockupsQuestion;
               
               if (shouldShowGenerateButton) {
+                // For design_mockups, check if prompts are filled; for other fields, check current field
+                const isButtonDisabled = isDesignMockupsQuestion 
+                  ? (() => {
+                      const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts'] || '{}') : {};
+                      return !promptsObj['v0_prompt']?.trim() || !promptsObj['lovable_prompt']?.trim();
+                    })()
+                  : !isCurrentFieldFilled();
+                
                 return (
                   <button
                     type="submit"
-                    disabled={!isCurrentFieldFilled() || isSubmitting}
+                    disabled={isButtonDisabled || isSubmitting}
                     className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
                   >
                     {isSubmitting ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        {isDesignPhase && isV0LovableQuestion ? 'Generating prompts & prototypes...' : 'Processing...'}
+                        {isDesignPhase && (isV0LovableQuestion || isDesignMockupsQuestion) ? 'Generating prompts & prototypes...' : 'Processing...'}
                       </>
                     ) : (
                       <>
                         <Send className="w-4 h-4" />
-                        {isDesignPhase && isV0LovableQuestion ? 'Generate Prompts & Prototypes' : 'Generate with AI'}
+                        {isDesignPhase && (isV0LovableQuestion || isDesignMockupsQuestion) ? 'Generate Prompts & Prototypes' : 'Generate with AI'}
                       </>
                     )}
                   </button>
