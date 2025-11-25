@@ -426,6 +426,8 @@ EKS_REGION ?= us-east-1
 EKS_NAMESPACE ?= $(K8S_NAMESPACE)
 EKS_IMAGE_REGISTRY ?= ghcr.io/soumantrivedi/ideaforge-ai
 EKS_IMAGE_TAG ?= latest
+EKS_GITHUB_USERNAME ?= $(shell git config user.name 2>/dev/null || echo "")
+EKS_GITHUB_TOKEN ?= $(shell grep "^GITHUB_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 
 kind-create: ## Create a local kind cluster for testing
 	@echo "🐳 Creating kind cluster: $(KIND_CLUSTER_NAME)..."
@@ -798,6 +800,44 @@ kind-cleanup: ## Clean up kind cluster deployment (keeps cluster)
 	@kubectl delete namespace $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
 	@echo "✅ Cleanup complete (cluster still exists, use 'make kind-delete' to remove cluster)"
 
+eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespace (use EKS_NAMESPACE=your-namespace)
+	@echo "🔐 Setting up GitHub Container Registry secret..."
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required. Example: make eks-setup-ghcr-secret EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50"; \
+		exit 1; \
+	fi
+	@if ! kubectl cluster-info &> /dev/null; then \
+		echo "❌ kubectl is not configured or EKS cluster is not accessible"; \
+		echo "   Configure kubectl: aws eks update-kubeconfig --name $(EKS_CLUSTER_NAME) --region $(EKS_REGION)"; \
+		exit 1; \
+	fi
+	@echo "📦 Creating namespace: $(EKS_NAMESPACE)"
+	@kubectl create namespace $(EKS_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f - || true
+	@echo "🔐 Creating docker-registry secret for GitHub Container Registry..."
+	@GITHUB_USERNAME="$${EKS_GITHUB_USERNAME:-soumantrivedi}"; \
+	GITHUB_TOKEN=""; \
+	if [ -n "$$EKS_GITHUB_TOKEN" ]; then \
+		GITHUB_TOKEN="$$EKS_GITHUB_TOKEN"; \
+	elif [ -f .env ]; then \
+		GITHUB_TOKEN=$$(grep "^GITHUB_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs || echo ""); \
+	fi; \
+	if [ -z "$$GITHUB_TOKEN" ]; then \
+		echo "❌ GITHUB_TOKEN is required"; \
+		echo "   Options:"; \
+		echo "   1. Export: export EKS_GITHUB_TOKEN=ghp_your_token_here"; \
+		echo "   2. Add to .env: GITHUB_TOKEN=ghp_your_token_here"; \
+		exit 1; \
+	fi; \
+	echo "   Using GitHub username: $$GITHUB_USERNAME"; \
+	kubectl delete secret ghcr-secret -n $(EKS_NAMESPACE) --ignore-not-found=true; \
+	kubectl create secret docker-registry ghcr-secret \
+		--docker-server=ghcr.io \
+		--docker-username=$$GITHUB_USERNAME \
+		--docker-password=$$GITHUB_TOKEN \
+		--namespace=$(EKS_NAMESPACE) || \
+		(echo "❌ Failed to create secret" && exit 1)
+	@echo "✅ GitHub Container Registry secret created: ghcr-secret in namespace $(EKS_NAMESPACE)"
+
 eks-prepare-namespace: ## Prepare namespace-specific kustomization for EKS
 	@echo "📝 Preparing EKS deployment for namespace: $(EKS_NAMESPACE)"
 	@if [ -z "$(EKS_NAMESPACE)" ] || [ "$(EKS_NAMESPACE)" = "ideaforge-ai" ]; then \
@@ -805,8 +845,9 @@ eks-prepare-namespace: ## Prepare namespace-specific kustomization for EKS
 		EKS_NAMESPACE="ideaforge-ai"; \
 	fi
 	@mkdir -p $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)
-	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nnamespace: %s\n\nbases:\n  - ../eks\n\n# Override namespace\nnamespace: %s\n\n# Override image tags if provided\nimages:\n  - name: ideaforge-ai-backend\n    newName: %s/backend\n    newTag: %s\n  - name: ideaforge-ai-frontend\n    newName: %s/frontend\n    newTag: %s\n\n# Namespace-specific patches\npatchesStrategicMerge:\n  - namespace-patch.yaml\n' "$(EKS_NAMESPACE)" "$(EKS_NAMESPACE)" "$(EKS_IMAGE_REGISTRY)" "$(EKS_IMAGE_TAG)" "$(EKS_IMAGE_REGISTRY)" "$(EKS_IMAGE_TAG)" > $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)/kustomization.yaml
+	@printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nnamespace: %s\n\nbases:\n  - ../eks\n\n# Override namespace\nnamespace: %s\n\n# Override image tags if provided\nimages:\n  - name: ideaforge-ai-backend\n    newName: %s/backend\n    newTag: %s\n  - name: ideaforge-ai-frontend\n    newName: %s/frontend\n    newTag: %s\n\n# Namespace-specific patches\npatchesStrategicMerge:\n  - namespace-patch.yaml\n  - imagepullsecret-patch.yaml\n' "$(EKS_NAMESPACE)" "$(EKS_NAMESPACE)" "$(EKS_IMAGE_REGISTRY)" "$(EKS_IMAGE_TAG)" "$(EKS_IMAGE_REGISTRY)" "$(EKS_IMAGE_TAG)" > $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)/kustomization.yaml
 	@printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n  labels:\n    name: %s\n    app: ideaforge-ai\n    environment: production\n' "$(EKS_NAMESPACE)" "$(EKS_NAMESPACE)" > $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)/namespace-patch.yaml
+	@printf 'apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: backend\nspec:\n  template:\n    spec:\n      imagePullSecrets:\n      - name: ghcr-secret\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: frontend\nspec:\n  template:\n    spec:\n      imagePullSecrets:\n      - name: ghcr-secret\n' > $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)/imagepullsecret-patch.yaml
 	@echo "✅ Namespace-specific kustomization created: $(K8S_DIR)/overlays/eks-$(EKS_NAMESPACE)/"
 
 eks-load-secrets: ## Load secrets from .env file for EKS deployment (use EKS_NAMESPACE=your-namespace)
@@ -825,6 +866,8 @@ eks-load-secrets: ## Load secrets from .env file for EKS deployment (use EKS_NAM
 	@echo "📦 Loading secrets from .env file to Kubernetes..."
 	@bash $(K8S_DIR)/push-env-secret.sh .env $(EKS_NAMESPACE)
 	@echo "✅ Secrets pushed to Kubernetes secret: ideaforge-ai-secrets in namespace: $(EKS_NAMESPACE)"
+
+eks-deploy-full: eks-setup-ghcr-secret eks-prepare-namespace eks-load-secrets eks-deploy ## Full EKS deployment with GHCR setup (use EKS_NAMESPACE=your-namespace)
 
 eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=your-namespace)
 	@echo "☁️  Deploying to EKS cluster: $(EKS_CLUSTER_NAME)"
