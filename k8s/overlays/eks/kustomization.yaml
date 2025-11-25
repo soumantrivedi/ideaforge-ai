@@ -3,14 +3,23 @@ kind: Kustomization
 
 namespace: ideaforge-ai
 
-bases:
+resources:
   - ../../base
 
-# EKS-specific configurations
-patchesStrategicMerge:
-  - postgres-eks-patch.yaml
-  - redis-eks-patch.yaml
-  - ingress-eks-patch.yaml
+# EKS-specific configurations (using modern patches syntax)
+patches:
+  - path: postgres-eks-patch.yaml
+    target:
+      kind: Deployment
+      name: postgres
+  - path: redis-eks-patch.yaml
+    target:
+      kind: Deployment
+      name: redis
+  - path: ingress-eks-patch.yaml
+    target:
+      kind: Ingress
+      name: ideaforge-ai-ingress
 
 # Override namespace (will be set by make target)
 # namespace: ideaforge-ai

@@ -4,19 +4,20 @@ kind: Kustomization
 namespace: ideaforge-ai
 
 resources:
-  - ../namespace.yaml
-  - ../configmap.yaml
-  - ../secrets.yaml
-  - ../postgres.yaml
-  - ../redis.yaml
-  - ../backend.yaml
-  - ../frontend.yaml
-  - ../db-setup-job.yaml  # Database setup job (migrations + seeding) - runs automatically
+  - namespace.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - postgres.yaml
+  - redis.yaml
+  - backend.yaml
+  - frontend.yaml
+  - db-setup-job.yaml  # Database setup job (migrations + seeding) - runs automatically
 
-# Common labels
-commonLabels:
-  app: ideaforge-ai
-  managed-by: kustomize
+# Common labels (using modern syntax)
+labels:
+  - pairs:
+      app: ideaforge-ai
+      managed-by: kustomize
 
 # Image replacements (update these with your actual image tags)
 images:
