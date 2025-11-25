@@ -15,16 +15,21 @@ import { IdeaScoreDashboard } from './IdeaScoreDashboard';
 import { ProductSummaryPRDGenerator } from './ProductSummaryPRDGenerator';
 import { useAuth } from '../contexts/AuthContext';
 import { lifecycleService, type LifecyclePhase, type PhaseSubmission } from '../lib/product-lifecycle-service';
+import { saveAppState, loadAppState } from '../lib/session-storage';
 
 type View = 'dashboard' | 'chat' | 'settings' | 'knowledge' | 'portfolio' | 'history' | 'profile' | 'scoring';
 
 export function MainApp() {
   const { user, logout, token } = useAuth();
-  const [view, setView] = useState<View>('dashboard');
-  const [productId, setProductId] = useState<string>('');
+  
+  // Load app state from sessionStorage on mount
+  const savedState = loadAppState();
+  const [view, setView] = useState<View>((savedState?.view as View) || 'dashboard');
+  const [productId, setProductId] = useState<string>(savedState?.productId || '');
   const [phases, setPhases] = useState<LifecyclePhase[]>([]);
   const [submissions, setSubmissions] = useState<PhaseSubmission[]>([]);
   const [currentPhase, setCurrentPhase] = useState<LifecyclePhase | null>(null);
+  const [savedPhaseId, setSavedPhaseId] = useState<string | undefined>(savedState?.currentPhaseId);
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeAgents, setActiveAgents] = useState<any[]>([]);
@@ -81,6 +86,16 @@ export function MainApp() {
     };
   }, []);
 
+  // Save app state to sessionStorage whenever it changes
+  useEffect(() => {
+    saveAppState({
+      productId,
+      currentPhaseId: currentPhase?.id,
+      view,
+      // Don't save phases/submissions - they should be loaded fresh from backend
+    });
+  }, [productId, currentPhase, view]);
+
   useEffect(() => {
     if (productId && token) {
       console.log('MainApp: Loading data for productId:', productId);
@@ -93,10 +108,67 @@ export function MainApp() {
     }
   }, [productId, token]);
 
+  // Load agents for current phase
+  useEffect(() => {
+    const loadAgentsForPhase = async () => {
+      if (!currentPhase || !token) {
+        // If no phase selected, clear agents or show default
+        setActiveAgents([]);
+        return;
+      }
+
+      try {
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const response = await fetch(
+          `${API_URL}/api/agents/by-phase?phase_name=${encodeURIComponent(currentPhase.phase_name)}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          // Convert backend agent format to frontend AgentStatus format
+          const agentStatuses = data.agents.map((agent: any) => ({
+            role: agent.role,
+            name: agent.name,
+            isActive: agent.isActive,
+            lastActivity: undefined,
+            interactions: 0,
+            latestInteraction: undefined,
+          }));
+          setActiveAgents(agentStatuses);
+        } else {
+          console.error('Failed to load agents for phase:', response.status);
+          setActiveAgents([]);
+        }
+      } catch (error) {
+        console.error('Error loading agents for phase:', error);
+        setActiveAgents([]);
+      }
+    };
+
+    loadAgentsForPhase();
+  }, [currentPhase, token]);
+
   const loadPhases = async () => {
     try {
       const loadedPhases = await lifecycleService.getAllPhases();
-      setPhases(Array.isArray(loadedPhases) ? loadedPhases : []);
+      const phasesArray = Array.isArray(loadedPhases) ? loadedPhases : [];
+      setPhases(phasesArray);
+      
+      // Restore current phase from saved state if available
+      if (savedPhaseId && phasesArray.length > 0) {
+        const phase = phasesArray.find(p => p.id === savedPhaseId);
+        if (phase) {
+          setCurrentPhase(phase);
+          setSavedPhaseId(undefined); // Clear after restoring
+        }
+      }
     } catch (error) {
       console.error('Error loading phases:', error);
       setPhases([]);

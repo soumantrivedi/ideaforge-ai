@@ -272,14 +272,39 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
         Create a V0 project using the V0 Platform API.
         This method directly accesses the V0 platform.
         """
-        api_key = v0_api_key or self.v0_api_key or settings.v0_api_key
+        # Priority: passed parameter > instance variable > global settings
+        api_key = v0_api_key
+        key_source = "parameter"
         
         if not api_key:
-            raise ValueError("V0 API key is not configured")
+            api_key = self.v0_api_key
+            key_source = "instance"
+        
+        if not api_key:
+            api_key = settings.v0_api_key
+            key_source = "global_settings"
+        
+        if not api_key:
+            raise ValueError("V0 API key is not configured. Please configure it in Settings.")
+        
+        # Log key usage (without logging the actual key)
+        logger.info("v0_api_key_usage",
+                   user_id=user_id,
+                   key_source=key_source,
+                   key_length=len(api_key) if api_key else 0,
+                   has_instance_key=bool(self.v0_api_key),
+                   has_global_key=bool(settings.v0_api_key))
         
         # Disable SSL verification for V0 API (as requested)
         async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
             try:
+                # Log the request (without sensitive data)
+                logger.info("v0_api_request",
+                           user_id=user_id,
+                           endpoint="https://api.v0.dev/v1/chats",
+                           prompt_length=len(v0_prompt) if v0_prompt else 0,
+                           key_source=key_source)
+                
                 response = await client.post(
                     "https://api.v0.dev/v1/chats",
                     headers={
@@ -292,9 +317,38 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                     }
                 )
                 
+                # Log response status
+                logger.info("v0_api_response",
+                           user_id=user_id,
+                           status_code=response.status_code,
+                           key_source=key_source)
+                
                 if response.status_code == 401:
-                    raise ValueError("V0 API key is invalid or unauthorized")
+                    logger.error("v0_api_auth_failed",
+                               user_id=user_id,
+                               status_code=401,
+                               key_source=key_source,
+                               response_text=response.text[:200] if response.text else "No response text")
+                    raise ValueError("V0 API key is invalid or unauthorized. Please check your API key in Settings.")
+                elif response.status_code == 402:
+                    logger.error("v0_api_credits_exhausted",
+                               user_id=user_id,
+                               status_code=402,
+                               key_source=key_source,
+                               response_text=response.text[:200] if response.text else "No response text")
+                    error_text = response.text
+                    try:
+                        error_json = response.json()
+                        error_text = error_json.get("error", {}).get("message", error_text)
+                    except:
+                        pass
+                    raise ValueError(f"V0 API error: {response.status_code} - {error_text}")
                 elif response.status_code != 200 and response.status_code != 201:
+                    logger.error("v0_api_error",
+                               user_id=user_id,
+                               status_code=response.status_code,
+                               key_source=key_source,
+                               response_text=response.text[:200] if response.text else "No response text")
                     error_text = response.text
                     try:
                         error_json = response.json()

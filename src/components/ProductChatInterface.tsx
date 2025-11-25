@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { EnhancedChatInterface } from './EnhancedChatInterface';
 import type { MultiAgentMessage, CoordinationMode } from '../agents/multi-agent-system';
 import { useAuth } from '../contexts/AuthContext';
+import { saveChatSession, loadChatSession, clearProductSession } from '../lib/session-storage';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -17,6 +18,26 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
   const [coordinationMode, setCoordinationMode] = useState<CoordinationMode>('collaborative');
   const [activeAgents, setActiveAgents] = useState<string[]>([]);
   const [agentInteractions, setAgentInteractions] = useState<any[]>([]);
+
+  // Save to sessionStorage whenever messages, interactions, or agents change
+  useEffect(() => {
+    if (productId && messages.length > 0) {
+      saveChatSession(productId, {
+        messages,
+        agentInteractions,
+        activeAgents,
+        coordinationMode,
+      });
+    }
+  }, [messages, agentInteractions, activeAgents, coordinationMode, productId]);
+
+  // Cleanup: clear session when component unmounts (if needed)
+  useEffect(() => {
+    return () => {
+      // Don't clear on unmount - we want to keep it for refresh
+      // Only clear on explicit logout
+    };
+  }, [productId]);
 
   // Listen for phase form generation events
   useEffect(() => {
@@ -46,7 +67,15 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
           console.log('ProductChatInterface: Adding message to chat', {
             totalMessages: prev.length + 1
           });
-          return [...prev, assistantMessage];
+          const updatedMessages = [...prev, assistantMessage];
+          // Save to sessionStorage
+          saveChatSession(productId, {
+            messages: updatedMessages,
+            agentInteractions: agentInteractions,
+            activeAgents: activeAgents,
+            coordinationMode: coordinationMode,
+          });
+          return updatedMessages;
         });
       } else {
         console.warn('ProductChatInterface: Invalid phaseFormGenerated event', {
@@ -72,7 +101,15 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
       timestamp: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const updatedMessages = [...messages, userMessage];
+    setMessages(updatedMessages);
+    // Save to sessionStorage immediately
+    saveChatSession(productId, {
+      messages: updatedMessages,
+      agentInteractions: agentInteractions,
+      activeAgents: activeAgents,
+      coordinationMode: coordinationMode,
+    });
     setIsLoading(true);
 
     try {
@@ -134,7 +171,8 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
           timestamp: new Date().toISOString(),
           interactions: data.agent_interactions || [],
         };
-        setMessages((prev) => [...prev, assistantMessage]);
+        const updatedMessages = [...messages, assistantMessage];
+        setMessages(updatedMessages);
         
         // Extract active agents from interactions
         const interactions = data.agent_interactions || [];
@@ -144,12 +182,21 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
           if (interaction.from_agent) uniqueAgents.add(interaction.from_agent);
         });
         if (data.primary_agent) uniqueAgents.add(data.primary_agent);
-        setActiveAgents(Array.from(uniqueAgents));
+        const activeAgentsArray = Array.from(uniqueAgents);
+        setActiveAgents(activeAgentsArray);
         setAgentInteractions(interactions);
+        
+        // Save to sessionStorage
+        saveChatSession(productId, {
+          messages: updatedMessages,
+          agentInteractions: interactions,
+          activeAgents: activeAgentsArray,
+          coordinationMode: coordinationMode,
+        });
         
         // Dispatch event to update agent panel
         window.dispatchEvent(new CustomEvent('agentInteractionsUpdated', {
-          detail: { interactions, activeAgents: Array.from(uniqueAgents) }
+          detail: { interactions, activeAgents: activeAgentsArray }
         }));
       } else {
         const errorData = await response.json();
@@ -161,17 +208,68 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
         content: `Error: ${error instanceof Error ? error.message : 'Failed to send message'}`,
         timestamp: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      const updatedMessages = [...messages, errorMessage];
+      setMessages(updatedMessages);
+      // Save to sessionStorage
+      saveChatSession(productId, {
+        messages: updatedMessages,
+        agentInteractions: agentInteractions,
+        activeAgents: activeAgents,
+        coordinationMode: coordinationMode,
+      });
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Load conversation history on mount
+  // Helper function to merge messages (avoid duplicates, keep latest)
+  const mergeMessages = (sessionMessages: MultiAgentMessage[], backendMessages: MultiAgentMessage[]): MultiAgentMessage[] => {
+    const messageMap = new Map<string, MultiAgentMessage>();
+    
+    // Add backend messages first
+    backendMessages.forEach(msg => {
+      const key = `${msg.role}_${msg.timestamp}_${msg.content.substring(0, 50)}`;
+      messageMap.set(key, msg);
+    });
+    
+    // Add session messages (they might be newer)
+    sessionMessages.forEach(msg => {
+      const key = `${msg.role}_${msg.timestamp}_${msg.content.substring(0, 50)}`;
+      const existing = messageMap.get(key);
+      if (!existing || new Date(msg.timestamp) > new Date(existing.timestamp)) {
+        messageMap.set(key, msg);
+      }
+    });
+    
+    // Sort by timestamp
+    return Array.from(messageMap.values()).sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+  };
+
+  // Load conversation history on mount - first from sessionStorage, then from backend
   useEffect(() => {
     const loadConversationHistory = async () => {
       if (!token || !productId) return;
       
+      // First, try to load from sessionStorage (fast, instant restore)
+      const sessionData = loadChatSession(productId);
+      if (sessionData && sessionData.messages && sessionData.messages.length > 0) {
+        console.log('ProductChatInterface: Loading from sessionStorage', {
+          messageCount: sessionData.messages.length,
+          hasInteractions: sessionData.agentInteractions.length > 0
+        });
+        setMessages(sessionData.messages);
+        setAgentInteractions(sessionData.agentInteractions || []);
+        if (sessionData.activeAgents && sessionData.activeAgents.length > 0) {
+          setActiveAgents(sessionData.activeAgents);
+        }
+        if (sessionData.coordinationMode) {
+          setCoordinationMode(sessionData.coordinationMode as CoordinationMode);
+        }
+      }
+      
+      // Then load from backend to ensure we have the latest data
       try {
         const response = await fetch(`${API_URL}/api/conversations/history?product_id=${productId}&limit=100`, {
           headers: {
@@ -194,20 +292,37 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
                 timestamp: conv.created_at || new Date().toISOString(),
               }));
             
-            setMessages(historyMessages);
+            // Merge with sessionStorage data (sessionStorage might have newer messages)
+            const sessionMessages = sessionData?.messages || [];
+            const mergedMessages = mergeMessages(sessionMessages, historyMessages);
+            
+            setMessages(mergedMessages);
             
             // Extract agent interactions from history
             const interactions: any[] = [];
-            historyMessages.forEach((msg, idx) => {
+            mergedMessages.forEach((msg) => {
               if (msg.interactions && Array.isArray(msg.interactions)) {
                 interactions.push(...msg.interactions);
               }
             });
+            // Also include sessionStorage interactions
+            if (sessionData?.agentInteractions) {
+              interactions.push(...sessionData.agentInteractions);
+            }
             setAgentInteractions(interactions);
+            
+            // Save merged data back to sessionStorage
+            saveChatSession(productId, {
+              messages: mergedMessages,
+              agentInteractions: interactions,
+              activeAgents: activeAgents,
+              coordinationMode: coordinationMode,
+            });
           }
         }
       } catch (error) {
         console.error('Error loading conversation history:', error);
+        // If backend fails, at least we have sessionStorage data
       }
     };
     

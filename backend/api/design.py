@@ -455,29 +455,124 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
         
         # Generate project using appropriate agent
         if request.provider == "v0":
-            v0_key = user_keys.get("v0") or settings.v0_api_key
+            # Prioritize user's API key over global settings
+            v0_key = user_keys.get("v0")
+            key_source = "user_database"
+            if not v0_key:
+                v0_key = settings.v0_api_key
+                key_source = "global_settings"
+            
             if not v0_key:
                 raise HTTPException(status_code=400, detail="V0 API key is not configured. Please configure it in Settings.")
             
-            # Use V0 Platform API to create project
-            result = await v0_agent.create_v0_project_with_api(
-                v0_prompt=enhanced_prompt,
-                v0_api_key=v0_key,
-                user_id=str(current_user["id"]),
-                product_id=request.product_id
-            )
-        elif request.provider == "lovable":
-            lovable_key = user_keys.get("lovable") or settings.lovable_api_key
-            if not lovable_key:
-                raise HTTPException(status_code=400, detail="Lovable API key is not configured. Please configure it in Settings.")
+            # Validate key format (V0 API keys typically start with specific patterns)
+            if not v0_key or len(v0_key.strip()) < 10:
+                logger.error("v0_key_invalid_format",
+                           user_id=str(current_user["id"]),
+                           key_source=key_source,
+                           key_length=len(v0_key) if v0_key else 0)
+                raise HTTPException(
+                    status_code=400,
+                    detail="V0 API key appears to be invalid. Please check your API key in Settings."
+                )
             
-            # Use Lovable API to create project
-            result = await lovable_agent.create_lovable_project(
-                lovable_prompt=enhanced_prompt,
-                lovable_api_key=lovable_key,
-                user_id=str(current_user["id"]),
-                product_id=request.product_id
-            )
+            # Log which key source is being used (without logging the actual key)
+            logger.info("v0_key_loaded", 
+                       user_id=str(current_user["id"]),
+                       key_source=key_source,
+                       has_user_key=bool(user_keys.get("v0")),
+                       key_length=len(v0_key) if v0_key else 0,
+                       key_prefix=v0_key[:8] + "..." if v0_key and len(v0_key) > 8 else "N/A")
+            
+            # Use AgnoV0Agent for V0 project creation (preferred when Agno is available)
+            try:
+                from backend.main import agno_enabled
+                if agno_enabled:
+                    from backend.agents.agno_v0_agent import AgnoV0Agent
+                    agno_v0_agent = AgnoV0Agent()
+                    # Set the user's API key explicitly BEFORE creating the agent
+                    agno_v0_agent.set_v0_api_key(v0_key.strip())
+                    logger.info("using_agno_v0_agent",
+                               user_id=str(current_user["id"]),
+                               key_source=key_source,
+                               key_set=True)
+                    result = await agno_v0_agent.create_v0_project_with_api(
+                        v0_prompt=enhanced_prompt,
+                        v0_api_key=v0_key.strip(),  # Explicitly pass user's API key (trimmed)
+                        user_id=str(current_user["id"]),
+                        product_id=request.product_id
+                    )
+                else:
+                    # Fallback to legacy agent
+                    logger.info("using_legacy_v0_agent", user_id=str(current_user["id"]))
+                    result = await v0_agent.create_v0_project_with_api(
+                        v0_prompt=enhanced_prompt,
+                        v0_api_key=v0_key,  # Use user's API key
+                        user_id=str(current_user["id"]),
+                        product_id=request.product_id
+                    )
+            except ValueError as e:
+                # Handle specific V0 API errors
+                error_msg = str(e)
+                if "out of credits" in error_msg.lower() or "402" in error_msg:
+                    logger.error("v0_credits_error", 
+                               user_id=str(current_user["id"]),
+                               has_user_key=bool(user_keys.get("v0")),
+                               error=error_msg)
+                    raise HTTPException(
+                        status_code=402,
+                        detail=f"V0 API error: {error_msg}. Please check your V0 account credits at https://v0.app/chat/settings/billing"
+                    )
+                elif "401" in error_msg or "invalid" in error_msg.lower() or "unauthorized" in error_msg.lower():
+                    logger.error("v0_auth_error", 
+                               user_id=str(current_user["id"]),
+                               has_user_key=bool(user_keys.get("v0")),
+                               error=error_msg)
+                    raise HTTPException(
+                        status_code=401,
+                        detail=f"V0 API authentication error: {error_msg}. Please verify your V0 API key in Settings."
+                    )
+                else:
+                    logger.error("v0_project_creation_error", error=error_msg, user_id=str(current_user["id"]))
+                    raise HTTPException(status_code=500, detail=f"V0 API error: {error_msg}")
+            except Exception as e:
+                logger.error("v0_project_creation_error", error=str(e), user_id=str(current_user["id"]))
+                raise HTTPException(status_code=500, detail=f"V0 API error: {str(e)}")
+        elif request.provider == "lovable":
+            # Lovable doesn't use API keys - it uses Build with URL feature
+            # Based on: https://docs.lovable.dev/integrations/build-with-url
+            try:
+                from backend.agents.agno_lovable_agent import AgnoLovableAgent
+                agno_lovable_agent = AgnoLovableAgent()
+                
+                # Extract image URLs from context if available
+                image_urls = None
+                if request.context:
+                    # Check if there are any image URLs in the context
+                    if isinstance(request.context, dict):
+                        image_urls = request.context.get("image_urls") or request.context.get("images")
+                        if isinstance(image_urls, str):
+                            image_urls = [image_urls]
+                
+                # Generate Lovable link using Build with URL API
+                result = agno_lovable_agent.generate_lovable_link(
+                    lovable_prompt=enhanced_prompt,
+                    image_urls=image_urls
+                )
+                
+                # Add additional metadata for consistency with V0 response format
+                result["prompt"] = enhanced_prompt
+                result["user_id"] = str(current_user["id"])
+                result["product_id"] = request.product_id
+                result["provider"] = "lovable"
+                
+                logger.info("lovable_link_created", 
+                           user_id=str(current_user["id"]),
+                           product_id=request.product_id,
+                           prompt_length=len(enhanced_prompt))
+            except Exception as e:
+                logger.error("lovable_link_creation_error", error=str(e), user_id=str(current_user["id"]))
+                raise HTTPException(status_code=500, detail=f"Lovable link generation error: {str(e)}")
         else:
             raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")
         

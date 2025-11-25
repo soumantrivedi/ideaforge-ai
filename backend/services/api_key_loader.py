@@ -39,6 +39,8 @@ async def load_user_api_keys_from_db(
                 if not decrypted_key:
                     logger.warning("empty_decrypted_key", provider=provider, user_id=user_id)
                     continue
+                # Trim the decrypted key to remove any whitespace
+                decrypted_key = decrypted_key.strip()
                 # Map database provider names to registry names
                 if provider == 'openai':
                     keys['openai'] = decrypted_key
@@ -48,6 +50,10 @@ async def load_user_api_keys_from_db(
                     keys['gemini'] = decrypted_key
                 elif provider == 'v0':
                     keys['v0'] = decrypted_key
+                    logger.info("v0_key_loaded_from_db",
+                               user_id=user_id,
+                               key_length=len(decrypted_key),
+                               key_prefix=decrypted_key[:8] + "..." if len(decrypted_key) > 8 else "N/A")
                 elif provider == 'lovable':
                     keys['lovable'] = decrypted_key
                 logger.debug("key_decrypted_successfully", provider=provider, user_id=user_id, key_length=len(decrypted_key))

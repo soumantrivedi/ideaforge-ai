@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ideaforge-ai-config
+  namespace: ideaforge-ai
+data:
+  # Database Configuration
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: agentic_pm
+  POSTGRES_DB: agentic_pm_db
+  DATABASE_URL: postgresql://agentic_pm:$(POSTGRES_PASSWORD)@postgres:5432/agentic_pm_db
+  
+  # Redis Configuration
+  REDIS_URL: redis://redis:6379/0
+  
+  # Backend Configuration
+  BACKEND_PORT: "8000"
+  LOG_LEVEL: "info"
+  SESSION_EXPIRES_IN: "86400"
+  AGENT_MODEL_PRIMARY: "gpt-4o"
+  AGENT_MODEL_SECONDARY: "claude-sonnet-4-5-20250929"
+  AGENT_MODEL_TERTIARY: "gemini-2.0-flash-exp"
+  
+  # Frontend Configuration
+  VITE_API_URL: "https://api.ideaforge.ai"  # Update with your actual domain
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: ideaforge-ai
+data:
+  # This ConfigMap will be mounted to postgres for initialization
+  # In production, consider using a separate init container or job
+

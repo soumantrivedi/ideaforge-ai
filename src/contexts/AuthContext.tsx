@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { apiFetch, setUnauthorizedHandler } from '../lib/api-client';
+import { clearAllSessionStorage } from '../lib/session-storage';
 
 interface User {
   id: string;
@@ -56,6 +57,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('user_id');
     localStorage.removeItem('tenant_id');
+    // Clear session storage (chat history, app state, etc.)
+    clearAllSessionStorage();
     setToken(null);
     setUser(null);
     setIsLoading(false); // Ensure loading state is cleared so login page shows
@@ -143,6 +146,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
+      // Clear session storage before clearing auth
+      clearAllSessionStorage();
       handleUnauthorized();
     }
   };

@@ -24,6 +24,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS update_user_api_keys_updated_at ON user_api_keys;
 CREATE TRIGGER update_user_api_keys_updated_at
   BEFORE UPDATE ON user_api_keys
   FOR EACH ROW

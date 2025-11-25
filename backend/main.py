@@ -274,6 +274,120 @@ async def get_agent_capabilities():
     }
 
 
+@app.get("/api/agents/by-phase", tags=["agents"])
+async def get_agents_by_phase(phase_name: Optional[str] = None):
+    """
+    Get agents relevant to a specific product lifecycle phase.
+    
+    Maps phases to their relevant agents:
+    - Ideation: ideation, research, rag
+    - Market Research: research, analysis, rag
+    - Requirements: analysis, prd_authoring, rag
+    - Design: ideation, v0, lovable, rag
+    - Development Planning: prd_authoring, github_mcp, atlassian_mcp, rag
+    - Go-to-Market: summary, scoring, export, rag
+    """
+    # Phase to agent mapping
+    PHASE_AGENT_MAP = {
+        "Ideation": ["ideation", "research", "rag"],
+        "Market Research": ["research", "analysis", "rag"],
+        "Requirements": ["analysis", "prd_authoring", "rag"],
+        "Design": ["ideation", "v0", "lovable", "rag"],
+        "Development Planning": ["prd_authoring", "github_mcp", "atlassian_mcp", "rag"],
+        "Go-to-Market": ["summary", "scoring", "export", "rag"],
+    }
+    
+    # Agent metadata with descriptions
+    AGENT_METADATA = {
+        "ideation": {
+            "name": "Ideation Agent",
+            "description": "Generates creative product ideas and concepts",
+            "icon": "💡",
+        },
+        "research": {
+            "name": "Research Agent",
+            "description": "Conducts market and competitive research",
+            "icon": "🔬",
+        },
+        "analysis": {
+            "name": "Analysis Agent",
+            "description": "Analyzes requirements and provides insights",
+            "icon": "📊",
+        },
+        "prd_authoring": {
+            "name": "PRD Authoring Agent",
+            "description": "Creates comprehensive product requirements documents",
+            "icon": "📝",
+        },
+        "summary": {
+            "name": "Summary Agent",
+            "description": "Generates summaries and overviews",
+            "icon": "📄",
+        },
+        "scoring": {
+            "name": "Scoring Agent",
+            "description": "Evaluates and scores product ideas",
+            "icon": "⭐",
+        },
+        "export": {
+            "name": "Export Agent",
+            "description": "Exports documents and generates reports",
+            "icon": "📤",
+        },
+        "v0": {
+            "name": "V0 Agent",
+            "description": "Generates design prompts for V0",
+            "icon": "🎨",
+        },
+        "lovable": {
+            "name": "Lovable Agent",
+            "description": "Generates design prompts for Lovable",
+            "icon": "🎭",
+        },
+        "github_mcp": {
+            "name": "GitHub Agent",
+            "description": "Manages GitHub repositories and code",
+            "icon": "🐙",
+        },
+        "atlassian_mcp": {
+            "name": "Atlassian Agent",
+            "description": "Manages Jira and Confluence integration",
+            "icon": "🔷",
+        },
+        "rag": {
+            "name": "RAG Agent",
+            "description": "Retrieves context from knowledge base",
+            "icon": "📚",
+        },
+    }
+    
+    if phase_name:
+        # Get agents for specific phase
+        agent_roles = PHASE_AGENT_MAP.get(phase_name, [])
+    else:
+        # Return all agents if no phase specified
+        agent_roles = list(AGENT_METADATA.keys())
+    
+    # Build agent list with metadata
+    agents = []
+    for role in agent_roles:
+        if role in AGENT_METADATA:
+            metadata = AGENT_METADATA[role]
+            agents.append({
+                "role": role,
+                "name": metadata["name"],
+                "description": metadata["description"],
+                "icon": metadata["icon"],
+                "isActive": True,  # All agents are available
+            })
+    
+    return {
+        "phase": phase_name,
+        "agents": agents,
+        "count": len(agents)
+    }
+
+
 @app.post("/api/agents/process", response_model=AgentResponse, tags=["agents"])
 async def process_agent_request(request: AgentRequest):
     try:
@@ -961,16 +1075,24 @@ async def configure_provider_keys(
         
         # V0
         if payload.v0Key is not None and payload.v0Key.strip():
-            keys_to_save['v0'] = payload.v0Key.strip()
-            settings.v0_api_key = payload.v0Key.strip()
+            v0_key_trimmed = payload.v0Key.strip()
+            keys_to_save['v0'] = v0_key_trimmed
+            settings.v0_api_key = v0_key_trimmed
             import os
             os.environ["V0_API_KEY"] = settings.v0_api_key
+            logger.info("v0_key_saved",
+                       user_id=str(current_user['id']),
+                       key_length=len(v0_key_trimmed),
+                       key_prefix=v0_key_trimmed[:8] + "..." if len(v0_key_trimmed) > 8 else "N/A")
         elif 'v0' in existing_keys:
             # Preserve existing key
             settings.v0_api_key = existing_keys['v0']
             import os
             if settings.v0_api_key:
                 os.environ["V0_API_KEY"] = settings.v0_api_key
+                logger.info("v0_key_preserved",
+                           user_id=str(current_user['id']),
+                           key_length=len(settings.v0_api_key))
         
         # Lovable - No API key needed (uses link generator)
         # Remove any existing Lovable API keys from database
@@ -985,7 +1107,15 @@ async def configure_provider_keys(
         
         # Save only the keys that were provided
         for provider, key_value in keys_to_save.items():
-            await _save_api_key_internal(provider, key_value, current_user['id'], db)
+            # Ensure V0 provider name matches database schema
+            db_provider = provider
+            if provider == 'v0':
+                db_provider = 'v0'  # Ensure it's saved as 'v0' in database
+            await _save_api_key_internal(db_provider, key_value.strip(), current_user['id'], db)
+            logger.info("api_key_saved_to_db",
+                       user_id=str(current_user['id']),
+                       provider=db_provider,
+                       key_length=len(key_value.strip()))
         
         # Update in-memory registry with all keys (new + existing)
         configured = provider_registry.update_keys(**keys_to_update_registry)

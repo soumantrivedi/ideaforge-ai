@@ -1,6 +1,6 @@
 -- Seed Sample Data Script
 -- Run this after database clean to restore sample products and data
--- Usage: docker-compose exec postgres psql -U agentic_pm -d agentic_pm_db -f /path/to/seed_sample_data.sql
+-- Usage: docker-compose exec postgres psql -U agentic_pm -d agentic_pm_db -f /docker-entrypoint-initdb.d/seed_sample_data.sql
 
 -- Ensure default tenant exists
 INSERT INTO tenants (id, name, slug, description)
