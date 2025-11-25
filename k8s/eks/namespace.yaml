@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: ideaforge-ai
+  name: ideaforge-ai  # Will be replaced by eks-prepare-namespace target
   labels:
-    name: ideaforge-ai
+    name: ideaforge-ai  # Will be replaced by eks-prepare-namespace target
     app: ideaforge-ai
 
