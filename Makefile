@@ -884,6 +884,28 @@ eks-load-secrets: ## Load secrets from .env file for EKS deployment (use EKS_NAM
 
 eks-deploy-full: eks-setup-ghcr-secret eks-prepare-namespace eks-load-secrets eks-deploy ## Full EKS deployment with GHCR setup (use EKS_NAMESPACE=your-namespace)
 
+eks-port-forward: ## Port-forward to EKS services (use EKS_NAMESPACE=your-namespace, KUBECONFIG=path/to/kubeconfig)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-port-forward EKS_NAMESPACE=your-namespace [KUBECONFIG=path/to/kubeconfig]"; \
+		exit 1; \
+	fi
+	@echo "🔌 Setting up port forwarding for EKS namespace: $(EKS_NAMESPACE)"
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+		export KUBECONFIG=$(KUBECONFIG); \
+	fi
+	@echo "   Frontend: http://localhost:3000"
+	@echo "   Backend API: http://localhost:8000"
+	@echo "   Press Ctrl+C to stop"
+	@echo ""
+	@kubectl port-forward -n $(EKS_NAMESPACE) service/frontend 3000:3000 > /dev/null 2>&1 & \
+	 kubectl port-forward -n $(EKS_NAMESPACE) service/backend 8000:8000 > /dev/null 2>&1 & \
+	 sleep 2 && \
+	 echo "✅ Port forwarding active" && \
+	 echo "   To stop: pkill -f 'kubectl port-forward'" && \
+	 wait
+
 eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=your-namespace)
 	@echo "☁️  Deploying to EKS cluster: $(EKS_CLUSTER_NAME)"
 	@echo "📦 Namespace: $(EKS_NAMESPACE)"
