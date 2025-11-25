@@ -43,10 +43,11 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- Create default admin user (password is 'password123')
--- Password hash for 'password123': $2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW
+-- Password hash generated with: python3 -c "import bcrypt; password = 'password123'.encode('utf-8'); salt = bcrypt.gensalt(rounds=12); hashed = bcrypt.hashpw(password, salt); print(hashed.decode('utf-8'))"
+-- Note: Each hash is unique due to salt, but any valid bcrypt hash for 'password123' will work
 INSERT INTO user_profiles (id, email, full_name, tenant_id, password_hash, is_active, persona)
 VALUES
-  ('00000000-0000-0000-0000-000000000001', 'admin@ideaforge.ai', 'Admin User', '00000000-0000-0000-0000-000000000001', '$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW', true, 'product_manager')
+  ('00000000-0000-0000-0000-000000000001', 'admin@ideaforge.ai', 'Admin User', '00000000-0000-0000-0000-000000000001', '$2b$12$eTMKjfsd8Hi2uERGM8/LZed4I0LlacMvnLx/9Xg9Mbu8NYqfaGNo.', true, 'product_manager')
 ON CONFLICT (id) DO UPDATE SET
   tenant_id = EXCLUDED.tenant_id,
   password_hash = EXCLUDED.password_hash,
