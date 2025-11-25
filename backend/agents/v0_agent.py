@@ -14,7 +14,7 @@ class V0Agent(BaseAgent):
     """Agent for generating V0 (Vercel) design prompts and prototypes."""
     
     def __init__(self):
-        system_prompt = """You are a V0 (Vercel) Design Specialist.
+        system_prompt = """You are a V0 (Vercel) Design Specialist following official Vercel V0 API documentation.
 
 Your responsibilities:
 1. Generate detailed, comprehensive prompts for V0 to create UI prototypes
@@ -22,22 +22,33 @@ Your responsibilities:
 3. Create prompts that leverage V0's component library and design system
 4. Ensure prompts are specific, actionable, and result in high-quality designs
 5. Consider user experience, accessibility, and modern design patterns
+6. Generate accurate Vercel V0 prompts that can be used with the official V0 API
 
-V0 Prompt Guidelines:
-- Be specific about component types (buttons, cards, forms, etc.)
-- Specify layout requirements (grid, flex, spacing)
-- Include color schemes and styling preferences
-- Mention responsive design requirements
-- Specify interaction states (hover, active, disabled)
-- Include accessibility requirements
-- Reference modern UI patterns (shadcn/ui, Tailwind CSS)
+V0 API Documentation Reference:
+- V0 uses OpenAI-compatible chat completions API at https://api.v0.dev/v1/chat/completions
+- Model: v0-1.5-md (specialized for UI generation)
+- Prompts should describe complete UI components with React/Next.js code
+- V0 generates production-ready React components with Tailwind CSS
+
+V0 Prompt Guidelines (Based on Official Documentation):
+- Be specific about component types (buttons, cards, forms, navigation, etc.)
+- Specify layout requirements (grid, flex, spacing, responsive breakpoints)
+- Include color schemes and styling preferences (Tailwind CSS classes)
+- Mention responsive design requirements (mobile-first approach)
+- Specify interaction states (hover, active, disabled, focus)
+- Include accessibility requirements (ARIA labels, keyboard navigation)
+- Reference modern UI patterns (shadcn/ui, Tailwind CSS, Next.js)
+- Describe complete user flows and component interactions
+- Include data structure and state management needs
+- Specify animation and transition requirements
 
 Your output should:
 - Be comprehensive and detailed
 - Include all necessary design specifications
-- Be optimized for V0's AI design generation
+- Be optimized for V0's AI design generation (v0-1.5-md model)
 - Consider the full context from previous product phases
-- Generate production-ready design prompts"""
+- Generate production-ready design prompts that result in deployable React/Next.js code
+- Follow Vercel V0 best practices from official documentation"""
 
         super().__init__(
             name="V0 Agent",
@@ -147,33 +158,120 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
     async def generate_design_mockup(
         self,
         v0_prompt: str,
-        v0_api_key: Optional[str] = None
+        v0_api_key: Optional[str] = None,
+        user_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Generate a design mockup using V0 API."""
+        """
+        Generate a design mockup using Vercel V0 API.
+        Based on official Vercel V0 API documentation: https://v0.dev/api
+        
+        V0 API uses OpenAI-compatible chat completions endpoint.
+        """
         api_key = v0_api_key or settings.v0_api_key
         
         if not api_key:
             raise ValueError("V0 API key is not configured")
         
-        # V0 API endpoint (this is a placeholder - actual V0 API may differ)
-        # Note: V0 may use different endpoints, this needs to be updated based on actual API
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "https://v0.dev/api/generate",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                },
-                json={
+        # Vercel V0 API endpoint (official API)
+        # Documentation: https://v0.dev/api
+        # Uses OpenAI-compatible chat completions format
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            try:
+                # V0 API endpoint for generating UI components
+                response = await client.post(
+                    "https://api.v0.dev/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": "v0-1.5-md",  # V0's specialized model for UI generation
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": v0_prompt
+                            }
+                        ],
+                        "temperature": 0.7,
+                        "max_tokens": 4000
+                    }
+                )
+                
+                if response.status_code == 401:
+                    raise ValueError("V0 API key is invalid or unauthorized")
+                elif response.status_code != 200:
+                    error_text = response.text
+                    try:
+                        error_json = response.json()
+                        error_text = error_json.get("error", {}).get("message", error_text)
+                    except:
+                        pass
+                    raise ValueError(f"V0 API error: {response.status_code} - {error_text}")
+                
+                result = response.json()
+                
+                # Extract generated code and metadata
+                generated_content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                
+                # V0 returns React/Next.js code - we need to create a project
+                # For now, return the code and prompt for manual creation
+                # In future, we can use Vercel API to create a project automatically
+                return {
+                    "code": generated_content,
                     "prompt": v0_prompt,
-                    "model": "gpt-4",
-                    "temperature": 0.7
-                },
-                timeout=60.0
-            )
-            
-            if response.status_code != 200:
-                raise ValueError(f"V0 API error: {response.status_code} - {response.text}")
-            
-            return response.json()
+                    "model": "v0-1.5-md",
+                    "project_url": None,  # Will be set when project is created
+                    "image_url": None,  # Will be set when screenshot is captured
+                    "thumbnail_url": None,
+                    "metadata": {
+                        "api_version": "v1",
+                        "model_used": "v0-1.5-md",
+                        "tokens_used": result.get("usage", {}).get("total_tokens", 0)
+                    }
+                }
+                
+            except httpx.TimeoutException:
+                raise ValueError("V0 API request timed out. Please try again.")
+            except httpx.RequestError as e:
+                raise ValueError(f"V0 API connection error: {str(e)}")
+            except Exception as e:
+                logger.error("v0_api_error", error=str(e), api_key_length=len(api_key) if api_key else 0)
+                raise ValueError(f"V0 API error: {str(e)}")
+    
+    async def create_v0_project(
+        self,
+        v0_prompt: str,
+        v0_api_key: Optional[str] = None,
+        project_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a Vercel project from V0-generated code.
+        This uses Vercel's deployment API to create a new project.
+        """
+        api_key = v0_api_key or settings.v0_api_key
+        
+        if not api_key:
+            raise ValueError("V0 API key is not configured")
+        
+        # First generate the code
+        mockup_result = await self.generate_design_mockup(v0_prompt, v0_api_key)
+        generated_code = mockup_result.get("code", "")
+        
+        if not generated_code:
+            raise ValueError("Failed to generate code from V0")
+        
+        # Note: Vercel project creation requires additional API calls
+        # For now, return the code and instructions
+        # In production, this would:
+        # 1. Create a GitHub repository with the code
+        # 2. Deploy to Vercel using Vercel API
+        # 3. Return the deployment URL
+        
+        return {
+            "code": generated_code,
+            "prompt": v0_prompt,
+            "project_name": project_name or "v0-generated-project",
+            "instructions": "Code generated. To deploy: 1) Create a new Vercel project, 2) Paste the generated code, 3) Deploy",
+            "metadata": mockup_result.get("metadata", {})
+        }
 

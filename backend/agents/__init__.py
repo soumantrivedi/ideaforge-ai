@@ -29,6 +29,8 @@ except ImportError:
     AgnoIdeationAgent = None
     AgnoResearchAgent = None
     AgnoAnalysisAgent = None
+    AgnoValidationAgent = None
+    AgnoExportAgent = None
     RAGAgent = None
     AgnoCoordinatorAgent = None
     AgnoAgenticOrchestrator = None

@@ -24,6 +24,8 @@ from backend.agents.agno_research_agent import AgnoResearchAgent
 from backend.agents.agno_analysis_agent import AgnoAnalysisAgent
 from backend.agents.agno_summary_agent import AgnoSummaryAgent
 from backend.agents.agno_scoring_agent import AgnoScoringAgent
+from backend.agents.agno_validation_agent import AgnoValidationAgent
+from backend.agents.agno_export_agent import AgnoExportAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.models.schemas import AgentMessage, AgentResponse, AgentInteraction, AgentCapability
 from backend.services.provider_registry import provider_registry
@@ -50,6 +52,8 @@ class AgnoEnhancedCoordinator:
         self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=enable_rag)
         self.summary_agent = AgnoSummaryAgent(enable_rag=enable_rag)
         self.scoring_agent = AgnoScoringAgent(enable_rag=enable_rag)
+        self.validation_agent = AgnoValidationAgent(enable_rag=enable_rag)
+        self.export_agent = AgnoExportAgent(enable_rag=enable_rag)
         self.rag_agent = RAGAgent()
         
         # Register all agents
@@ -60,6 +64,8 @@ class AgnoEnhancedCoordinator:
             "prd_authoring": self.prd_agent,
             "summary": self.summary_agent,
             "scoring": self.scoring_agent,
+            "validation": self.validation_agent,
+            "export": self.export_agent,
             "rag": self.rag_agent,
         }
         
@@ -316,6 +322,49 @@ INSTRUCTIONS:
         """Get shared context."""
         return self.shared_context.copy()
     
+    def determine_primary_agent(self, query: str) -> tuple[str, float]:
+        """Determine the best agent to handle a query."""
+        query_lower = query.lower()
+        best_agent = None
+        best_confidence = 0.0
+        
+        for agent_type, agent in self.agents.items():
+            confidence = agent.get_confidence(query)
+            if confidence > best_confidence:
+                best_confidence = confidence
+                best_agent = agent_type
+        
+        # Default to ideation if no clear match
+        if best_confidence < 0.3:
+            best_agent = "ideation"
+            best_confidence = 0.5
+        
+        return best_agent, best_confidence
+    
+    def determine_supporting_agents(self, query: str, primary_agent: str) -> List[str]:
+        """Determine which supporting agents should be consulted.
+        ALWAYS includes RAG agent for knowledge base context.
+        """
+        query_lower = query.lower()
+        supporting = []
+        
+        # ALWAYS include RAG agent first (unless it's the primary agent)
+        if primary_agent != "rag":
+            supporting.append("rag")
+        
+        # Keywords that suggest multi-agent collaboration
+        if any(kw in query_lower for kw in ["research", "market", "competitive", "trend"]):
+            if primary_agent != "research":
+                supporting.append("research")
+        
+        if any(kw in query_lower for kw in ["analyze", "swot", "feasibility", "risk"]):
+            if primary_agent != "analysis":
+                supporting.append("analysis")
+        
+        # RAG is already added above, so we don't need to add it again here
+        
+        return supporting
+    
     async def route_query(
         self,
         query: str,
@@ -342,34 +391,109 @@ INSTRUCTIONS:
                     user_context=user_context,
                     coordination_mode=coordination_mode
                 )
-            else:
-                # For other modes, use the enhanced collaborative team by default
-                # (can be extended to support other modes)
+            elif coordination_mode == "collaborative":
+                # Handle collaborative mode similar to AgnoCoordinatorAgent
+                if not primary_agent:
+                    primary_agent, confidence = self.determine_primary_agent(query)
+                    self.logger.info("auto_routed", primary_agent=primary_agent, confidence=confidence)
+                
+                # Get primary agent
+                if primary_agent not in self.agents:
+                    raise ValueError(f"Primary agent '{primary_agent}' not found")
+                
+                primary = self.agents[primary_agent]
+                
+                # Get supporting agents
+                if not supporting_agents:
+                    supporting_agents = self.determine_supporting_agents(query, primary_agent)
+                
+                # ALWAYS ensure RAG agent is included in supporting agents
+                if "rag" not in supporting_agents and primary_agent != "rag":
+                    supporting_agents.insert(0, "rag")  # Add RAG as first supporting agent
+                    self.logger.info("rag_agent_added", message="RAG agent automatically added to supporting agents")
+                
+                # Consult supporting agents first, starting with RAG for knowledge base context
+                supporting_responses = []
+                rag_context = ""
+                
+                # Always consult RAG first if available
+                if "rag" in supporting_agents and "rag" in self.agents:
+                    rag_interaction = await self.route_agent_consultation(
+                        from_agent=primary_agent,
+                        to_agent="rag",
+                        query=f"Retrieve relevant knowledge from the knowledge base for: '{query}'",
+                        context=context
+                    )
+                    rag_context = rag_interaction.response
+                    supporting_responses.append(rag_interaction)
+                    self.logger.info("rag_consulted_first", message="RAG agent consulted first for knowledge base context")
+                
+                # Then consult other supporting agents with RAG context
+                for support_agent_name in supporting_agents:
+                    if support_agent_name in self.agents and support_agent_name != "rag":
+                        enhanced_query = f"Based on the query: '{query}'"
+                        if rag_context:
+                            enhanced_query += f"\n\nKnowledge Base Context:\n{rag_context}"
+                        interaction = await self.route_agent_consultation(
+                            from_agent=primary_agent,
+                            to_agent=support_agent_name,
+                            query=enhanced_query,
+                            context=context
+                        )
+                        supporting_responses.append(interaction)
+                
+                # Build enhanced query with supporting agent insights
+                # Prioritize RAG context
                 enhanced_query = query
+                if supporting_responses:
+                    enhanced_query += "\n\nSupporting Agent Insights (Prioritizing Knowledge Base):\n"
+                    # Put RAG response first if available
+                    rag_response = None
+                    for resp in supporting_responses:
+                        if hasattr(resp, 'to_agent') and resp.to_agent == "rag":
+                            rag_response = resp
+                            break
+                    
+                    if rag_response:
+                        enhanced_query += f"\n[RAG Knowledge Base]: {rag_response.response}\n"
+                    
+                    for interaction in supporting_responses:
+                        if not (hasattr(interaction, 'to_agent') and interaction.to_agent == "rag"):
+                            agent_name = interaction.to_agent if hasattr(interaction, 'to_agent') else "agent"
+                            response_text = interaction.response if hasattr(interaction, 'response') else str(interaction)
+                            enhanced_query += f"\n[{agent_name}]: {response_text}\n"
+                
                 if context:
                     import json
                     enhanced_query += f"\n\nContext: {json.dumps(context, indent=2)}"
                 
-                # Use enhanced coordination via process_with_context
-                response = await self.process_with_context(
-                    query=query,
-                    product_id=context.get("product_id"),
-                    session_ids=context.get("session_ids"),
-                    user_context=context.get("user_context"),
-                    coordination_mode=coordination_mode
-                )
-                # response is already an AgentResponse, so we can return it directly
-                return response
+                # Process with primary agent
+                messages = [AgentMessage(role="user", content=enhanced_query, timestamp=datetime.utcnow())]
+                response = await primary.process(messages, context)
                 
                 return AgentResponse(
-                    agent_type=primary_agent or "multi_agent",
-                    response=response.content if hasattr(response, 'content') else str(response),
+                    agent_type="multi_agent",
+                    response=response.response,
                     metadata={
-                        "mode": coordination_mode,
+                        "mode": "collaborative",
                         "primary_agent": primary_agent,
-                        "supporting_agents": supporting_agents,
+                        "supporting_agents": supporting_agents or [],
                     },
                     timestamp=datetime.utcnow()
+                )
+            else:
+                # For other modes (sequential, parallel), fall back to enhanced collaborative
+                self.logger.warning("unsupported_coordination_mode", mode=coordination_mode, message="Falling back to enhanced_collaborative")
+                product_id = context.get("product_id") if context else None
+                session_ids = context.get("session_ids") if context else None
+                user_context = {k: v for k, v in (context or {}).items() if k not in ["product_id", "session_ids"]}
+                
+                return await self.process_with_context(
+                    query=query,
+                    product_id=product_id,
+                    session_ids=session_ids,
+                    user_context=user_context,
+                    coordination_mode="enhanced_collaborative"
                 )
         except Exception as e:
             self.logger.error("route_query_error", error=str(e), coordination_mode=coordination_mode)

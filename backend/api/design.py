@@ -8,6 +8,7 @@ from pydantic import BaseModel
 import structlog
 
 from backend.database import get_db
+from backend.api.auth import get_current_user
 from backend.agents.v0_agent import V0Agent
 from backend.agents.lovable_agent import LovableAgent
 from backend.config import settings
@@ -35,9 +36,17 @@ class GenerateDesignRequest(BaseModel):
     context: Optional[Dict[str, Any]] = None
 
 
+class GenerateThumbnailsRequest(BaseModel):
+    product_id: str
+    phase_submission_id: Optional[str] = None
+    lovable_prompt: str
+    num_previews: int = 3
+
+
 @router.post("/generate-prompt")
 async def generate_design_prompt(
     request: GeneratePromptRequest,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Generate a detailed prompt for V0 or Lovable based on product context."""
@@ -105,64 +114,92 @@ async def generate_design_prompt(
 @router.post("/generate-mockup")
 async def generate_design_mockup(
     request: GenerateDesignRequest,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Generate a design mockup using V0 or Lovable API."""
     try:
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        
+        # Load user-specific API keys
+        user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+        
         # Generate mockup using appropriate agent
         if request.provider == "v0":
-            if not settings.v0_api_key:
-                raise HTTPException(status_code=400, detail="V0 API key is not configured")
+            v0_key = user_keys.get("v0") or settings.v0_api_key
+            if not v0_key:
+                raise HTTPException(status_code=400, detail="V0 API key is not configured. Please configure it in Settings.")
+            
             result = await v0_agent.generate_design_mockup(
                 v0_prompt=request.prompt,
-                v0_api_key=settings.v0_api_key
+                v0_api_key=v0_key,
+                user_id=str(current_user["id"])
             )
         elif request.provider == "lovable":
-            if not settings.lovable_api_key:
-                raise HTTPException(status_code=400, detail="Lovable API key is not configured")
+            lovable_key = user_keys.get("lovable") or settings.lovable_api_key
+            if not lovable_key:
+                raise HTTPException(status_code=400, detail="Lovable API key is not configured. Please configure it in Settings.")
+            
             result = await lovable_agent.generate_design_mockup(
                 lovable_prompt=request.prompt,
-                lovable_api_key=settings.lovable_api_key
+                lovable_api_key=lovable_key,
+                user_id=str(current_user["id"]),
+                generate_thumbnails=True
             )
         else:
             raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")
         
-        # Save mockup to database
-        insert_query = text("""
-            INSERT INTO design_mockups 
-            (product_id, phase_submission_id, user_id, provider, prompt, image_url, thumbnail_url, metadata)
-            VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, :image_url, :thumbnail_url, CAST(:metadata AS jsonb))
-            RETURNING id, created_at
-        """)
-        
-        # Extract image URLs from result (adjust based on actual API response structure)
-        import json
-        image_url = result.get("image_url") or result.get("url") or result.get("screenshot_url") or ""
-        thumbnail_url = result.get("thumbnail_url") or result.get("thumbnail") or image_url
-        
-        # Convert metadata to JSON string
-        metadata_json = json.dumps(result) if isinstance(result, dict) else json.dumps({"result": str(result)})
-        
-        insert_result = await db.execute(insert_query, {
-            "product_id": request.product_id,
-            "phase_submission_id": request.phase_submission_id,
-            "user_id": "00000000-0000-0000-0000-000000000000",  # Anonymous user
-            "provider": request.provider,
-            "prompt": request.prompt,
-            "image_url": image_url,
-            "thumbnail_url": thumbnail_url,
-            "metadata": metadata_json
-        })
-        
-        await db.commit()
-        row = insert_result.fetchone()
+        # Save mockup to database (with error handling for missing table)
+        try:
+            insert_query = text("""
+                INSERT INTO design_mockups 
+                (product_id, phase_submission_id, user_id, provider, prompt, image_url, thumbnail_url, project_url, metadata)
+                VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, :image_url, :thumbnail_url, :project_url, CAST(:metadata AS jsonb))
+                RETURNING id, created_at
+            """)
+            
+            # Extract URLs from result
+            import json
+            image_url = result.get("image_url") or result.get("thumbnail_url") or ""
+            thumbnail_url = result.get("thumbnail_url") or image_url
+            project_url = result.get("project_url") or result.get("url") or ""
+            
+            # Convert metadata to JSON string
+            metadata_json = json.dumps(result) if isinstance(result, dict) else json.dumps({"result": str(result)})
+            
+            insert_result = await db.execute(insert_query, {
+                "product_id": request.product_id,
+                "phase_submission_id": request.phase_submission_id,
+                "user_id": str(current_user["id"]),
+                "provider": request.provider,
+                "prompt": request.prompt,
+                "image_url": image_url,
+                "thumbnail_url": thumbnail_url,
+                "project_url": project_url,
+                "metadata": metadata_json
+            })
+            
+            await db.commit()
+            row = insert_result.fetchone()
+            mockup_id = str(row[0]) if row else None
+        except Exception as db_error:
+            # If table doesn't exist, log but don't fail
+            if "does not exist" in str(db_error) or "relation" in str(db_error).lower():
+                logger.warning("design_mockups_table_not_found", error=str(db_error))
+                mockup_id = None
+            else:
+                await db.rollback()
+                raise
         
         return {
-            "id": str(row[0]),
+            "id": mockup_id,
             "provider": request.provider,
-            "image_url": image_url,
-            "thumbnail_url": thumbnail_url,
-            "created_at": row[1].isoformat() if row[1] else None,
+            "image_url": result.get("image_url") or result.get("thumbnail_url") or "",
+            "thumbnail_url": result.get("thumbnail_url") or result.get("image_url") or "",
+            "project_url": result.get("project_url") or result.get("url") or "",
+            "thumbnails": result.get("thumbnails", []),  # For Lovable multi-thumbnail support
+            "code": result.get("code", ""),  # Generated code for V0
+            "created_at": None,
             "metadata": result
         }
         
@@ -174,6 +211,43 @@ async def generate_design_mockup(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/generate-thumbnails")
+async def generate_thumbnail_previews(
+    request: GenerateThumbnailsRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Generate multiple thumbnail previews for Lovable (3 choices)."""
+    try:
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        
+        # Load user-specific API keys
+        user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+        lovable_key = user_keys.get("lovable") or settings.lovable_api_key
+        
+        if not lovable_key:
+            raise HTTPException(status_code=400, detail="Lovable API key is not configured. Please configure it in Settings.")
+        
+        # Generate 3 thumbnail previews
+        previews = await lovable_agent.generate_thumbnail_previews(
+            lovable_prompt=request.lovable_prompt,
+            lovable_api_key=lovable_key,
+            num_previews=request.num_previews
+        )
+        
+        return {
+            "previews": previews,
+            "product_id": request.product_id,
+            "num_previews": len(previews)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("error_generating_thumbnails", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/mockups/{product_id}")
 async def get_design_mockups(
     product_id: str,
@@ -182,36 +256,45 @@ async def get_design_mockups(
 ):
     """Get all design mockups for a product."""
     try:
-        query = text("""
-            SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
-                   image_url, thumbnail_url, metadata, created_at, updated_at
-            FROM design_mockups
-            WHERE product_id = :product_id
-            AND (:provider IS NULL OR provider = :provider)
-            ORDER BY created_at DESC
-        """)
-        
-        result = await db.execute(query, {"product_id": product_id, "provider": provider})
-        rows = result.fetchall()
-        
-        mockups = [
-            {
-                "id": str(row[0]),
-                "product_id": str(row[1]) if row[1] else None,
-                "phase_submission_id": str(row[2]) if row[2] else None,
-                "user_id": str(row[3]) if row[3] else None,
-                "provider": row[4],
-                "prompt": row[5],
-                "image_url": row[6],
-                "thumbnail_url": row[7],
-                "metadata": row[8] or {},
-                "created_at": row[9].isoformat() if row[9] else None,
-                "updated_at": row[10].isoformat() if row[10] else None,
-            }
-            for row in rows
-        ]
-        
-        return {"mockups": mockups}
+        # Check if table exists, if not return empty list
+        try:
+            query = text("""
+                SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
+                       image_url, thumbnail_url, project_url, metadata, created_at, updated_at
+                FROM design_mockups
+                WHERE product_id = :product_id
+                AND (:provider IS NULL OR provider = :provider)
+                ORDER BY created_at DESC
+            """)
+            
+            result = await db.execute(query, {"product_id": product_id, "provider": provider})
+            rows = result.fetchall()
+            
+            mockups = [
+                {
+                    "id": str(row[0]),
+                    "product_id": str(row[1]) if row[1] else None,
+                    "phase_submission_id": str(row[2]) if row[2] else None,
+                    "user_id": str(row[3]) if row[3] else None,
+                    "provider": row[4],
+                    "prompt": row[5],
+                    "image_url": row[6],
+                    "thumbnail_url": row[7],
+                    "project_url": row[8] if len(row) > 8 else None,
+                    "metadata": row[9] if len(row) > 9 and row[9] else {},
+                    "created_at": row[10].isoformat() if len(row) > 10 and row[10] else None,
+                    "updated_at": row[11].isoformat() if len(row) > 11 and row[11] else None,
+                }
+                for row in rows
+            ]
+            
+            return {"mockups": mockups}
+        except Exception as table_error:
+            # Table doesn't exist - return empty list
+            if "does not exist" in str(table_error) or "relation" in str(table_error).lower():
+                logger.warning("design_mockups_table_not_found", error=str(table_error))
+                return {"mockups": []}
+            raise
         
     except Exception as e:
         logger.error("error_getting_design_mockups", error=str(e))
@@ -245,4 +328,3 @@ async def delete_design_mockup(
         await db.rollback()
         logger.error("error_deleting_design_mockup", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
-

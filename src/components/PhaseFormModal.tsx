@@ -3,6 +3,7 @@ import { X, Send, Loader2, Sparkles, Wand2, Trash2, Play } from 'lucide-react';
 import type { LifecyclePhase } from '../lib/product-lifecycle-service';
 import { lifecycleService } from '../lib/product-lifecycle-service';
 import { DesignMockupGallery } from './DesignMockupGallery';
+import { ThumbnailSelector } from './ThumbnailSelector';
 import { useAuth } from '../contexts/AuthContext';
 
 interface PhaseFormModalProps {
@@ -31,10 +32,13 @@ export function PhaseFormModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentPromptIndex, setCurrentPromptIndex] = useState(0);
   const [isGeneratingAIHelp, setIsGeneratingAIHelp] = useState(false);
+  const [responseLength, setResponseLength] = useState<'short' | 'verbose'>('verbose');
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState<{v0: boolean, lovable: boolean}>({v0: false, lovable: false});
   const [isGeneratingMockup, setIsGeneratingMockup] = useState<{v0: boolean, lovable: boolean}>({v0: false, lovable: false});
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<string | undefined>();
   const [mockupRefreshTrigger, setMockupRefreshTrigger] = useState(0);
+  const [lovableThumbnails, setLovableThumbnails] = useState<any[]>([]);
+  const [showThumbnailSelector, setShowThumbnailSelector] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -68,6 +72,21 @@ export function PhaseFormModal({
       });
     }
   }, [isOpen, phase, existingData]);
+
+  // Fix index bounds - must be in useEffect to avoid hooks order issues
+  useEffect(() => {
+    if (isOpen && phase.required_fields && phase.template_prompts) {
+      const maxIndex = Math.min(phase.required_fields.length, phase.template_prompts.length) - 1;
+      if (currentPromptIndex > maxIndex) {
+        console.warn('currentPromptIndex was out of bounds, correcting:', {
+          old: currentPromptIndex,
+          new: maxIndex,
+          max: maxIndex
+        });
+        setCurrentPromptIndex(Math.max(0, maxIndex));
+      }
+    }
+  }, [isOpen, phase.required_fields, phase.template_prompts, currentPromptIndex]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,8 +129,25 @@ export function PhaseFormModal({
   };
 
   const handleNext = () => {
-    if (currentPromptIndex < phase.template_prompts.length - 1) {
-      setCurrentPromptIndex(currentPromptIndex + 1);
+    const maxIndex = Math.min(
+      (phase.required_fields?.length || 0) - 1,
+      (phase.template_prompts?.length || 0) - 1
+    );
+    if (currentPromptIndex < maxIndex) {
+      const nextIndex = currentPromptIndex + 1;
+      console.log('Navigating to next question:', {
+        current: currentPromptIndex,
+        next: nextIndex,
+        max: maxIndex,
+        totalFields: phase.required_fields?.length,
+        totalPrompts: phase.template_prompts?.length
+      });
+      setCurrentPromptIndex(nextIndex);
+    } else {
+      console.warn('Cannot navigate next: already at last question', {
+        current: currentPromptIndex,
+        max: maxIndex
+      });
     }
   };
 
@@ -216,22 +252,74 @@ export function PhaseFormModal({
         contextParts.push('');
       }
 
-      // Build the main prompt
+      // Build industry standards context
+      const industryStandardsContext = [
+        '## Industry Standards & Best Practices',
+        '',
+        'Please ensure the response follows industry standards from:',
+        '- BCS (British Computer Society) Product Management Framework',
+        '- ICAgile (International Consortium for Agile) Product Ownership',
+        '- AIPMM (Association of International Product Marketing and Management)',
+        '- Pragmatic Institute Product Management Framework',
+        '- McKinsey CodeBeyond standards',
+        '',
+        'The response should be:',
+        '- Professional and industry-standard compliant',
+        '- Well-structured and comprehensive',
+        '- Actionable and measurable',
+        '- Aligned with best practices',
+        '',
+        '---',
+        '',
+      ].join('\n');
+
+      // Build response length instruction
+      const lengthInstruction = responseLength === 'short' 
+        ? 'Please provide a concise, focused response (2-3 paragraphs maximum). Be direct and to the point while maintaining quality and relevance.'
+        : 'Please provide a comprehensive, detailed response with full context, examples, and thorough explanations. Include all relevant details and industry best practices.';
+
+      // Build the main prompt with all form data context
+      const allFormDataContext = Object.entries(formData)
+        .filter(([key, value]) => key !== currentField && value?.trim())
+        .map(([key, value]) => {
+          const fieldName = key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+          return `- **${fieldName}**: ${value.substring(0, 500)}${value.length > 500 ? '...' : ''}`;
+        });
+
+      const formDataSection = allFormDataContext.length > 0
+        ? [
+            '## Current Form Data (All Fields)',
+            '',
+            'The following information has already been provided in this form:',
+            '',
+            ...allFormDataContext,
+            '',
+            'Use this information to ensure consistency and build upon what has already been provided.',
+            '',
+            '---',
+            '',
+          ].join('\n')
+        : '';
+
       const mainPrompt = [
         `I'm working on the "${phase.phase_name}" phase of my product lifecycle.`,
         '',
-        'Based on all the context provided above (previous conversations, previous phases, and other fields in this phase),',
-        `please help me generate a comprehensive and contextualized response for the following question:`,
+        'Based on all the context provided above (previous conversations, previous phases, all form data, and knowledge base),',
+        `please help me generate a ${responseLength === 'short' ? 'concise' : 'comprehensive and detailed'} response for the following question:`,
         '',
         `**Question**: ${currentPrompt}`,
         '',
         `**Field**: ${currentField.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}`,
         '',
-        'Please generate a detailed, well-structured response that:',
-        '- Takes into account all the previous information and context',
+        lengthInstruction,
+        '',
+        'Please generate a well-structured response that:',
+        '- Takes into account ALL previous information, conversations, and form data',
+        '- Leverages knowledge from the RAG knowledge base',
         '- Is specific and relevant to the product being developed',
         '- Provides actionable and comprehensive information',
         '- Maintains consistency with previously provided information',
+        '- Follows industry standards and best practices',
         '- Is professional and well-formatted',
         '',
         'Generate only the content for this specific field, without repeating the question or adding extra formatting.',
@@ -239,36 +327,40 @@ export function PhaseFormModal({
 
       const fullPrompt = [
         ...contextParts,
+        formDataSection,
+        industryStandardsContext,
         mainPrompt,
       ].join('\n');
 
       // Call multi-agent API (API_URL already defined above)
       
       // Determine which agents to use based on phase and field
+      // ALWAYS include RAG agent for knowledge base context
       let primaryAgent = 'ideation';
-      let supportingAgents: string[] = ['research', 'analysis'];
+      let supportingAgents: string[] = ['rag']; // RAG is always first
       
       // Special handling for Design phase - V0/Lovable prompts
       if (isV0LovablePromptsSection) {
-        // This will be handled by handleGeneratePrompt, not here
-        // But we still need to set agents for the general Help with AI
         primaryAgent = 'strategy';
-        supportingAgents = ['analysis', 'ideation'];
+        supportingAgents = ['rag', 'analysis', 'ideation'];
       } else if (phase.phase_name.toLowerCase().includes('research')) {
         primaryAgent = 'research';
-        supportingAgents = ['analysis', 'strategy'];
+        supportingAgents = ['rag', 'analysis', 'strategy'];
       } else if (phase.phase_name.toLowerCase().includes('requirement')) {
         primaryAgent = 'analysis';
-        supportingAgents = ['research', 'validation'];
+        supportingAgents = ['rag', 'research'];
       } else if (phase.phase_name.toLowerCase().includes('design')) {
         primaryAgent = 'strategy';
-        supportingAgents = ['analysis', 'ideation'];
+        supportingAgents = ['rag', 'analysis', 'ideation'];
       } else if (phase.phase_name.toLowerCase().includes('development')) {
         primaryAgent = 'prd_authoring';
-        supportingAgents = ['analysis', 'validation'];
+        supportingAgents = ['rag', 'analysis'];
       } else if (phase.phase_name.toLowerCase().includes('market')) {
-        primaryAgent = 'strategy';
-        supportingAgents = ['research', 'analysis'];
+        primaryAgent = 'research';
+        supportingAgents = ['rag', 'analysis'];
+      } else {
+        // Default: always include RAG
+        supportingAgents = ['rag', 'research', 'analysis'];
       }
 
       const headers: HeadersInit = {
@@ -285,41 +377,66 @@ export function PhaseFormModal({
         body: JSON.stringify({
           user_id: user.id,
           query: fullPrompt,
-          coordination_mode: 'collaborative',
+          coordination_mode: 'enhanced_collaborative', // Always use enhanced collaborative for heavy contextualization
           primary_agent: primaryAgent,
-          supporting_agents: supportingAgents,
+          supporting_agents: supportingAgents, // RAG is always included
           context: {
             product_id: productId,
             phase_id: phase.id,
             phase_name: phase.phase_name,
             current_field: currentField,
             current_prompt: currentPrompt,
-            form_data: formData,
+            form_data: formData, // Include all form data
+            all_form_fields: phase.required_fields,
+            response_length: responseLength,
+            industry_standards: true,
           },
         }),
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
         let errorMessage = `Failed to generate AI help: ${response.status}`;
+        let errorDetails: any = null;
         
         try {
-          const errorJson = JSON.parse(errorText);
-          if (errorJson.detail) {
-            if (errorJson.detail.includes('No AI provider configured')) {
+          const errorText = await response.text();
+          try {
+            errorDetails = JSON.parse(errorText);
+            if (errorDetails.detail) {
+              // Handle Pydantic validation errors
+              if (typeof errorDetails.detail === 'object' && Array.isArray(errorDetails.detail)) {
+                const validationErrors = errorDetails.detail.map((err: any) => {
+                  const field = err.loc ? err.loc.join('.') : 'unknown';
+                  const msg = err.msg || 'validation error';
+                  return `${field}: ${msg}`;
+                }).join(', ');
+                errorMessage = `Validation error: ${validationErrors}`;
+              } else if (typeof errorDetails.detail === 'string') {
+                errorMessage = errorDetails.detail;
+              } else {
+                errorMessage = JSON.stringify(errorDetails.detail);
+              }
+            } else if (errorDetails.message) {
+              errorMessage = errorDetails.message;
+            }
+          } catch {
+            // If errorText is not JSON, use it as is
+            if (errorText.includes('No AI provider configured')) {
               errorMessage = 'No AI provider is configured on the backend. Please go to Settings and configure at least one AI provider (OpenAI, Anthropic, or Google Gemini) before using "Help with AI".';
             } else {
-              errorMessage = errorJson.detail;
+              errorMessage = `${errorMessage} - ${errorText}`;
             }
           }
-        } catch {
-          // If errorText is not JSON, use it as is
-          if (errorText.includes('No AI provider configured')) {
-            errorMessage = 'No AI provider is configured on the backend. Please go to Settings and configure at least one AI provider (OpenAI, Anthropic, or Google Gemini) before using "Help with AI".';
-          } else {
-            errorMessage = `${errorMessage} - ${errorText}`;
-          }
+        } catch (e) {
+          console.error('Error parsing error response:', e);
         }
+        
+        console.error('AI Help API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorMessage,
+          details: errorDetails
+        });
         
         throw new Error(errorMessage);
       }
@@ -430,8 +547,8 @@ export function PhaseFormModal({
   };
 
   const handleGenerateMockup = async (provider: 'v0' | 'lovable') => {
-    if (!productId) {
-      alert('Product ID is required');
+    if (!productId || !sessionId) {
+      alert('Product ID and Session ID are required');
       return;
     }
 
@@ -447,9 +564,43 @@ export function PhaseFormModal({
 
     try {
       const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      
+      // For Lovable, generate 3 thumbnail previews first
+      if (provider === 'lovable') {
+        const thumbnailsResponse = await fetch(`${API_URL}/api/design/generate-thumbnails`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            product_id: productId,
+            phase_submission_id: selectedSubmissionId,
+            lovable_prompt: prompt,
+            num_previews: 3,
+          }),
+        });
+
+        if (thumbnailsResponse.ok) {
+          const thumbnailsData = await thumbnailsResponse.json();
+          const previews = thumbnailsData.previews || [];
+          
+          if (previews.length > 0) {
+            // Show thumbnail selector
+            setLovableThumbnails(previews);
+            setShowThumbnailSelector(true);
+            // Don't set loading to false here - let the ThumbnailSelector's onSelect handle it
+            // The ThumbnailSelector will handle the rest when user confirms selection
+            return; // The ThumbnailSelector will handle the rest
+          }
+        }
+      }
+      
+      // For V0 or if Lovable thumbnails failed, generate directly
       const response = await fetch(`${API_URL}/api/design/generate-mockup`, {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -466,7 +617,25 @@ export function PhaseFormModal({
       }
 
       const result = await response.json();
-      alert(`${provider === 'v0' ? 'V0' : 'Lovable'} mockup generated successfully!`);
+      
+      // For V0, show the generated code and prompt
+      if (provider === 'v0' && result.code) {
+        const v0Message = `V0 (Vercel) prototype generated!\n\n**Prompt Used:**\n${prompt}\n\n**Generated Code:**\n\`\`\`\n${result.code.substring(0, 1000)}${result.code.length > 1000 ? '...' : ''}\n\`\`\`\n\nTo deploy: Create a new Vercel project and paste the generated code.`;
+        
+        window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+          detail: {
+            message: v0Message,
+            productId,
+          }
+        }));
+      }
+      
+      // For Lovable, open project URL if available
+      if (provider === 'lovable' && result.project_url) {
+        window.open(result.project_url, '_blank');
+      }
+      
+      alert(`${provider === 'v0' ? 'V0' : 'Lovable'} mockup generated successfully! ${provider === 'lovable' && result.project_url ? 'Opening project in new tab...' : ''}`);
       
       // Trigger refresh of mockup gallery
       setMockupRefreshTrigger(prev => prev + 1);
@@ -485,9 +654,33 @@ export function PhaseFormModal({
 
   if (!isOpen) return null;
 
-  const currentField = phase.required_fields[currentPromptIndex];
-  const currentPrompt = phase.template_prompts[currentPromptIndex];
-  const progress = ((currentPromptIndex + 1) / phase.template_prompts.length) * 100;
+  // Safety checks for array bounds
+  if (!phase.required_fields || !Array.isArray(phase.required_fields) || phase.required_fields.length === 0) {
+    console.error('Phase has no required_fields:', phase);
+    return null;
+  }
+  
+  if (!phase.template_prompts || !Array.isArray(phase.template_prompts) || phase.template_prompts.length === 0) {
+    console.error('Phase has no template_prompts:', phase);
+    return null;
+  }
+  
+  // Ensure arrays have same length
+  if (phase.required_fields.length !== phase.template_prompts.length) {
+    console.warn('Phase required_fields and template_prompts have different lengths:', {
+      required_fields: phase.required_fields.length,
+      template_prompts: phase.template_prompts.length,
+      phase: phase.phase_name
+    });
+  }
+  
+  // Clamp currentPromptIndex to valid range (safe to use in render)
+  const maxIndex = Math.min(phase.required_fields.length, phase.template_prompts.length) - 1;
+  const safeIndex = Math.max(0, Math.min(currentPromptIndex, maxIndex));
+
+  const currentField = phase.required_fields[safeIndex];
+  const currentPrompt = phase.template_prompts[safeIndex];
+  const progress = ((safeIndex + 1) / Math.max(phase.required_fields.length, phase.template_prompts.length)) * 100;
   
   // Compute design phase section flags (must be after currentField is defined)
   const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
@@ -595,27 +788,33 @@ export function PhaseFormModal({
                       placeholder="V0 prompt will be generated here... Click 'Help with AI' to generate based on all previous phases"
                       disabled={isSubmitting || isGeneratingPrompt.v0}
                     />
-                    <button
-                      type="button"
-                      onClick={() => handleGenerateMockup('v0')}
-                      disabled={isGeneratingMockup.v0 || isSubmitting || !productId || (() => {
-                        const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
-                        return !promptsObj['v0_prompt']?.trim();
-                      })()}
-                      className="w-full px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 rounded-lg hover:from-blue-700 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
-                    >
-                      {isGeneratingMockup.v0 ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Generating Mockup...
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-4 h-4" />
-                          Generate V0 Mockup
-                        </>
-                      )}
-                    </button>
+                           <button
+                             type="button"
+                             onClick={() => handleGenerateMockup('v0')}
+                             disabled={isGeneratingMockup.v0 || isSubmitting || !productId || !sessionId || (() => {
+                               const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                               return !promptsObj['v0_prompt']?.trim();
+                             })()}
+                             className="w-full px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 rounded-lg hover:from-blue-700 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+                           >
+                             {isGeneratingMockup.v0 ? (
+                               <>
+                                 <Loader2 className="w-4 h-4 animate-spin" />
+                                 Generating V0 Prototype...
+                               </>
+                             ) : (
+                               <>
+                                 <Play className="w-4 h-4" />
+                                 Generate V0 Prototype
+                               </>
+                             )}
+                           </button>
+                           {isGeneratingMockup.v0 && (
+                             <div className="text-xs text-blue-600 mt-2 flex items-center gap-2">
+                               <Loader2 className="w-3 h-3 animate-spin" />
+                               <span>Please wait while V0 generates your prototype. The prompt used will be shown in the chatbot.</span>
+                             </div>
+                           )}
                   </div>
 
                   {/* Lovable Prompt */}
@@ -661,27 +860,33 @@ export function PhaseFormModal({
                       placeholder="Lovable prompt will be generated here... Click 'Help with AI' to generate based on all previous phases"
                       disabled={isSubmitting || isGeneratingPrompt.lovable}
                     />
-                    <button
-                      type="button"
-                      onClick={() => handleGenerateMockup('lovable')}
-                      disabled={isGeneratingMockup.lovable || isSubmitting || !productId || (() => {
-                        const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
-                        return !promptsObj['lovable_prompt']?.trim();
-                      })()}
-                      className="w-full px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
-                    >
-                      {isGeneratingMockup.lovable ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Generating Mockup...
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-4 h-4" />
-                          Generate Lovable Mockup
-                        </>
-                      )}
-                    </button>
+                           <button
+                             type="button"
+                             onClick={() => handleGenerateMockup('lovable')}
+                             disabled={isGeneratingMockup.lovable || isSubmitting || !productId || !sessionId || (() => {
+                               const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                               return !promptsObj['lovable_prompt']?.trim();
+                             })()}
+                             className="w-full px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
+                           >
+                             {isGeneratingMockup.lovable ? (
+                               <>
+                                 <Loader2 className="w-4 h-4 animate-spin" />
+                                 Generating Prototypes...
+                               </>
+                             ) : (
+                               <>
+                                 <Play className="w-4 h-4" />
+                                 Generate Lovable Prototype (3 Options)
+                               </>
+                             )}
+                           </button>
+                           {isGeneratingMockup.lovable && (
+                             <div className="text-xs text-purple-600 mt-2 flex items-center gap-2">
+                               <Loader2 className="w-3 h-3 animate-spin" />
+                               <span>Generating 3 design variations. Please wait and select your preferred option when ready. The selected prototype will open in your browser.</span>
+                             </div>
+                           )}
                   </div>
                 </div>
               </div>
@@ -744,12 +949,39 @@ export function PhaseFormModal({
                     {currentField.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}
                   </label>
                   <div className="flex items-center gap-2">
+                    {/* Response Length Radio Buttons */}
+                    <div className="flex items-center gap-2 px-2 py-1 bg-gray-50 rounded-lg border border-gray-200">
+                      <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="responseLength"
+                          value="short"
+                          checked={responseLength === 'short'}
+                          onChange={(e) => setResponseLength(e.target.value as 'short' | 'verbose')}
+                          disabled={isGeneratingAIHelp || isSubmitting}
+                          className="w-3 h-3 text-purple-600 focus:ring-purple-500"
+                        />
+                        <span>Short</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="responseLength"
+                          value="verbose"
+                          checked={responseLength === 'verbose'}
+                          onChange={(e) => setResponseLength(e.target.value as 'short' | 'verbose')}
+                          disabled={isGeneratingAIHelp || isSubmitting}
+                          className="w-3 h-3 text-purple-600 focus:ring-purple-500"
+                        />
+                        <span>Verbose</span>
+                      </label>
+                    </div>
                     <button
                       type="button"
                       onClick={handleAIHelp}
                       disabled={isGeneratingAIHelp || isSubmitting || !productId || !sessionId}
                       className="px-3 py-1.5 text-xs font-medium text-white bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-sm flex items-center gap-1.5"
-                      title="Get AI-generated content based on previous responses and conversation context"
+                      title="Get AI-generated content based on previous responses, all form data, conversation context, and RAG knowledge base"
                     >
                       {isGeneratingAIHelp ? (
                         <>
@@ -845,37 +1077,130 @@ export function PhaseFormModal({
               ))}
             </div>
 
-            {currentPromptIndex < phase.template_prompts.length - 1 ? (
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={!isCurrentFieldFilled() || isSubmitting}
-                className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 rounded-lg hover:from-blue-700 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
-              >
-                Next
-              </button>
-            ) : (
-              <button
-                type="submit"
-                disabled={!allFieldsFilled() || isSubmitting}
-                className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
-              >
-                {isSubmitting ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" />
-                    Generate with AI
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-        </form>
-      </div>
+            {(() => {
+              const maxIndex = Math.min(
+                (phase.required_fields?.length || 0) - 1,
+                (phase.template_prompts?.length || 0) - 1
+              );
+              const isLastQuestion = currentPromptIndex >= maxIndex;
+              
+              return isLastQuestion ? null : (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  disabled={!isCurrentFieldFilled() || isSubmitting}
+                  className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 rounded-lg hover:from-blue-700 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
+                >
+                  Next
+                </button>
+              );
+            })()}
+            {(() => {
+              const maxIndex = Math.min(
+                (phase.required_fields?.length || 0) - 1,
+                (phase.template_prompts?.length || 0) - 1
+              );
+              const isLastQuestion = currentPromptIndex >= maxIndex;
+              
+              return isLastQuestion ? (
+                <button
+                  type="submit"
+                  disabled={!allFieldsFilled() || isSubmitting}
+                  className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      Generate with AI
+                    </>
+                  )}
+                </button>
+              ) : null;
+            })()}
+        </div>
+      </form>
+
+      {/* Thumbnail Selector Modal for Lovable */}
+      {showThumbnailSelector && lovableThumbnails.length > 0 && (
+        <ThumbnailSelector
+          previews={lovableThumbnails}
+          isOpen={showThumbnailSelector}
+          onClose={() => {
+            setShowThumbnailSelector(false);
+            setLovableThumbnails([]);
+            setIsGeneratingMockup({ ...isGeneratingMockup, lovable: false });
+          }}
+          onSelect={async (selectedIndex: number) => {
+            try {
+              const selectedPreview = lovableThumbnails[selectedIndex];
+              const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+              
+              // Get prompt from formData or selectedPreview
+              const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+              const prompt = selectedPreview.prompt || promptsObj['lovable_prompt'] || '';
+              
+              if (!prompt.trim()) {
+                alert('Prompt is required to generate mockup');
+                return;
+              }
+              
+              // Generate full mockup with selected preview
+              const response = await fetch(`${API_URL}/api/design/generate-mockup`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  product_id: productId,
+                  phase_submission_id: selectedSubmissionId,
+                  provider: 'lovable',
+                  prompt: prompt,
+                }),
+              });
+
+              if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Failed to generate mockup: ${response.status} - ${errorText}`);
+              }
+
+              const result = await response.json();
+              
+              // Open Lovable project in browser if URL is available
+              if (result.project_url) {
+                window.open(result.project_url, '_blank');
+              }
+              
+              // Send to chatbot
+              window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+                detail: {
+                  message: `Lovable AI prototype generated!\n\n**Selected Design Option ${selectedIndex + 1}**\n\nPrompt Used:\n${prompt}\n\nProject URL: ${result.project_url || 'N/A'}\n\nThumbnail: ${selectedPreview.thumbnail_url || 'N/A'}`,
+                  productId,
+                }
+              }));
+              
+              alert(`Lovable mockup generated successfully! ${result.project_url ? 'Opening project in new tab...' : ''}`);
+              
+              // Close selector and refresh gallery
+              setShowThumbnailSelector(false);
+              setLovableThumbnails([]);
+              setMockupRefreshTrigger(prev => prev + 1);
+            } catch (error) {
+              console.error('Error generating selected Lovable mockup:', error);
+              alert(`Failed to generate mockup: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            } finally {
+              setIsGeneratingMockup({ ...isGeneratingMockup, lovable: false });
+            }
+          }}
+          provider="lovable"
+        />
+      )}
     </div>
-  );
+  </div>
+);
 }

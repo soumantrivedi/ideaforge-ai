@@ -702,9 +702,9 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                     
                     # If we successfully verified with any endpoint
                     if verification_successful:
-                        return APIKeyVerificationResponse(
-                            provider="v0",
-                            valid=True,
+                            return APIKeyVerificationResponse(
+                                provider="v0",
+                                valid=True,
                             message="V0 API key is valid and authenticated successfully."
                         )
                     

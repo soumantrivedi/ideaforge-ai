@@ -74,15 +74,276 @@ export function MainApp() {
   };
 
   const handleFormSubmit = async (formData: Record<string, string>) => {
-    if (!productId || !currentPhase || !user) return;
+    if (!productId || !currentPhase || !user || !token) return;
     
     try {
+      // First, save the form data
       await lifecycleService.submitPhaseData(productId, currentPhase.id, formData, user.id);
+      
+      // Build a comprehensive query for agent processing
+      const formDataSummary = Object.entries(formData)
+        .map(([key, value]) => `${key.replace(/_/g, ' ')}: ${value}`)
+        .join('\n');
+      
+      const query = `Generate comprehensive content for the ${currentPhase.phase_name} phase based on the following information:\n\n${formDataSummary}\n\nPlease provide a detailed, well-structured response that synthesizes this information and adds valuable insights using knowledge from the RAG knowledge base, research findings, and analysis from relevant agents.`;
+      
+      // Determine appropriate agents based on phase
+      let primaryAgent = 'ideation';
+      let supportingAgents: string[] = ['rag', 'research'];
+      
+      if (currentPhase.phase_name.toLowerCase().includes('research')) {
+        primaryAgent = 'research';
+        supportingAgents = ['rag', 'analysis'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('requirement')) {
+        primaryAgent = 'analysis';
+        supportingAgents = ['rag', 'research'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('design')) {
+        primaryAgent = 'ideation';
+        supportingAgents = ['rag', 'analysis'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('development')) {
+        primaryAgent = 'prd_authoring';
+        supportingAgents = ['rag', 'analysis'];
+      } else if (currentPhase.phase_name.toLowerCase().includes('market')) {
+        primaryAgent = 'research';
+        supportingAgents = ['rag', 'analysis'];
+      }
+      
+      // Trigger agent processing
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${API_URL}/api/multi-agent/process`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          user_id: user.id,
+          product_id: productId,
+          query: query,
+          coordination_mode: 'enhanced_collaborative',
+          primary_agent: primaryAgent,
+          supporting_agents: supportingAgents,
+          context: {
+            product_id: productId,
+            phase_id: currentPhase.id,
+            phase_name: currentPhase.phase_name,
+            form_data: formData,
+          },
+        }),
+      });
+      
+      if (!response.ok) {
+        let errorMessage = `Failed to generate content: ${response.status}`;
+        let errorDetails: any = null;
+        
+        try {
+          const errorText = await response.text();
+          try {
+            errorDetails = JSON.parse(errorText);
+            if (errorDetails.detail) {
+              // Handle Pydantic validation errors
+              if (typeof errorDetails.detail === 'object' && Array.isArray(errorDetails.detail)) {
+                const validationErrors = errorDetails.detail.map((err: any) => {
+                  const field = err.loc ? err.loc.join('.') : 'unknown';
+                  const msg = err.msg || 'validation error';
+                  return `${field}: ${msg}`;
+                }).join(', ');
+                errorMessage = `Validation error: ${validationErrors}`;
+              } else if (typeof errorDetails.detail === 'string') {
+                errorMessage = errorDetails.detail;
+              } else {
+                errorMessage = JSON.stringify(errorDetails.detail);
+              }
+            } else if (errorDetails.message) {
+              errorMessage = errorDetails.message;
+            }
+          } catch {
+            errorMessage = errorText || errorMessage;
+          }
+        } catch (e) {
+          console.error('Error parsing error response:', e);
+        }
+        
+        console.error('Multi-agent API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorMessage,
+          details: errorDetails
+        });
+        
+        throw new Error(errorMessage);
+      }
+      
+      const data = await response.json();
+      console.log('Multi-agent response received:', {
+        hasResponse: !!data.response,
+        responseLength: data.response?.length || 0,
+        primaryAgent: data.primary_agent,
+        metadata: data.metadata
+      });
+      
+      const generatedContent = data.response || '';
+      
+      if (!generatedContent) {
+        console.warn('Generated content is empty');
+        alert('AI generated an empty response. Please try again or check your AI provider configuration.');
+        return;
+      }
+      
+      // Step 2: Validate the generated response using validation agent
+      console.log('Validating generated response...');
+      let validationResult: any = null;
+      let userSatisfied = false;
+      
+      try {
+        const validationResponse = await fetch(`${API_URL}/api/multi-agent/process`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            user_id: user.id,
+            product_id: productId,
+            query: `Validate this generated response for the "${currentPhase.phase_name}" phase:\n\n${generatedContent}\n\nUser-submitted form data:\n${JSON.stringify(formData, null, 2)}`,
+            coordination_mode: 'enhanced_collaborative',
+            primary_agent: 'validation',
+            supporting_agents: ['rag', 'analysis'],
+            context: {
+              product_id: productId,
+              phase_id: currentPhase.id,
+              phase_name: currentPhase.phase_name,
+              form_data: formData,
+              generated_content: generatedContent,
+            },
+          }),
+        });
+        
+        if (validationResponse.ok) {
+          validationResult = await validationResponse.json();
+          console.log('Validation result:', validationResult);
+          
+          // Check if validation suggests refinement
+          const validationText = validationResult.response || '';
+          const needsRefinement = validationText.includes('NEEDS_REFINEMENT') || 
+                                  validationText.includes('FAIL') ||
+                                  validationText.toLowerCase().includes('refinement');
+          
+          if (needsRefinement) {
+            // Show validation feedback and ask user if they want to refine
+            const shouldRefine = confirm(
+              `Validation Agent suggests the response needs refinement:\n\n${validationText.substring(0, 500)}...\n\nWould you like to refine the response? Click OK to refine, Cancel to proceed anyway.`
+            );
+            
+            if (shouldRefine) {
+              // User wants to refine - show refinement UI
+              const refinementPrompt = prompt(
+                'Please provide specific feedback on what you would like to improve in the generated response:',
+                ''
+              );
+              
+              if (refinementPrompt) {
+                // Refine the response
+                const refinedResponse = await fetch(`${API_URL}/api/multi-agent/process`, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                  },
+                  credentials: 'include',
+                  body: JSON.stringify({
+                    user_id: user.id,
+                    product_id: productId,
+                    query: `Refine this response based on user feedback:\n\nOriginal Response:\n${generatedContent}\n\nUser Feedback:\n${refinementPrompt}\n\nValidation Feedback:\n${validationText}`,
+                    coordination_mode: 'enhanced_collaborative',
+                    primary_agent: primaryAgent,
+                    supporting_agents: [...supportingAgents, 'validation'],
+                    context: {
+                      product_id: productId,
+                      phase_id: currentPhase.id,
+                      phase_name: currentPhase.phase_name,
+                      form_data: formData,
+                      original_content: generatedContent,
+                      refinement_feedback: refinementPrompt,
+                    },
+                  }),
+                });
+                
+                if (refinedResponse.ok) {
+                  const refinedData = await refinedResponse.json();
+                  const refinedContent = refinedData.response || generatedContent;
+                  
+                  // Update with refined content
+                  const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
+                  if (submission) {
+                    await lifecycleService.updatePhaseContent(submission.id, refinedContent, 'completed');
+                  }
+                  
+                  // Send refined content to chatbot
+                  window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+                    detail: {
+                      message: `Refined content for ${currentPhase.phase_name} phase:\n\n${refinedContent}`,
+                      productId,
+                    }
+                  }));
+                  
+                  await loadSubmissions();
+                  setIsFormModalOpen(false);
+                  console.log('Response refined and submitted');
+                  return;
+                }
+              }
+            }
+          }
+          
+          userSatisfied = true;
+        }
+      } catch (validationError) {
+        console.error('Validation error (non-blocking):', validationError);
+        // Continue even if validation fails
+        userSatisfied = true;
+      }
+      
+      // Step 3: Update phase submission with generated content
+      try {
+        const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
+        if (submission) {
+          await lifecycleService.updatePhaseContent(submission.id, generatedContent, 'completed');
+          console.log('Phase submission updated with generated content');
+        } else {
+          console.warn('No submission found to update');
+        }
+      } catch (updateError) {
+        console.error('Error updating phase submission:', updateError);
+        // Don't fail the whole operation if update fails
+      }
+      
+      // Reload submissions to update UI
       await loadSubmissions();
+      
+      // Close modal
       setIsFormModalOpen(false);
+      
+      // Step 4: Send to chatbot with validation feedback if available
+      let chatbotMessage = `Generated content for ${currentPhase.phase_name} phase:\n\n${generatedContent}`;
+      if (validationResult && validationResult.response) {
+        chatbotMessage += `\n\n---\n**Validation Feedback:**\n${validationResult.response}`;
+      }
+      
+      // Trigger a custom event to send message to chatbot
+      window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+        detail: {
+          message: chatbotMessage,
+          productId,
+        }
+      }));
+      
+      console.log('Form submission completed successfully');
     } catch (error) {
       console.error('Error submitting form:', error);
-      alert('Failed to submit form data');
+      alert(`Failed to process form: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -275,16 +536,16 @@ export function MainApp() {
               <div className="flex-1">
                 {productId ? (
                   <div className="sticky top-0 h-[calc(100vh-8rem)] overflow-y-auto">
-                    <ProductLifecycleSidebar
-                      phases={phases || []}
-                      submissions={submissions || []}
-                      currentPhaseId={currentPhase?.id}
-                      onPhaseSelect={(phase) => {
-                        setCurrentPhase(phase);
-                        setIsFormModalOpen(true);
-                      }}
-                      productId={productId}
-                    />
+                  <ProductLifecycleSidebar
+                    phases={phases || []}
+                    submissions={submissions || []}
+                    currentPhaseId={currentPhase?.id}
+                    onPhaseSelect={(phase) => {
+                      setCurrentPhase(phase);
+                      setIsFormModalOpen(true);
+                    }}
+                    productId={productId}
+                  />
                   </div>
                 ) : (
                   <div className="h-full flex items-center justify-center rounded-xl border" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
@@ -336,7 +597,7 @@ export function MainApp() {
               </div>
               <div className="w-64">
                 <div className="sticky top-0 h-[calc(100vh-8rem)] overflow-y-auto">
-                  <AgentStatusPanel agents={[]} />
+                <AgentStatusPanel agents={[]} />
                 </div>
               </div>
             </div>

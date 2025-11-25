@@ -79,7 +79,7 @@ class ProviderRegistry:
         if self.has_gemini_key():
             providers.append("gemini")
         return providers
-    
+
     def get_openai_key(self) -> Optional[str]:
         """Get OpenAI API key."""
         return self._openai_key

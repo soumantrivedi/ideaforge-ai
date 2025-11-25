@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     feature_fast_mcp: bool = os.getenv("FEATURE_FAST_MCP", "true").lower() == "true"
     feature_multi_tenant: bool = os.getenv("FEATURE_MULTI_TENANT", "true").lower() == "true"
     feature_leadership_view: bool = os.getenv("FEATURE_LEADERSHIP_VIEW", "true").lower() == "true"
-    
+
     # SSL Verification (for API key verification)
     verify_ssl: bool = os.getenv("VERIFY_SSL", "false").lower() == "true"
 

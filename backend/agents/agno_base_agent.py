@@ -124,17 +124,31 @@ class AgnoBaseAgent(ABC):
             embedder = None
             if provider_registry.has_openai_key() and OpenAIEmbedder:
                 try:
-                    embedder = OpenAIEmbedder()
+                    api_key = provider_registry.get_openai_key()
+                    # OpenAIEmbedder may need api_key parameter
+                    try:
+                        embedder = OpenAIEmbedder(api_key=api_key)
+                    except TypeError:
+                        # If api_key parameter not accepted, try without it (may use env var)
+                        embedder = OpenAIEmbedder()
                 except Exception as e:
                     self.logger.warning("openai_embedder_init_failed", error=str(e))
             elif provider_registry.has_claude_key() and AnthropicEmbedder:
                 try:
-                    embedder = AnthropicEmbedder()
+                    api_key = provider_registry.get_claude_key()
+                    try:
+                        embedder = AnthropicEmbedder(api_key=api_key)
+                    except TypeError:
+                        embedder = AnthropicEmbedder()
                 except Exception as e:
                     self.logger.warning("anthropic_embedder_init_failed", error=str(e))
             elif provider_registry.has_gemini_key() and GoogleEmbedder:
                 try:
-                    embedder = GoogleEmbedder()
+                    api_key = provider_registry.get_gemini_key()
+                    try:
+                        embedder = GoogleEmbedder(api_key=api_key)
+                    except TypeError:
+                        embedder = GoogleEmbedder()
                 except Exception as e:
                     self.logger.warning("google_embedder_init_failed", error=str(e))
             
