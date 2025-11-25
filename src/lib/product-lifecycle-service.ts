@@ -228,12 +228,17 @@ export class ProductLifecycleService {
   async updatePhaseContent(
     submissionId: string,
     generatedContent: string,
-    status: PhaseSubmission['status'] = 'completed'
+    status: PhaseSubmission['status'] = 'completed',
+    metadata?: Record<string, any>
   ): Promise<PhaseSubmission> {
-    return this.updatePhaseSubmission(submissionId, {
+    const updates: any = {
       generated_content: generatedContent,
       status,
-    } as Partial<PhaseSubmission>);
+    };
+    if (metadata) {
+      updates.metadata = metadata;
+    }
+    return this.updatePhaseSubmission(submissionId, updates as Partial<PhaseSubmission>);
   }
 
   // Alias for submitPhaseData - creates or updates a phase submission

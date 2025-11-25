@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight, BarChart3 } from 'lucide-react';
+import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight, BarChart3, Star } from 'lucide-react';
 import { ProductChatInterface } from './ProductChatInterface';
 import { AgentStatusPanel } from './AgentStatusPanel';
 import { ProductLifecycleSidebar } from './ProductLifecycleSidebar';
 import { PhaseFormModal } from './PhaseFormModal';
+import { ValidationModal } from './ValidationModal';
 import { EnhancedSettings } from './EnhancedSettings';
 import { KnowledgeBaseManagerWrapper } from './KnowledgeBaseManagerWrapper';
 import { ProductsDashboard } from './ProductsDashboard';
@@ -28,6 +29,15 @@ export function MainApp() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [activeAgents, setActiveAgents] = useState<any[]>([]);
   const [agentInteractions, setAgentInteractions] = useState<any[]>([]);
+  const [validationModalOpen, setValidationModalOpen] = useState(false);
+  const [validationData, setValidationData] = useState<{
+    generatedContent: string;
+    phaseName: string;
+    formData: Record<string, string>;
+    previousQuestions: Array<{ question: string; answer: string }>;
+    agentInteractions: any[];
+    submissionId?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (token) {
@@ -221,6 +231,7 @@ export function MainApp() {
       });
       
       const generatedContent = data.response || '';
+      const agentInteractions = data.agent_interactions || [];
       
       if (!generatedContent) {
         console.warn('Generated content is empty');
@@ -228,148 +239,75 @@ export function MainApp() {
         return;
       }
       
-      // Step 2: Validate the generated response using validation agent
-      console.log('Validating generated response...');
-      let validationResult: any = null;
-      let userSatisfied = false;
-      
-      try {
-        const validationResponse = await fetch(`${API_URL}/api/multi-agent/process`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include',
-          body: JSON.stringify({
-            user_id: user.id,
-            product_id: productId,
-            query: `Validate this generated response for the "${currentPhase.phase_name}" phase:\n\n${generatedContent}\n\nUser-submitted form data:\n${JSON.stringify(formData, null, 2)}`,
-            coordination_mode: 'enhanced_collaborative',
-            primary_agent: 'validation',
-            supporting_agents: ['rag', 'analysis'],
-            context: {
-              product_id: productId,
-              phase_id: currentPhase.id,
-              phase_name: currentPhase.phase_name,
-              form_data: formData,
-              generated_content: generatedContent,
-            },
-          }),
-        });
-        
-        if (validationResponse.ok) {
-          validationResult = await validationResponse.json();
-          console.log('Validation result:', validationResult);
-          
-          // Check if validation suggests refinement
-          const validationText = validationResult.response || '';
-          const needsRefinement = validationText.includes('NEEDS_REFINEMENT') || 
-                                  validationText.includes('FAIL') ||
-                                  validationText.toLowerCase().includes('refinement');
-          
-          if (needsRefinement) {
-            // Show validation feedback and ask user if they want to refine
-            const shouldRefine = confirm(
-              `Validation Agent suggests the response needs refinement:\n\n${validationText.substring(0, 500)}...\n\nWould you like to refine the response? Click OK to refine, Cancel to proceed anyway.`
-            );
-            
-            if (shouldRefine) {
-              // User wants to refine - show refinement UI
-              const refinementPrompt = prompt(
-                'Please provide specific feedback on what you would like to improve in the generated response:',
-                ''
-              );
-              
-              if (refinementPrompt) {
-                // Refine the response
-                const refinedResponse = await fetch(`${API_URL}/api/multi-agent/process`, {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                  },
-                  credentials: 'include',
-                  body: JSON.stringify({
-                    user_id: user.id,
-                    product_id: productId,
-                    query: `Refine this response based on user feedback:\n\nOriginal Response:\n${generatedContent}\n\nUser Feedback:\n${refinementPrompt}\n\nValidation Feedback:\n${validationText}`,
-                    coordination_mode: 'enhanced_collaborative',
-                    primary_agent: primaryAgent,
-                    supporting_agents: [...supportingAgents, 'validation'],
-                    context: {
-                      product_id: productId,
-                      phase_id: currentPhase.id,
-                      phase_name: currentPhase.phase_name,
-                      form_data: formData,
-                      original_content: generatedContent,
-                      refinement_feedback: refinementPrompt,
-                    },
-                  }),
-                });
-                
-                if (refinedResponse.ok) {
-                  const refinedData = await refinedResponse.json();
-                  const refinedContent = refinedData.response || generatedContent;
-                  
-                  // Update with refined content
-                  const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
-                  if (submission) {
-                    await lifecycleService.updatePhaseContent(submission.id, refinedContent, 'completed');
-                  }
-                  
-                  // Send refined content to chatbot
-                  window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
-                    detail: {
-                      message: `Refined content for ${currentPhase.phase_name} phase:\n\n${refinedContent}`,
-                      productId,
-                    }
-                  }));
-                  
-                  await loadSubmissions();
-                  setIsFormModalOpen(false);
-                  console.log('Response refined and submitted');
-                  return;
-                }
-              }
-            }
+      // Extract previous questions and answers from form data
+      const previousQuestions: Array<{ question: string; answer: string }> = [];
+      if (currentPhase.required_fields && currentPhase.template_prompts) {
+        currentPhase.required_fields.forEach((field, idx) => {
+          const prompt = currentPhase.template_prompts?.[idx] || field;
+          const answer = formData[field] || '';
+          if (answer) {
+            previousQuestions.push({
+              question: prompt,
+              answer: answer,
+            });
           }
-          
-          userSatisfied = true;
-        }
-      } catch (validationError) {
-        console.error('Validation error (non-blocking):', validationError);
-        // Continue even if validation fails
-        userSatisfied = true;
+        });
       }
       
-      // Step 3: Update phase submission with generated content
-      try {
-        const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
-        if (submission) {
-          await lifecycleService.updatePhaseContent(submission.id, generatedContent, 'completed');
-          console.log('Phase submission updated with generated content');
-        } else {
-          console.warn('No submission found to update');
-        }
-      } catch (updateError) {
-        console.error('Error updating phase submission:', updateError);
-        // Don't fail the whole operation if update fails
+      // Get submission ID for updating later
+      const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
+      
+      // Show validation modal
+      setValidationData({
+        generatedContent,
+        phaseName: currentPhase.phase_name,
+        formData,
+        previousQuestions,
+        agentInteractions,
+        submissionId: submission?.id,
+      });
+      setValidationModalOpen(true);
+    } catch (error) {
+      console.error('Error submitting form:', error);
+      alert(`Failed to process form: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleValidationAccept = async (score: number, feedback?: string) => {
+    if (!validationData || !productId || !currentPhase || !token) return;
+    
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      
+      // Update phase submission with generated content and score
+      const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
+      if (submission) {
+        // Store score in metadata
+        const metadata = {
+          ...(submission.metadata || {}),
+          validation_score: score,
+          validation_feedback: feedback || '',
+          validated_at: new Date().toISOString(),
+        };
+        
+        await lifecycleService.updatePhaseContent(
+          submission.id,
+          validationData.generatedContent,
+          'completed',
+          metadata
+        );
       }
       
       // Reload submissions to update UI
       await loadSubmissions();
       
-      // Close modal
+      // Close modals
       setIsFormModalOpen(false);
+      setValidationModalOpen(false);
       
-      // Step 4: Send to chatbot with validation feedback if available
-      let chatbotMessage = `Generated content for ${currentPhase.phase_name} phase:\n\n${generatedContent}`;
-      if (validationResult && validationResult.response) {
-        chatbotMessage += `\n\n---\n**Validation Feedback:**\n${validationResult.response}`;
-      }
+      // Send to chatbot with score
+      const chatbotMessage = `Generated content for ${currentPhase.phase_name} phase (Score: ${score}/5):\n\n${validationData.generatedContent}`;
       
-      // Trigger a custom event to send message to chatbot
       window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
         detail: {
           message: chatbotMessage,
@@ -377,10 +315,64 @@ export function MainApp() {
         }
       }));
       
-      console.log('Form submission completed successfully');
+      console.log('Form submission completed with score:', score);
     } catch (error) {
-      console.error('Error submitting form:', error);
-      alert(`Failed to process form: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error accepting validation:', error);
+      alert(`Failed to save validation: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  const handleValidationRefine = async (refinementFeedback: string) => {
+    if (!validationData || !productId || !currentPhase || !user || !token) return;
+    
+    try {
+      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      
+      // Refine the response
+      const refinedResponse = await fetch(`${API_URL}/api/multi-agent/process`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          user_id: user.id,
+          product_id: productId,
+          query: `Refine this response based on user feedback:\n\nOriginal Response:\n${validationData.generatedContent}\n\nUser Feedback:\n${refinementFeedback}`,
+          coordination_mode: 'enhanced_collaborative',
+          primary_agent: 'ideation', // Use appropriate agent based on phase
+          supporting_agents: ['rag', 'validation'],
+          context: {
+            product_id: productId,
+            phase_id: currentPhase.id,
+            phase_name: currentPhase.phase_name,
+            form_data: validationData.formData,
+            original_content: validationData.generatedContent,
+            refinement_feedback: refinementFeedback,
+          },
+        }),
+      });
+      
+      if (refinedResponse.ok) {
+        const refinedData = await refinedResponse.json();
+        const refinedContent = refinedData.response || validationData.generatedContent;
+        
+        // Update validation data with refined content
+        setValidationData({
+          ...validationData,
+          generatedContent: refinedContent,
+        });
+        
+        // Show validation modal again with refined content
+        // (modal will stay open, just update the content)
+        console.log('Response refined, showing validation modal again');
+      } else {
+        throw new Error('Failed to refine response');
+      }
+    } catch (error) {
+      console.error('Error refining response:', error);
+      alert(`Failed to refine response: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -777,6 +769,24 @@ export function MainApp() {
             setIsFormModalOpen(false);
             setView('settings');
           }}
+        />
+      )}
+      
+      {/* Validation Modal */}
+      {validationData && (
+        <ValidationModal
+          isOpen={validationModalOpen}
+          onClose={() => {
+            setValidationModalOpen(false);
+            setValidationData(null);
+          }}
+          onAccept={handleValidationAccept}
+          onRefine={handleValidationRefine}
+          generatedContent={validationData.generatedContent}
+          phaseName={validationData.phaseName}
+          formData={validationData.formData}
+          previousQuestions={validationData.previousQuestions}
+          agentInteractions={validationData.agentInteractions}
         />
       )}
     </div>

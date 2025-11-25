@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Bot, Activity, Zap, CheckCircle2, Circle } from 'lucide-react';
 import type { AgentRole } from '../agents/chatbot-agents';
 import { AgentDetailModal } from './AgentDetailModal';
@@ -42,6 +42,53 @@ export function AgentStatusPanel({
   selectedAgent,
 }: AgentStatusPanelProps) {
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
+  const [derivedAgents, setDerivedAgents] = useState<AgentStatus[]>([]);
+  
+  // Derive agents from interactions if agents list is empty
+  useEffect(() => {
+    if ((!agents || agents.length === 0) && agentInteractions.length > 0) {
+      const uniqueAgents = new Set<string>();
+      agentInteractions.forEach(interaction => {
+        if (interaction.from_agent) uniqueAgents.add(interaction.from_agent);
+        if (interaction.to_agent) uniqueAgents.add(interaction.to_agent);
+      });
+      
+      const agentStatuses: AgentStatus[] = Array.from(uniqueAgents).map(agentName => {
+        const role = agentName.toLowerCase().replace(/\s+/g, '_');
+        const latestInteraction = agentInteractions
+          .filter(i => {
+            const toAgent = (i.to_agent || '').toLowerCase().replace(/\s+/g, '_');
+            const fromAgent = (i.from_agent || '').toLowerCase().replace(/\s+/g, '_');
+            return toAgent === role || fromAgent === role;
+          })
+          .sort((a, b) => {
+            const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+            const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+            return timeB - timeA;
+          })[0];
+        
+        return {
+          role,
+          name: agentName.charAt(0).toUpperCase() + agentName.slice(1).replace(/_/g, ' '),
+          isActive: true,
+          lastActivity: latestInteraction?.timestamp ? new Date(latestInteraction.timestamp).toLocaleString() : undefined,
+          interactions: agentInteractions.filter(i => {
+            const toAgent = (i.to_agent || '').toLowerCase().replace(/\s+/g, '_');
+            const fromAgent = (i.from_agent || '').toLowerCase().replace(/\s+/g, '_');
+            return toAgent === role || fromAgent === role;
+          }).length,
+          latestInteraction,
+        };
+      });
+      
+      setDerivedAgents(agentStatuses);
+    } else {
+      setDerivedAgents([]);
+    }
+  }, [agentInteractions, agents]);
+  
+  // Use derived agents if agents list is empty
+  const displayAgents = (agents && agents.length > 0) ? agents : derivedAgents;
 
   const getAgentIcon = (role: string) => {
     const icons: Record<string, string> = {
@@ -99,9 +146,48 @@ export function AgentStatusPanel({
   // Get latest interaction for an agent
   const getLatestInteraction = (agentRole: string): AgentInteraction | undefined => {
     return agentInteractions
-      .filter(interaction => interaction.to_agent === agentRole || interaction.from_agent === agentRole)
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+      .filter(interaction => {
+        const toAgent = (interaction.to_agent || '').toLowerCase().replace(/\s+/g, '_');
+        const fromAgent = (interaction.from_agent || '').toLowerCase().replace(/\s+/g, '_');
+        return toAgent === agentRole || fromAgent === agentRole;
+      })
+      .sort((a, b) => {
+        const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
+        const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
+        return timeB - timeA;
+      })[0];
   };
+  
+  // Extract all unique agents from interactions if agents list is empty
+  useEffect(() => {
+    if ((!agents || agents.length === 0) && agentInteractions.length > 0) {
+      const uniqueAgents = new Set<string>();
+      agentInteractions.forEach(interaction => {
+        if (interaction.from_agent) uniqueAgents.add(interaction.from_agent);
+        if (interaction.to_agent) uniqueAgents.add(interaction.to_agent);
+      });
+      
+      // Convert to AgentStatus format
+      const agentStatuses = Array.from(uniqueAgents).map(agentName => {
+        const role = agentName.toLowerCase().replace(/\s+/g, '_');
+        const latestInteraction = getLatestInteraction(role);
+        return {
+          role,
+          name: agentName.charAt(0).toUpperCase() + agentName.slice(1).replace(/_/g, ' '),
+          isActive: true,
+          lastActivity: latestInteraction?.timestamp ? new Date(latestInteraction.timestamp).toLocaleString() : undefined,
+          interactions: agentInteractions.filter(i => 
+            (i.to_agent || '').toLowerCase().replace(/\s+/g, '_') === role || 
+            (i.from_agent || '').toLowerCase().replace(/\s+/g, '_') === role
+          ).length,
+          latestInteraction,
+        };
+      });
+      
+      // Update agents state if we have a way to do it
+      // Note: This requires passing setAgents as a prop or using a callback
+    }
+  }, [agentInteractions, agents]);
 
   return (
     <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6">
@@ -112,18 +198,18 @@ export function AgentStatusPanel({
         <div>
           <h3 className="font-bold text-gray-900">Agent Network</h3>
           <p className="text-xs text-gray-600">
-            {Array.isArray(agents) ? agents.filter((a) => a.isActive).length : 0} active
+            {displayAgents.filter((a) => a.isActive).length} active
           </p>
         </div>
       </div>
 
       <div className="space-y-3">
-        {!Array.isArray(agents) || agents.length === 0 ? (
+        {displayAgents.length === 0 ? (
           <div className="text-center py-8 text-gray-500 text-sm">
             <p>No active agents. Start a conversation to see agent activity.</p>
           </div>
         ) : (
-          agents.map((agent) => {
+          displayAgents.map((agent) => {
             const latestInteraction = agent.latestInteraction || getLatestInteraction(agent.role);
             return (
               <div key={agent.role}>
