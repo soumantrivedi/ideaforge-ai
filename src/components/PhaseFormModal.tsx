@@ -133,16 +133,68 @@ export function PhaseFormModal({
           
           // Generate V0 prompt
           if (!v0Prompt.trim()) {
-            await handleGeneratePrompt('v0');
-            const updatedPrompts = JSON.parse(formData['v0_lovable_prompts'] || '{}');
-            promptsObj['v0_prompt'] = updatedPrompts['v0_prompt'] || '';
+            try {
+              const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+              const v0Response = await fetch(`${API_URL}/api/design/generate-prompt`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  product_id: productId,
+                  phase_submission_id: selectedSubmissionId,
+                  provider: 'v0',
+                  context: {
+                    phase_name: phase.phase_name,
+                    form_data: completeFormData,
+                    all_form_fields: phase.required_fields,
+                  },
+                }),
+              });
+              
+              if (v0Response.ok) {
+                const v0Result = await v0Response.json();
+                promptsObj['v0_prompt'] = v0Result.prompt || '';
+              } else {
+                console.error('Failed to generate V0 prompt:', await v0Response.text());
+              }
+            } catch (error) {
+              console.error('Error generating V0 prompt:', error);
+            }
           }
           
           // Generate Lovable prompt
           if (!lovablePrompt.trim()) {
-            await handleGeneratePrompt('lovable');
-            const updatedPrompts = JSON.parse(formData['v0_lovable_prompts'] || '{}');
-            promptsObj['lovable_prompt'] = updatedPrompts['lovable_prompt'] || '';
+            try {
+              const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+              const lovableResponse = await fetch(`${API_URL}/api/design/generate-prompt`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  product_id: productId,
+                  phase_submission_id: selectedSubmissionId,
+                  provider: 'lovable',
+                  context: {
+                    phase_name: phase.phase_name,
+                    form_data: completeFormData,
+                    all_form_fields: phase.required_fields,
+                  },
+                }),
+              });
+              
+              if (lovableResponse.ok) {
+                const lovableResult = await lovableResponse.json();
+                promptsObj['lovable_prompt'] = lovableResult.prompt || '';
+              } else {
+                console.error('Failed to generate Lovable prompt:', await lovableResponse.text());
+              }
+            } catch (error) {
+              console.error('Error generating Lovable prompt:', error);
+            }
           }
           
           // Update formData with generated prompts
@@ -733,20 +785,34 @@ Provide your validation response in this format:
       alert('Product ID is required');
       return;
     }
+    if (!user || !user.id) {
+      alert('User not authenticated. Please log in to generate prompts.');
+      return;
+    }
 
     setIsGeneratingPrompt({ ...isGeneratingPrompt, [provider]: true });
 
     try {
       const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const response = await fetch(`${API_URL}/api/design/generate-prompt`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           product_id: productId,
           phase_submission_id: selectedSubmissionId,
           provider,
+          context: {
+            phase_name: phase.phase_name,
+            form_data: formData,
+            all_form_fields: phase.required_fields,
+          },
         }),
       });
 
