@@ -35,23 +35,26 @@ def update_manifests(eks_dir, namespace, image_tag):
                 content
             )
             
-            # Update namespace fields (replace any existing namespace value)
-            # Match namespace: followed by any value (not a resource name)
+            # Update namespace fields - replace any namespace value with the target namespace
+            # This handles: namespace: ideaforge-ai, namespace: test-namespace, etc.
             content = re.sub(
-                r'namespace:\s+[^\s#]+',
+                r'namespace:\s+[^\s#\n]+',
                 f'namespace: {namespace}',
                 content
             )
             
-            # Update name fields in Namespace resource metadata only
-            # Match "name:" at the start of a line in metadata section, followed by ideaforge-ai or any namespace value
-            # This is more specific to avoid replacing resource names like ideaforge-ai-config
-            content = re.sub(
-                r'(\s+name:\s+)(?:ideaforge-ai|test-namespace|20890-ideaforge-ai-dev-58a50)(\s*#.*)?$',
-                f'\\1{namespace}\\2',
-                content,
-                flags=re.MULTILINE
-            )
+            # Update name field in Namespace resource metadata only
+            # Match standalone "name:" values that are namespace names (not resource names)
+            # Only replace if it's a known namespace pattern or ideaforge-ai
+            known_namespaces = ['ideaforge-ai', 'test-namespace']
+            for old_ns in known_namespaces:
+                # Match "name: old_ns" at end of line (standalone, not part of longer name)
+                content = re.sub(
+                    rf'(\s+name:\s+){re.escape(old_ns)}(\s*#.*)?$',
+                    f'\\1{namespace}\\2',
+                    content,
+                    flags=re.MULTILINE
+                )
             
             if content != original_content:
                 with open(yaml_file, 'w') as f:
