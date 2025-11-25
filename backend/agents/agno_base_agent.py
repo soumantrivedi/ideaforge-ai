@@ -78,6 +78,8 @@ class AgnoBaseAgent(ABC):
         self.name = name
         self.role = role
         self.system_prompt = system_prompt
+        self.enable_rag = enable_rag
+        self.rag_table_name = rag_table_name or f"{role}_knowledge"
         self.capabilities = capabilities or []
         self.logger = logger.bind(agent=name)
         self.interactions: List[AgentInteraction] = []
@@ -86,23 +88,28 @@ class AgnoBaseAgent(ABC):
         # Get model based on provider registry
         model = self._get_agno_model()
         
-        # Setup RAG knowledge base if enabled
-        knowledge = None
-        if enable_rag:
-            knowledge = self._create_knowledge_base(rag_table_name or f"{role}_knowledge")
-        
-        # Create Agno agent (use 'knowledge' parameter, not 'knowledge_base')
-        self.agno_agent = Agent(
-            name=name,
-            model=model,
-            instructions=system_prompt,
-            knowledge=knowledge,  # Agno uses 'knowledge' parameter
-            tools=tools or [],
-            markdown=True,
-            # Note: show_tool_calls is not a valid parameter for Agno Agent
-        )
-        
-        self.logger.info("agno_agent_initialized", agent=name, role=role, rag_enabled=enable_rag)
+        # If no model is available, defer agent creation until a provider is configured
+        if model is None:
+            self.agno_agent = None
+            self.logger.warning("agno_agent_deferred", agent=name, reason="no_provider_configured")
+        else:
+            # Setup RAG knowledge base if enabled
+            knowledge = None
+            if enable_rag:
+                knowledge = self._create_knowledge_base(self.rag_table_name)
+            
+            # Create Agno agent (use 'knowledge' parameter, not 'knowledge_base')
+            self.agno_agent = Agent(
+                name=name,
+                model=model,
+                instructions=system_prompt,
+                knowledge=knowledge,  # Agno uses 'knowledge' parameter
+                tools=tools or [],
+                markdown=True,
+                # Note: show_tool_calls is not a valid parameter for Agno Agent
+            )
+            
+            self.logger.info("agno_agent_initialized", agent=name, role=role, rag_enabled=enable_rag)
     
     def _get_agno_model(self):
         """Get appropriate Agno model based on provider registry."""
@@ -113,7 +120,33 @@ class AgnoBaseAgent(ABC):
         elif provider_registry.has_gemini_key():
             return Gemini(id=settings.agent_model_tertiary)
         else:
-            raise ValueError("No AI provider configured. Please configure at least one provider.")
+            # Return None instead of raising - allows lazy initialization
+            # The agent will fail when actually used, not during initialization
+            return None
+    
+    def _ensure_agent_initialized(self):
+        """Ensure agent is initialized with a model. Reinitialize if needed."""
+        if self.agno_agent is None:
+            model = self._get_agno_model()
+            if model is None:
+                raise ValueError("No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) before using this agent.")
+            
+            # Setup RAG knowledge base if enabled
+            knowledge = None
+            if self.enable_rag:
+                knowledge = self._create_knowledge_base(self.rag_table_name)
+            
+            # Create Agno agent
+            self.agno_agent = Agent(
+                name=self.name,
+                model=model,
+                instructions=self.system_prompt,
+                knowledge=knowledge,
+                tools=[],
+                markdown=True,
+            )
+            
+            self.logger.info("agno_agent_initialized_lazy", agent=self.name, role=self.role)
     
     def _create_knowledge_base(self, table_name: str) -> Optional[Any]:
         """Create knowledge base with pgvector for RAG."""
@@ -183,7 +216,7 @@ class AgnoBaseAgent(ABC):
         Recreates the model if necessary to ensure API key is properly set.
         """
         try:
-            if not hasattr(self.agno_agent, 'model') or not self.agno_agent.model:
+            if self.agno_agent is None or not hasattr(self.agno_agent, 'model') or not self.agno_agent.model:
                 return
             
             # Get the current model type and ID
@@ -240,6 +273,8 @@ class AgnoBaseAgent(ABC):
         Returns:
             AgentResponse with agent's response
         """
+        # Ensure agent is initialized before processing
+        self._ensure_agent_initialized()
         try:
             # Update model API key from provider registry before processing
             # This ensures user-specific keys are used
@@ -363,7 +398,7 @@ class AgnoBaseAgent(ABC):
     
     def add_to_knowledge_base(self, content: str, metadata: Optional[Dict[str, Any]] = None):
         """Add content to knowledge base (if RAG is enabled)."""
-        if hasattr(self.agno_agent, 'knowledge') and self.agno_agent.knowledge:
+        if self.agno_agent is not None and hasattr(self.agno_agent, 'knowledge') and self.agno_agent.knowledge:
             try:
                 self.agno_agent.knowledge.load(content=content, metadata=metadata or {})
                 self.logger.info("content_added_to_knowledge_base", agent=self.name)
