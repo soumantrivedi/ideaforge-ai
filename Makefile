@@ -889,6 +889,8 @@ eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=yo
 	@echo "✅ kubectl is configured"
 	@echo "📦 Creating ConfigMaps for database setup..."
 	@bash $(K8S_DIR)/create-db-configmaps.sh
+	@echo "📦 Creating namespace if it doesn't exist..."
+	@kubectl create namespace $(EKS_NAMESPACE) --dry-run=client -o yaml | kubectl apply -f - || true
 	@echo "📦 Applying Kubernetes manifests from k8s/eks/ to namespace: $(EKS_NAMESPACE)"
 	@kubectl apply -f $(K8S_DIR)/eks/ --recursive
 	@echo "⏳ Waiting for database services to be ready..."

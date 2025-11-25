@@ -18,11 +18,7 @@ images:
     newName: ghcr.io/soumantrivedi/ideaforge-ai/frontend
     newTag: latest
 
-# Namespace-specific patches (using modern patches syntax)
-patches:
-  - path: namespace-patch.yaml
-    target:
-      kind: Namespace
-  - path: imagepullsecret-patch.yaml
-    target:
-      kind: Deployment
+# Namespace-specific patches (strategic merge patches)
+patchesStrategicMerge:
+  - namespace-patch.yaml
+  - imagepullsecret-patch.yaml
