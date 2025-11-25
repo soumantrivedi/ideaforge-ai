@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 Update namespace and image tags in EKS manifests.
-Usage: python3 update-eks-namespace.py <eks_dir> <namespace> <image_tag>
+Usage: python3 update-eks-namespace.py <eks_dir> <namespace> <backend_tag> <frontend_tag> [storage_class]
 """
 import sys
 import os
 import re
 from pathlib import Path
 
-def update_manifests(eks_dir, namespace, image_tag):
+def update_manifests(eks_dir, namespace, backend_tag, frontend_tag, storage_class=None):
     """Update all YAML files in eks_dir with new namespace and image tags."""
     eks_path = Path(eks_dir)
     if not eks_path.exists():
@@ -23,17 +23,19 @@ def update_manifests(eks_dir, namespace, image_tag):
             
             original_content = content
             
-            # Update image tags
-            content = re.sub(
-                r'ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*',
-                f'ghcr.io/soumantrivedi/ideaforge-ai/backend:{image_tag}',
-                content
-            )
-            content = re.sub(
-                r'ghcr\.io/soumantrivedi/ideaforge-ai/frontend:.*',
-                f'ghcr.io/soumantrivedi/ideaforge-ai/frontend:{image_tag}',
-                content
-            )
+            # Update image tags separately for backend and frontend
+            if backend_tag:
+                content = re.sub(
+                    r'ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*',
+                    f'ghcr.io/soumantrivedi/ideaforge-ai/backend:{backend_tag}',
+                    content
+                )
+            if frontend_tag:
+                content = re.sub(
+                    r'ghcr\.io/soumantrivedi/ideaforge-ai/frontend:.*',
+                    f'ghcr.io/soumantrivedi/ideaforge-ai/frontend:{frontend_tag}',
+                    content
+                )
             
             # Update namespace fields - replace any namespace value with the target namespace
             # This handles: namespace: ideaforge-ai, namespace: test-namespace, etc.
@@ -42,6 +44,15 @@ def update_manifests(eks_dir, namespace, image_tag):
                 f'namespace: {namespace}',
                 content
             )
+            
+            # Update storage class if provided
+            if storage_class:
+                # Replace storageClassName: gp3 or any other value
+                content = re.sub(
+                    r'storageClassName:\s+[^\s#\n]+',
+                    f'storageClassName: {storage_class}',
+                    content
+                )
             
             # Update name field in Namespace resource metadata only
             # Match standalone "name:" values that are namespace names (not resource names)
@@ -71,13 +82,15 @@ def update_manifests(eks_dir, namespace, image_tag):
         print("ℹ️  No files needed updating")
 
 if __name__ == '__main__':
-    if len(sys.argv) != 4:
-        print("Usage: python3 update-eks-namespace.py <eks_dir> <namespace> <image_tag>")
+    if len(sys.argv) < 5:
+        print("Usage: python3 update-eks-namespace.py <eks_dir> <namespace> <backend_tag> <frontend_tag> [storage_class]")
         sys.exit(1)
     
     eks_dir = sys.argv[1]
     namespace = sys.argv[2]
-    image_tag = sys.argv[3]
+    backend_tag = sys.argv[3]
+    frontend_tag = sys.argv[4]
+    storage_class = sys.argv[5] if len(sys.argv) > 5 else None
     
-    update_manifests(eks_dir, namespace, image_tag)
+    update_manifests(eks_dir, namespace, backend_tag, frontend_tag, storage_class)
 

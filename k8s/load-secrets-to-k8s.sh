@@ -23,8 +23,13 @@ else
     KUBECTL_CMD="kubectl"
 fi
 
-# Create namespace if it doesn't exist
-$KUBECTL_CMD create namespace "$NAMESPACE" --dry-run=client -o yaml | $KUBECTL_CMD apply -f -
+# Verify namespace exists (do NOT create it - namespace must pre-exist)
+if ! $KUBECTL_CMD get namespace "$NAMESPACE" &> /dev/null; then
+    echo "❌ Namespace $NAMESPACE does not exist"
+    echo "   Please create it first: $KUBECTL_CMD create namespace $NAMESPACE"
+    exit 1
+fi
+echo "✅ Namespace $NAMESPACE exists"
 
 # Build secret data from .env file
 SECRET_DATA=""

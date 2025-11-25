@@ -1,4 +1,4 @@
-name: Build, Publish Docker Images, and Create PR
+name: Build and Publish Docker Images
 
 on:
   workflow_dispatch:  # Manual trigger
@@ -23,29 +23,19 @@ env:
   IMAGE_NAME_FRONTEND: ${{ github.repository }}/frontend
 
 jobs:
-  build-and-publish:
+  prepare:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-      pull-requests: write
-    
+    outputs:
+      git-sha: ${{ steps.git-sha.outputs.sha }}
+      branch-name: ${{ steps.branch-name.outputs.name }}
+      version: ${{ steps.version.outputs.version }}
+      vite-api-url: ${{ steps.frontend-args.outputs.vite_api_url }}
+      is-default-branch: ${{ steps.branch-check.outputs.is-default }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Get Git SHA
         id: git-sha
@@ -61,25 +51,14 @@ jobs:
           echo "name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "Branch name (sanitized): $BRANCH_NAME"
 
-      - name: Extract metadata for backend
-        id: meta-backend
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}
-          tags: |
-            type=sha,format=short,prefix=
-            type=raw,value=${{ steps.branch-name.outputs.name }}-${{ steps.git-sha.outputs.sha }}
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Extract metadata for frontend
-        id: meta-frontend
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}
-          tags: |
-            type=sha,format=short,prefix=
-            type=raw,value=${{ steps.branch-name.outputs.name }}-${{ steps.git-sha.outputs.sha }}
-            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Check if default branch
+        id: branch-check
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/main" ] || [ "${{ github.ref }}" == "refs/heads/master" ]; then
+            echo "is-default=true" >> $GITHUB_OUTPUT
+          else
+            echo "is-default=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Get Version
         id: version
@@ -95,40 +74,12 @@ jobs:
           echo "vite_api_url=$VITE_API_URL" >> $GITHUB_OUTPUT
           echo "VITE_API_URL set to: $VITE_API_URL"
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile.backend
-          push: true
-          tags: ${{ steps.meta-backend.outputs.tags }}
-          labels: ${{ steps.meta-backend.outputs.labels }}
-          build-args: |
-            GIT_SHA=${{ steps.git-sha.outputs.sha }}
-            VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build and push frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile.frontend
-          push: true
-          tags: ${{ steps.meta-frontend.outputs.tags }}
-          labels: ${{ steps.meta-frontend.outputs.labels }}
-          build-args: |
-            VITE_API_URL=${{ steps.frontend-args.outputs.vite_api_url }}
-            VITE_OKTA_CLIENT_ID=${{ secrets.VITE_OKTA_CLIENT_ID }}
-            VITE_OKTA_ISSUER=${{ secrets.VITE_OKTA_ISSUER }}
-            GIT_SHA=${{ steps.git-sha.outputs.sha }}
-            VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  test-and-verify:
-    needs: build-and-publish
+  build-backend:
+    needs: prepare
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -143,388 +94,200 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v3
+      - name: Extract metadata for backend
+        id: meta-backend
+        uses: docker/metadata-action@v5
         with:
-          version: 'latest'
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}
+          tags: |
+            type=sha,format=short,prefix=
+            type=raw,value=${{ needs.prepare.outputs.branch-name }}-${{ needs.prepare.outputs.git-sha }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is-default-branch }}
 
-      - name: Install Kind
-        uses: helm/kind-action@v1.8.0
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
         with:
-          install_only: true
+          context: .
+          file: ./Dockerfile.backend
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ needs.prepare.outputs.git-sha }}
+            VERSION=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Install Python and PyYAML
+      - name: Output backend image info
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-pip
-          pip3 install pyyaml
+          echo "✅ Backend image built and pushed:"
+          echo "   Tags: ${{ steps.meta-backend.outputs.tags }}"
 
-      - name: Get Git SHA
-        id: git-sha
-        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Get Version
-        id: version
-        run: echo "version=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Clean up Docker to free space
-        run: |
-          echo "🧹 Cleaning up Docker to free disk space..."
-          docker system prune -af --volumes || true
-          docker builder prune -af || true
-          df -h
-          echo "✅ Cleanup complete"
-
-      - name: Create Kind cluster
-        run: |
-          GIT_SHA=${{ steps.git-sha.outputs.sha }} make kind-create KIND_CLUSTER_NAME=ideaforge-ai-ci
-
-      - name: Setup Kind ingress
-        run: |
-          make kind-setup-ingress KIND_CLUSTER_NAME=ideaforge-ai-ci
-
-      - name: Configure Kind to pull from registry
-        run: |
-          echo "🔐 Configuring Kind to pull images from registry..."
-          # Create image pull secret for GitHub Container Registry
-          kubectl create namespace ideaforge-ai --context kind-ideaforge-ai-ci --dry-run=client -o yaml | kubectl apply -f - --context kind-ideaforge-ai-ci || true
-          kubectl create secret docker-registry ghcr-secret \
-            --docker-server=${{ env.REGISTRY }} \
-            --docker-username=${{ github.actor }} \
-            --docker-password=${{ secrets.GITHUB_TOKEN }} \
-            --namespace=ideaforge-ai \
-            --context kind-ideaforge-ai-ci \
-            --dry-run=client -o yaml | kubectl apply -f - --context kind-ideaforge-ai-ci || true
-          echo "✅ Registry secret configured"
-
-      - name: Update manifests to use registry images
-        run: |
-          echo "📝 Updating manifests to pull from registry..."
-          BACKEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ steps.git-sha.outputs.sha }}"
-          FRONTEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.git-sha.outputs.sha }}"
-          
-          # Update image references
-          sed -i "s|image:.*ideaforge-ai-backend:.*|image: $$BACKEND_IMAGE|g" k8s/backend.yaml
-          sed -i "s|imagePullPolicy:.*|imagePullPolicy: IfNotPresent|g" k8s/backend.yaml
-          sed -i "s|image:.*ideaforge-ai-frontend:.*|image: $$FRONTEND_IMAGE|g" k8s/frontend.yaml
-          sed -i "s|imagePullPolicy:.*|imagePullPolicy: IfNotPresent|g" k8s/frontend.yaml
-          
-          # Add imagePullSecrets using Python for reliable YAML manipulation
-          python3 << 'PYEOF'
-          import yaml
-          import sys
-          
-          def add_image_pull_secrets(filepath):
-              try:
-                  with open(filepath, 'r') as f:
-                      content = f.read()
-                      doc = yaml.safe_load(content)
-                  
-                  # Find the pod spec (spec.template.spec)
-                  if 'spec' in doc and 'template' in doc['spec'] and 'spec' in doc['spec']['template']:
-                      pod_spec = doc['spec']['template']['spec']
-                      
-                      # Add imagePullSecrets if not present
-                      if 'imagePullSecrets' not in pod_spec:
-                          pod_spec['imagePullSecrets'] = [{'name': 'ghcr-secret'}]
-                          
-                          with open(filepath, 'w') as f:
-                              yaml.dump(doc, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
-                          print(f"✅ Added imagePullSecrets to {filepath}")
-                          return True
-                      else:
-                          print(f"ℹ️  imagePullSecrets already exists in {filepath}")
-                          return True
-                  else:
-                      print(f"⚠️  Could not find pod spec in {filepath}")
-                      return False
-              except Exception as e:
-                  print(f"⚠️  Error updating {filepath}: {e}")
-                  return False
-          
-          success = True
-          success = add_image_pull_secrets('k8s/backend.yaml') and success
-          success = add_image_pull_secrets('k8s/frontend.yaml') and success
-          
-          if not success:
-              print("⚠️  Some files could not be updated")
-              sys.exit(1)
-          PYEOF
-          
-          echo "✅ Manifests updated to use registry images"
-          echo "   Backend: $$BACKEND_IMAGE"
-          echo "   Frontend: $$FRONTEND_IMAGE"
-
-      - name: Create database ConfigMaps
-        run: |
-          make kind-create-db-configmaps KIND_CLUSTER_NAME=ideaforge-ai-ci
-
-      - name: Deploy to Kind cluster
-        run: |
-          make kind-deploy-internal KIND_CLUSTER_NAME=ideaforge-ai-ci K8S_NAMESPACE=ideaforge-ai
-
-      - name: Wait for pods to be ready
-        run: |
-          echo "Waiting for pods to be ready..."
-          kubectl wait --for=condition=ready pod -l app=postgres -n ideaforge-ai --context kind-ideaforge-ai-ci --timeout=300s || true
-          kubectl wait --for=condition=ready pod -l app=redis -n ideaforge-ai --context kind-ideaforge-ai-ci --timeout=120s || true
-          kubectl wait --for=condition=ready pod -l app=backend -n ideaforge-ai --context kind-ideaforge-ai-ci --timeout=300s || true
-          kubectl wait --for=condition=ready pod -l app=frontend -n ideaforge-ai --context kind-ideaforge-ai-ci --timeout=300s || true
-          echo "✅ All pods are ready"
-
-      - name: Check backend health
-        run: |
-          max_attempts=30
-          attempt=0
-          while [ $attempt -lt $max_attempts ]; do
-            if kubectl exec -n ideaforge-ai deployment/backend --context kind-ideaforge-ai-ci -- curl -f http://localhost:8000/health > /dev/null 2>&1; then
-              echo "✅ Backend is healthy"
-              kubectl exec -n ideaforge-ai deployment/backend --context kind-ideaforge-ai-ci -- curl -s http://localhost:8000/health | jq . || true
-              exit 0
-            fi
-            attempt=$((attempt + 1))
-            echo "Attempt $attempt/$max_attempts: Backend not ready yet..."
-            sleep 2
-          done
-          echo "❌ Backend health check failed"
-          kubectl get pods -n ideaforge-ai --context kind-ideaforge-ai-ci
-          kubectl logs -n ideaforge-ai -l app=backend --context kind-ideaforge-ai-ci --tail=50
-          exit 1
-
-      - name: Check frontend health
-        run: |
-          max_attempts=30
-          attempt=0
-          while [ $attempt -lt $max_attempts ]; do
-            if kubectl exec -n ideaforge-ai deployment/frontend --context kind-ideaforge-ai-ci -- curl -f http://localhost:3000 > /dev/null 2>&1; then
-              echo "✅ Frontend is healthy"
-              exit 0
-            fi
-            attempt=$((attempt + 1))
-            echo "Attempt $attempt/$max_attempts: Frontend not ready yet..."
-            sleep 2
-          done
-          echo "❌ Frontend health check failed"
-          kubectl get pods -n ideaforge-ai --context kind-ideaforge-ai-ci
-          exit 1
-
-      - name: Check for errors in pod logs
-        id: check-logs
-        continue-on-error: true
-        run: |
-          echo "Checking pod logs for errors..."
-          
-          # Check backend logs
-          backend_errors=$(kubectl logs -n ideaforge-ai -l app=backend --context kind-ideaforge-ai-ci --tail=500 2>&1 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | wc -l || echo "0")
-          
-          # Check frontend logs
-          frontend_errors=$(kubectl logs -n ideaforge-ai -l app=frontend --context kind-ideaforge-ai-ci --tail=500 2>&1 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | wc -l || echo "0")
-          
-          # Check postgres logs
-          postgres_errors=$(kubectl logs -n ideaforge-ai -l app=postgres --context kind-ideaforge-ai-ci --tail=200 2>&1 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | wc -l || echo "0")
-          
-          total_errors=$((backend_errors + frontend_errors + postgres_errors))
-          
-          echo "Backend errors: $backend_errors"
-          echo "Frontend errors: $frontend_errors"
-          echo "Postgres errors: $postgres_errors"
-          echo "Total errors: $total_errors"
-          
-          if [ "$total_errors" -gt 0 ]; then
-            echo "❌ Found $total_errors errors in logs"
-            echo "error_count=$total_errors" >> $GITHUB_OUTPUT
-            echo "has_errors=true" >> $GITHUB_OUTPUT
-            
-            # Show error details
-            echo "=== Backend Errors ==="
-            kubectl logs -n ideaforge-ai -l app=backend --context kind-ideaforge-ai-ci --tail=500 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | head -20 || true
-            
-            echo "=== Frontend Errors ==="
-            kubectl logs -n ideaforge-ai -l app=frontend --context kind-ideaforge-ai-ci --tail=500 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | head -20 || true
-          else
-            echo "✅ No errors found in logs"
-            echo "error_count=0" >> $GITHUB_OUTPUT
-            echo "has_errors=false" >> $GITHUB_OUTPUT
-          fi
-          
-          # Write to file for next job
-          mkdir -p /tmp/error-check
-          echo "${{ steps.check-logs.outputs.has_errors }}" > /tmp/error-check/has_errors.txt
-          echo "${{ steps.check-logs.outputs.error_count }}" > /tmp/error-check/error_count.txt
-
-      - name: Run service-to-service tests
-        run: |
-          make kind-test KIND_CLUSTER_NAME=ideaforge-ai-ci K8S_NAMESPACE=ideaforge-ai || echo "⚠️  Some tests may have failed, but continuing..."
-
-      - name: Upload error check results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: error-check-results
-          path: /tmp/error-check
-          retention-days: 1
-
-      - name: Cleanup Kind cluster
-        if: always()
-        run: |
-          kind delete cluster --name ideaforge-ai-ci || true
-
-  create-pr:
-    needs: [build-and-publish, test-and-verify]
+  build-frontend:
+    needs: prepare
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request' && github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master'
     permissions:
-      contents: write
-      pull-requests: write
-    
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for frontend
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}
+          tags: |
+            type=sha,format=short,prefix=
+            type=raw,value=${{ needs.prepare.outputs.branch-name }}-${{ needs.prepare.outputs.git-sha }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is-default-branch }}
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          build-args: |
+            VITE_API_URL=${{ needs.prepare.outputs.vite-api-url }}
+            VITE_OKTA_CLIENT_ID=${{ secrets.VITE_OKTA_CLIENT_ID }}
+            VITE_OKTA_ISSUER=${{ secrets.VITE_OKTA_ISSUER }}
+            GIT_SHA=${{ needs.prepare.outputs.git-sha }}
+            VERSION=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output frontend image info
+        run: |
+          echo "✅ Frontend image built and pushed:"
+          echo "   Tags: ${{ steps.meta-frontend.outputs.tags }}"
+
+  prepare-release-notes:
+    needs: [prepare, build-backend, build-frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Download error check results
-        uses: actions/download-artifact@v4
-        with:
-          name: error-check-results
-          path: /tmp/error-check
-
-      - name: Check if errors were found
-        id: check-errors
+      - name: Generate release notes
+        id: release-notes
         run: |
-          if [ -f /tmp/error-check/has_errors.txt ]; then
-            HAS_ERRORS=$(cat /tmp/error-check/has_errors.txt)
-            ERROR_COUNT=$(cat /tmp/error-check/error_count.txt || echo "0")
-            echo "has_errors=$HAS_ERRORS" >> $GITHUB_OUTPUT
-            echo "error_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
-            if [ "$HAS_ERRORS" = "true" ]; then
-              echo "❌ Errors found in logs ($ERROR_COUNT errors), skipping PR creation"
-              exit 1
-            else
-              echo "✅ No errors found, proceeding with PR creation"
-            fi
-          else
-            echo "⚠️  Error check results not found, proceeding with caution"
-            echo "has_errors=false" >> $GITHUB_OUTPUT
-            echo "error_count=0" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Configure Git
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
-
-      - name: Get Git SHA
-        id: git-sha
-        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Get default branch
-        id: default-branch
-        run: |
-          DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@')
-          echo "branch=$DEFAULT_BRANCH" >> $GITHUB_OUTPUT
-          echo "Default branch: $DEFAULT_BRANCH"
-
-      - name: Create or update branch
-        run: |
-          BRANCH_NAME="ci/docker-publish-$(date +%Y%m%d-%H%M%S)-${{ steps.git-sha.outputs.sha }}"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+          GIT_SHA="${{ needs.prepare.outputs.git-sha }}"
+          BRANCH_NAME="${{ needs.prepare.outputs.branch-name }}"
+          BACKEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ needs.prepare.outputs.git-sha }}"
+          FRONTEND_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ needs.prepare.outputs.git-sha }}"
           
-          # Check if branch already exists
-          if git ls-remote --heads origin "$BRANCH_NAME" | grep -q "$BRANCH_NAME"; then
-            echo "Branch $BRANCH_NAME already exists, checking it out"
-            git fetch origin "$BRANCH_NAME"
-            git checkout "$BRANCH_NAME"
+          # Get commit messages since last tag (or last 10 commits if no tags)
+          if git describe --tags --abbrev=0 > /dev/null 2>&1; then
+            LAST_TAG=$(git describe --tags --abbrev=0)
+            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
           else
-            echo "Creating new branch $BRANCH_NAME"
-            git checkout -b "$BRANCH_NAME"
+            COMMITS=$(git log -10 --pretty=format:"- %s (%h)" --no-merges)
           fi
-
-      - name: Update docker-compose.yml with published images
-        run: |
-          cat >> docker-compose.ci.yml << EOF
-          # CI/CD Published Images
-          # Backend: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ steps.git-sha.outputs.sha }}
-          # Frontend: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.git-sha.outputs.sha }}
-          # Published at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          # Create release notes
+          cat > release-notes.md << EOF
+          # 🐳 Docker Images Published
+          
+          ## 📦 Published Images
+          
+          - **Backend**: \`${BACKEND_IMAGE}\`
+          - **Frontend**: \`${FRONTEND_IMAGE}\`
+          
+          ## 📝 Build Information
+          
+          - **Git SHA**: \`${GIT_SHA}\`
+          - **Branch**: \`${BRANCH_NAME}\`
+          - **Workflow Run**: [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - **Triggered by**: ${{ github.actor }}
+          - **Timestamp**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          ## 📋 Recent Changes
+          
+          ${COMMITS}
+          
+          ## 🚀 Usage
+          
+          ### Backend
+          \`\`\`bash
+          docker pull ${BACKEND_IMAGE}
+          \`\`\`
+          
+          ### Frontend
+          \`\`\`bash
+          docker pull ${FRONTEND_IMAGE}
+          \`\`\`
+          
+          ## 📌 Tags
+          
+          Images are tagged with:
+          - \`${GIT_SHA}\` - Git SHA (short)
+          - \`${BRANCH_NAME}-${GIT_SHA}\` - Branch and SHA
+          $([ "${{ needs.prepare.outputs.is-default-branch }}" == "true" ] && echo "- \`latest\` - Latest on default branch")
           EOF
-
-      - name: Commit changes
-        id: commit
-        run: |
-          if [ -n "$(git status --porcelain)" ]; then
-            git add -A
-            git commit -m "ci: Publish Docker images and update deployment
-
-          - Published backend image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ steps.git-sha.outputs.sha }}
-          - Published frontend image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.git-sha.outputs.sha }}
-          - All services verified and running
-          - No errors in docker logs
-          - Git SHA: ${{ steps.git-sha.outputs.sha }}
           
-          [skip ci]"
-            git push origin "$BRANCH_NAME"
-            echo "committed=true" >> $GITHUB_OUTPUT
-          else
-            echo "No changes to commit"
-            echo "committed=false" >> $GITHUB_OUTPUT
-          fi
+          cat release-notes.md
+          
+          # Output for potential use in other steps
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat release-notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Create Pull Request
-        if: steps.commit.outputs.committed == 'true'
-        uses: actions/github-script@v7
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const { data: pr } = await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `🚀 CI: Docker Images Published - ${{ steps.git-sha.outputs.sha }}`,
-              head: process.env.BRANCH_NAME,
-              base: '${{ steps.default-branch.outputs.branch }}',
-              body: `## 🐳 Docker Images Published
+          name: release-notes
+          path: release-notes.md
+          retention-days: 30
 
-              This PR was automatically created after successfully building, publishing, and verifying Docker images.
-
-              ### 📦 Published Images
-              - **Backend**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ steps.git-sha.outputs.sha }}\`
-              - **Frontend**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ steps.git-sha.outputs.sha }}\`
-
-              ### ✅ Verification Results
-              - ✅ All Docker images built successfully
-              - ✅ Images pushed to GitHub Container Registry
-              - ✅ Kind cluster created and configured
-              - ✅ Services deployed to Kind cluster
-              - ✅ Backend health check passed
-              - ✅ Frontend health check passed
-              - ✅ No errors found in pod logs
-              - ✅ Service-to-service tests passed
-
-              ### 📝 Details
-              - **Git SHA**: \`${{ steps.git-sha.outputs.sha }}\`
-              - **Workflow Run**: [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-              - **Triggered by**: ${{ github.actor }}
-
-              ### 🔍 Next Steps
-              - Review the changes
-              - Merge when ready
-              - Images are available in GitHub Container Registry`,
-              draft: false
-            });
-            
-            console.log(`Created PR #${pr.number}: ${pr.html_url}`);
-            
-            // Add labels
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.number,
-              labels: ['ci', 'docker', 'automated']
-            });
-
-      - name: Output PR URL
-        if: steps.commit.outputs.committed == 'true'
+      - name: Output release notes summary
         run: |
-          echo "Pull Request created successfully!"
-          echo "Check the GitHub Actions output for the PR URL"
+          echo "📝 Release notes prepared:"
+          echo "   Artifact: release-notes"
+          echo "   File: release-notes.md"
 
+  summary:
+    needs: [prepare, build-backend, build-frontend, prepare-release-notes]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Build Summary
+        run: |
+          echo "## 🎉 Build and Publish Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Completed Jobs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Prepare**: Metadata and build args prepared" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Build Backend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Build Frontend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Release Notes**: Release notes prepared" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Published Images" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ needs.prepare.outputs.git-sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend**: \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ needs.prepare.outputs.git-sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Git SHA**: \`${{ needs.prepare.outputs.git-sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: \`${{ needs.prepare.outputs.branch-name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow Run**: [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📋 Release notes are available as an artifact: \`release-notes\`" >> $GITHUB_STEP_SUMMARY

@@ -22,11 +22,21 @@ You can configure the EKS deployment using environment variables or make target 
 # Required
 export EKS_CLUSTER_NAME=ideaforge-ai          # Your EKS cluster name
 export EKS_REGION=us-east-1                   # AWS region
-export EKS_NAMESPACE=ideaforge-production     # Target namespace (default: ideaforge-ai)
+export EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50  # Target namespace (MUST exist, will NOT be created)
 
-# Optional
+# Optional - Image Tags (recommended for production)
+export BACKEND_IMAGE_TAG=fab20a2              # Backend image tag (default: latest)
+export FRONTEND_IMAGE_TAG=e1dc1da             # Frontend image tag (default: latest)
+
+# Optional - Legacy (deprecated, use BACKEND_IMAGE_TAG/FRONTEND_IMAGE_TAG instead)
 export EKS_IMAGE_REGISTRY=ghcr.io/soumantrivedi/ideaforge-ai  # Image registry
 export EKS_IMAGE_TAG=latest                   # Image tag (default: latest)
+```
+
+**⚠️ IMPORTANT**: The namespace **MUST already exist** in your EKS cluster. The deployment will **NOT** create the namespace. Create it beforehand:
+
+```bash
+kubectl create namespace 20890-ideaforge-ai-dev-58a50
 ```
 
 ### Configure kubectl for EKS
@@ -58,46 +68,60 @@ stringData:
   # ... other secrets
 ```
 
-### 2. Deploy to Default Namespace
+### 2. Create Namespace (Required)
+
+**⚠️ The namespace MUST exist before deployment. The system will NOT create it.**
 
 ```bash
-make eks-deploy
+# Create the namespace first
+kubectl create namespace 20890-ideaforge-ai-dev-58a50
+
+# Verify it exists
+kubectl get namespace 20890-ideaforge-ai-dev-58a50
 ```
 
-### 3. Deploy to Custom Namespace
+### 3. Deploy to Namespace
 
 ```bash
 # Using environment variable
-export EKS_NAMESPACE=ideaforge-staging
-make eks-deploy
+export EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
+make eks-deploy-full
 
 # Or inline
-make eks-deploy EKS_NAMESPACE=ideaforge-staging
+make eks-deploy-full EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
 ```
 
-### 4. Deploy with Custom Image Tag
+### 4. Deploy with Specific Image Tags (Recommended)
 
 ```bash
-make eks-deploy \
-  EKS_NAMESPACE=ideaforge-production \
-  EKS_IMAGE_TAG=v1.0.0 \
-  EKS_IMAGE_REGISTRY=ghcr.io/soumantrivedi/ideaforge-ai
+# Deploy with specific image tags for stability
+make eks-deploy-full \
+  EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 \
+  BACKEND_IMAGE_TAG=fab20a2 \
+  FRONTEND_IMAGE_TAG=e1dc1da
 ```
+
+**Note**: Always use specific image tags (commit SHAs or semantic versions) for production deployments. Avoid using `latest` in production.
 
 ## Make Targets
 
 ### Deploy
 
 ```bash
-# Deploy to default namespace (ideaforge-ai)
-make eks-deploy
+# Full deployment (includes GHCR secret setup, namespace preparation, secrets loading, and deployment)
+make eks-deploy-full EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
 
-# Deploy to custom namespace
-make eks-deploy EKS_NAMESPACE=my-namespace
+# Deploy with specific image tags
+make eks-deploy-full \
+  EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 \
+  BACKEND_IMAGE_TAG=fab20a2 \
+  FRONTEND_IMAGE_TAG=e1dc1da
 
-# Deploy with specific image tag
-make eks-deploy EKS_NAMESPACE=prod EKS_IMAGE_TAG=v1.2.3
+# Deploy only (assumes namespace, secrets, and GHCR secret already exist)
+make eks-deploy EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
 ```
+
+**⚠️ Remember**: The namespace must exist before deployment. Create it with `kubectl create namespace <namespace>`.
 
 ### Status
 
@@ -205,17 +229,31 @@ annotations:
 
 ## Multi-Namespace Deployment
 
-You can deploy to multiple namespaces simultaneously:
+You can deploy to multiple namespaces simultaneously. **Remember to create each namespace first:**
 
 ```bash
+# Create namespaces
+kubectl create namespace ideaforge-prod
+kubectl create namespace ideaforge-staging
+kubectl create namespace ideaforge-dev
+
 # Production
-make eks-deploy EKS_NAMESPACE=ideaforge-prod EKS_IMAGE_TAG=v1.0.0
+make eks-deploy-full \
+  EKS_NAMESPACE=ideaforge-prod \
+  BACKEND_IMAGE_TAG=v1.0.0 \
+  FRONTEND_IMAGE_TAG=v1.0.0
 
 # Staging
-make eks-deploy EKS_NAMESPACE=ideaforge-staging EKS_IMAGE_TAG=latest
+make eks-deploy-full \
+  EKS_NAMESPACE=ideaforge-staging \
+  BACKEND_IMAGE_TAG=latest \
+  FRONTEND_IMAGE_TAG=latest
 
 # Development
-make eks-deploy EKS_NAMESPACE=ideaforge-dev EKS_IMAGE_TAG=dev
+make eks-deploy-full \
+  EKS_NAMESPACE=ideaforge-dev \
+  BACKEND_IMAGE_TAG=dev \
+  FRONTEND_IMAGE_TAG=dev
 ```
 
 Each namespace will have:
@@ -223,6 +261,7 @@ Each namespace will have:
 - Separate databases (PVCs)
 - Independent scaling
 - Separate ingress rules (if configured)
+- Independent image tag versions
 
 ## Troubleshooting
 
@@ -284,24 +323,27 @@ kubectl exec -it -n $EKS_NAMESPACE deployment/redis -- redis-cli ping
 ## Example: Full Production Deployment
 
 ```bash
-# Set environment variables
+# 1. Create namespace first (REQUIRED)
+kubectl create namespace 20890-ideaforge-ai-dev-58a50
+
+# 2. Set environment variables
 export EKS_CLUSTER_NAME=ideaforge-prod-cluster
 export EKS_REGION=us-east-1
-export EKS_NAMESPACE=ideaforge-production
-export EKS_IMAGE_REGISTRY=ghcr.io/soumantrivedi/ideaforge-ai
-export EKS_IMAGE_TAG=v1.0.0
+export EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
+export BACKEND_IMAGE_TAG=fab20a2  # Use specific commit SHA or version
+export FRONTEND_IMAGE_TAG=e1dc1da  # Use specific commit SHA or version
 
-# Configure kubectl
+# 3. Configure kubectl
 aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $EKS_REGION
 
-# Deploy
-make eks-deploy
+# 4. Deploy (full deployment includes GHCR secret, secrets loading, etc.)
+make eks-deploy-full
 
-# Verify
-make eks-status
+# 5. Verify
+make eks-status EKS_NAMESPACE=$EKS_NAMESPACE
 
-# Test
-make eks-test
+# 6. Test
+make eks-test EKS_NAMESPACE=$EKS_NAMESPACE
 ```
 
 ## Cleanup
@@ -309,13 +351,18 @@ make eks-test
 To remove a deployment:
 
 ```bash
-make eks-cleanup EKS_NAMESPACE=ideaforge-production
+make eks-cleanup EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
 ```
 
 This will:
 - Delete all resources in the namespace
-- Remove the namespace
+- **Note**: The namespace itself is NOT deleted by this command (you must delete it manually if desired)
 - Clean up generated kustomization files
 
 **Warning**: This will delete all data including databases!
+
+To delete the namespace manually:
+```bash
+kubectl delete namespace 20890-ideaforge-ai-dev-58a50
+```
 

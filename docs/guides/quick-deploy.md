@@ -199,7 +199,33 @@ curl -X POST http://localhost:8000/api/multi-agent/process \
 
 ## Production Deployment
 
-For production deployment, see `DEPLOYMENT_GUIDE.md` for:
+### EKS Deployment
+
+For EKS (Elastic Kubernetes Service) deployment:
+
+```bash
+# 1. Create namespace first (REQUIRED - deployment will NOT create it)
+kubectl create namespace 20890-ideaforge-ai-dev-58a50
+
+# 2. Configure kubectl for EKS
+aws eks update-kubeconfig --name ideaforge-ai --region us-east-1
+
+# 3. Deploy with specific image tags (recommended)
+make eks-deploy-full \
+  EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 \
+  BACKEND_IMAGE_TAG=fab20a2 \
+  FRONTEND_IMAGE_TAG=e1dc1da
+```
+
+**Important Notes**:
+- The namespace **MUST exist** before deployment
+- Use specific image tags (commit SHAs or versions) instead of `latest` for production
+- See `k8s/EKS_DEPLOYMENT_GUIDE.md` for detailed EKS deployment guide
+- See `k8s/EKS_IMAGE_TAGS.md` for image tag configuration details
+
+### Docker Compose Production
+
+For production deployment with Docker Compose, see `DEPLOYMENT_GUIDE.md` for:
 - Security hardening
 - SSL/HTTPS configuration
 - Monitoring setup

@@ -514,14 +514,22 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
             except ValueError as e:
                 # Handle specific V0 API errors
                 error_msg = str(e)
-                if "out of credits" in error_msg.lower() or "402" in error_msg:
+                # Check for credit-related errors more specifically
+                is_credit_error = (
+                    "out of credits" in error_msg.lower() or 
+                    "credits" in error_msg.lower() and ("402" in error_msg or "exhausted" in error_msg.lower())
+                )
+                
+                if is_credit_error:
                     logger.error("v0_credits_error", 
                                user_id=str(current_user["id"]),
                                has_user_key=bool(user_keys.get("v0")),
+                               key_source=key_source,
+                               key_prefix=v0_key[:8] + "..." if v0_key and len(v0_key) > 8 else "N/A",
                                error=error_msg)
                     raise HTTPException(
                         status_code=402,
-                        detail=f"V0 API error: {error_msg}. Please check your V0 account credits at https://v0.app/chat/settings/billing"
+                        detail=f"V0 API error: {error_msg}"
                     )
                 elif "401" in error_msg or "invalid" in error_msg.lower() or "unauthorized" in error_msg.lower():
                     logger.error("v0_auth_error", 

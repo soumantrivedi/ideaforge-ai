@@ -60,21 +60,32 @@ make kind-delete
 #### Deploy to EKS
 
 ```bash
-# Configure kubectl for EKS
+# 1. Create namespace first (REQUIRED - deployment will NOT create it)
+kubectl create namespace 20890-ideaforge-ai-dev-58a50
+
+# 2. Configure kubectl for EKS
 aws eks update-kubeconfig --name ideaforge-ai --region us-east-1
 
-# Deploy to EKS
-make eks-deploy
+# 3. Deploy with specific image tags (recommended for production)
+make eks-deploy-full \
+  EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 \
+  BACKEND_IMAGE_TAG=fab20a2 \
+  FRONTEND_IMAGE_TAG=e1dc1da
 
-# Test service-to-service interactions
-make eks-test
+# 4. Test service-to-service interactions
+make eks-test EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
 
-# Check status
-make eks-status
+# 5. Check status
+make eks-status EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
 
-# View logs
-make eks-logs
+# 6. View logs
+make eks-logs EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
 ```
+
+**⚠️ Important**: 
+- The namespace **MUST exist** before deployment
+- Use specific image tags (commit SHAs or versions) instead of `latest` for production
+- See `k8s/EKS_IMAGE_TAGS.md` for detailed image tag configuration guide
 
 ### Option B: Manual Deployment
 
@@ -126,21 +137,29 @@ VITE_API_URL: "https://api.ideaforge.ai"
 
 ### 5. Deploy Manually
 
+**⚠️ For EKS deployments**: Create the namespace first and use the `k8s/eks/` directory. The `k8s/namespace.yaml` file is NOT applied for EKS deployments.
+
 #### Option A: Using kubectl (apply all files)
 
 ```bash
-# Apply all manifests
-kubectl apply -f k8s/
+# For EKS: Create namespace first
+kubectl create namespace 20890-ideaforge-ai-dev-58a50
 
-# Or apply individually
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/configmap.yaml
-kubectl apply -f k8s/secrets.yaml
-kubectl apply -f k8s/postgres.yaml
-kubectl apply -f k8s/redis.yaml
-kubectl apply -f k8s/backend.yaml
-kubectl apply -f k8s/frontend.yaml
-kubectl apply -f k8s/ingress.yaml
+# For EKS: Apply manifests from k8s/eks/ (namespace.yaml is skipped)
+find k8s/eks -name "*.yaml" ! -name "namespace.yaml" -type f -exec kubectl apply -f {} \;
+
+# For Kind: Apply all manifests (includes namespace)
+kubectl apply -f k8s/kind/
+
+# Or apply individually (Kind only)
+kubectl apply -f k8s/kind/namespace.yaml
+kubectl apply -f k8s/kind/configmap.yaml
+kubectl apply -f k8s/kind/secrets.yaml
+kubectl apply -f k8s/kind/postgres.yaml
+kubectl apply -f k8s/kind/redis.yaml
+kubectl apply -f k8s/kind/backend.yaml
+kubectl apply -f k8s/kind/frontend.yaml
+kubectl apply -f k8s/kind/ingress.yaml
 ```
 
 #### Option B: Using kustomize
@@ -303,15 +322,30 @@ kubectl scale deployment frontend --replicas=3 -n ideaforge-ai
 
 ## Updating Images
 
-```bash
-# Update image tag
-kubectl set image deployment/backend backend=ghcr.io/YOUR_ORG/YOUR_REPO/backend:v1.0.0 -n ideaforge-ai
-kubectl set image deployment/frontend frontend=ghcr.io/YOUR_ORG/YOUR_REPO/frontend:v1.0.0 -n ideaforge-ai
+### For EKS Deployments
 
-# Or use kustomize
-# Update kustomization.yaml with new image tags
-kubectl apply -k k8s/
+```bash
+# Update image tags in manifests and redeploy
+make eks-deploy-full \
+  EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 \
+  BACKEND_IMAGE_TAG=new-backend-tag \
+  FRONTEND_IMAGE_TAG=new-frontend-tag
 ```
+
+### Manual Update
+
+```bash
+# Update image tag directly
+kubectl set image deployment/backend backend=ghcr.io/soumantrivedi/ideaforge-ai/backend:v1.0.0 -n 20890-ideaforge-ai-dev-58a50
+kubectl set image deployment/frontend frontend=ghcr.io/soumantrivedi/ideaforge-ai/frontend:v1.0.0 -n 20890-ideaforge-ai-dev-58a50
+
+# Or update manifests and reapply
+# Edit k8s/eks/backend.yaml and k8s/eks/frontend.yaml with new image tags
+kubectl apply -f k8s/eks/backend.yaml
+kubectl apply -f k8s/eks/frontend.yaml
+```
+
+**Note**: Always use specific image tags (commit SHAs or semantic versions) for production. See `k8s/EKS_IMAGE_TAGS.md` for detailed guidance.
 
 ## Security Best Practices
 

@@ -425,7 +425,9 @@ EKS_CLUSTER_NAME ?= ideaforge-ai
 EKS_REGION ?= us-east-1
 EKS_NAMESPACE ?= $(K8S_NAMESPACE)
 EKS_IMAGE_REGISTRY ?= ghcr.io/soumantrivedi/ideaforge-ai
-EKS_IMAGE_TAG ?= latest
+EKS_IMAGE_TAG ?= latest  # Deprecated: Use BACKEND_IMAGE_TAG and FRONTEND_IMAGE_TAG instead
+BACKEND_IMAGE_TAG ?= $(EKS_IMAGE_TAG)  # Backend image tag (e.g., fab20a2, latest, or specific version)
+FRONTEND_IMAGE_TAG ?= $(EKS_IMAGE_TAG)  # Frontend image tag (e.g., e1dc1da, latest, or specific version)
 EKS_STORAGE_CLASS ?= default-storage-class  # Default to default-storage-class (EBS), but can be overridden (e.g., gp2, gp3)
 EKS_GITHUB_USERNAME ?= $(shell git config user.name 2>/dev/null || echo "")
 EKS_GITHUB_TOKEN ?= $(shell grep "^GITHUB_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
@@ -840,10 +842,11 @@ eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespac
 	@echo "✅ GitHub Container Registry secret created: ghcr-secret in namespace $(EKS_NAMESPACE)"
 	@echo "   This secret allows Kubernetes to pull images from ghcr.io/soumantrivedi/ideaforge-ai"
 
-eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates namespace in all manifests)
+eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates namespace and image tags in all manifests)
 	@if [ -z "$(EKS_NAMESPACE)" ]; then \
 		echo "❌ EKS_NAMESPACE is required"; \
-		echo "   Usage: make eks-deploy-full EKS_NAMESPACE=your-namespace"; \
+		echo "   Usage: make eks-deploy-full EKS_NAMESPACE=your-namespace [BACKEND_IMAGE_TAG=tag] [FRONTEND_IMAGE_TAG=tag]"; \
+		echo "   Example: make eks-deploy-full EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BACKEND_IMAGE_TAG=fab20a2 FRONTEND_IMAGE_TAG=e1dc1da"; \
 		exit 1; \
 	fi
 	@echo "📝 Preparing EKS deployment for namespace: $(EKS_NAMESPACE)"
@@ -852,15 +855,21 @@ eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates 
 		exit 1; \
 	fi
 	@echo "📝 Updating namespace, image tags, and storage class in EKS manifests..."
-	@python3 $(K8S_DIR)/update-eks-namespace.py $(K8S_DIR)/eks $(EKS_NAMESPACE) $(EKS_IMAGE_TAG) $(EKS_STORAGE_CLASS) || \
+	@echo "   Backend Image Tag: $(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend Image Tag: $(FRONTEND_IMAGE_TAG)"
+	@python3 $(K8S_DIR)/update-eks-namespace.py $(K8S_DIR)/eks $(EKS_NAMESPACE) $(BACKEND_IMAGE_TAG) $(FRONTEND_IMAGE_TAG) $(EKS_STORAGE_CLASS) || \
 		(echo "⚠️  Python script failed, trying sed fallback..." && \
 		 for file in $$(find $(K8S_DIR)/eks -name "*.yaml" -type f); do \
 			if [ "$$(uname)" = "Darwin" ]; then \
 				sed -i '' "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" "$$file"; \
 				sed -i '' "s|name: ideaforge-ai$$|name: $(EKS_NAMESPACE)|g" "$$file"; \
+				sed -i '' "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" "$$file"; \
+				sed -i '' "s|ghcr\.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)|g" "$$file"; \
 			else \
 				sed -i "s|namespace: ideaforge-ai|namespace: $(EKS_NAMESPACE)|g" "$$file"; \
 				sed -i "s|name: ideaforge-ai$$|name: $(EKS_NAMESPACE)|g" "$$file"; \
+				sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" "$$file"; \
+				sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)|g" "$$file"; \
 			fi; \
 		 done)
 	@echo "✅ EKS manifests prepared for namespace: $(EKS_NAMESPACE)"
@@ -882,7 +891,7 @@ eks-load-secrets: ## Load secrets from .env file for EKS deployment (use EKS_NAM
 	@bash $(K8S_DIR)/push-env-secret.sh .env $(EKS_NAMESPACE)
 	@echo "✅ Secrets pushed to Kubernetes secret: ideaforge-ai-secrets in namespace: $(EKS_NAMESPACE)"
 
-eks-deploy-full: eks-setup-ghcr-secret eks-prepare-namespace eks-load-secrets eks-deploy ## Full EKS deployment with GHCR setup (use EKS_NAMESPACE=your-namespace)
+eks-deploy-full: eks-setup-ghcr-secret eks-prepare-namespace eks-load-secrets eks-deploy ## Full EKS deployment with GHCR setup (use EKS_NAMESPACE=your-namespace, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag)
 
 eks-port-forward: ## Port-forward to EKS services (use EKS_NAMESPACE=your-namespace, KUBECONFIG=path/to/kubeconfig)
 	@if [ -z "$(EKS_NAMESPACE)" ]; then \
@@ -906,11 +915,12 @@ eks-port-forward: ## Port-forward to EKS services (use EKS_NAMESPACE=your-namesp
 	 echo "   To stop: pkill -f 'kubectl port-forward'" && \
 	 wait
 
-eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=your-namespace)
+eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=your-namespace, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag)
 	@echo "☁️  Deploying to EKS cluster: $(EKS_CLUSTER_NAME)"
 	@echo "📦 Namespace: $(EKS_NAMESPACE)"
 	@echo "🏷️  Image Registry: $(EKS_IMAGE_REGISTRY)"
-	@echo "🏷️  Image Tag: $(EKS_IMAGE_TAG)"
+	@echo "🏷️  Backend Image Tag: $(BACKEND_IMAGE_TAG)"
+	@echo "🏷️  Frontend Image Tag: $(FRONTEND_IMAGE_TAG)"
 	@if ! kubectl cluster-info &> /dev/null; then \
 		echo "❌ kubectl is not configured or EKS cluster is not accessible"; \
 		echo "   Configure kubectl: aws eks update-kubeconfig --name $(EKS_CLUSTER_NAME) --region $(EKS_REGION)"; \
@@ -1014,3 +1024,50 @@ eks-test: ## Test service-to-service interactions in EKS cluster (use EKS_NAMESP
 	@echo "✅ EKS deployment complete!"
 	@echo ""
 	@$(MAKE) eks-status
+
+eks-update-db-configmaps: ## Update database ConfigMaps in EKS with latest seed file (use EKS_NAMESPACE=your-namespace)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-update-db-configmaps EKS_NAMESPACE=your-namespace"; \
+		exit 1; \
+	fi
+	@echo "📦 Updating database ConfigMaps in EKS namespace: $(EKS_NAMESPACE)"
+	@EKS_NAMESPACE=$(EKS_NAMESPACE) bash $(K8S_DIR)/create-db-configmaps.sh
+	@echo "✅ ConfigMaps updated"
+
+eks-add-demo-accounts: ## Add demo accounts to existing EKS database (use EKS_NAMESPACE=your-namespace)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-add-demo-accounts EKS_NAMESPACE=your-namespace"; \
+		exit 1; \
+	fi
+	@echo "👥 Adding demo accounts to EKS database in namespace: $(EKS_NAMESPACE)"
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+	fi
+	@POSTGRES_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$POSTGRES_POD" ]; then \
+		echo "❌ PostgreSQL pod not found in namespace $(EKS_NAMESPACE)"; \
+		exit 1; \
+	fi; \
+	echo "   Using PostgreSQL pod: $$POSTGRES_POD"; \
+	kubectl cp $(K8S_DIR)/add-demo-accounts.sql $(EKS_NAMESPACE)/$$POSTGRES_POD:/tmp/add-demo-accounts.sql; \
+	kubectl exec -n $(EKS_NAMESPACE) $$POSTGRES_POD -- psql -U agentic_pm -d agentic_pm_db -f /tmp/add-demo-accounts.sql; \
+	echo "✅ Demo accounts added successfully"
+
+kind-update-db-configmaps: ## Update database ConfigMaps in Kind with latest seed file
+	@echo "📦 Updating database ConfigMaps in Kind cluster..."
+	@K8S_NAMESPACE=$(K8S_NAMESPACE) bash $(K8S_DIR)/create-db-configmaps.sh
+	@echo "✅ ConfigMaps updated"
+
+kind-add-demo-accounts: ## Add demo accounts to existing Kind database
+	@echo "👥 Adding demo accounts to Kind database..."
+	@POSTGRES_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$POSTGRES_POD" ]; then \
+		echo "❌ PostgreSQL pod not found in namespace $(K8S_NAMESPACE)"; \
+		exit 1; \
+	fi; \
+	echo "   Using PostgreSQL pod: $$POSTGRES_POD"; \
+	kubectl cp $(K8S_DIR)/add-demo-accounts.sql $(K8S_NAMESPACE)/$$POSTGRES_POD:/tmp/add-demo-accounts.sql --context kind-$(KIND_CLUSTER_NAME); \
+	kubectl exec -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) $$POSTGRES_POD -- psql -U agentic_pm -d agentic_pm_db -f /tmp/add-demo-accounts.sql; \
+	echo "✅ Demo accounts added successfully"

@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: db-setup
-  namespace: ideaforge-ai
+  namespace: 20890-ideaforge-ai-dev-58a50
   labels:
     app: db-setup
     component: database
@@ -32,13 +32,29 @@ spec:
           done
           echo "✅ PostgreSQL is ready"
           
+          # Run base schema first (if available)
+          echo "🔄 Running base schema initialization..."
+          TABLE_COUNT=$$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
+          if [ "$$TABLE_COUNT" = "0" ]; then
+            if [ -f /init-scripts/01-init-schema.sql ]; then
+              echo "   Running base schema from init-scripts: 01-init-schema.sql"
+              psql -h postgres -U agentic_pm -d agentic_pm_db -f /init-scripts/01-init-schema.sql 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
+              echo "   ✅ Base schema initialized"
+            else
+              echo "   ⚠️  Base schema not found at /init-scripts/01-init-schema.sql"
+              echo "   ⚠️  Migrations may fail without base schema"
+            fi
+          else
+            echo "   ✅ Tables already exist ($$TABLE_COUNT tables), skipping base schema"
+          fi
+          
           # Run migrations
           echo "🔄 Running database migrations..."
           if [ -d /migrations ]; then
             for migration in /migrations/*.sql; do
-              if [ -f "$migration" ]; then
-                echo "   Running migration: $(basename $migration)"
-                psql -h postgres -U agentic_pm -d agentic_pm_db -f "$migration" 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
+              if [ -f "$$migration" ]; then
+                echo "   Running migration: $$(basename $$migration)"
+                psql -h postgres -U agentic_pm -d agentic_pm_db -f "$$migration" 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
               fi
             done
           fi
@@ -93,6 +109,9 @@ spec:
         - name: seed
           mountPath: /seed
           readOnly: true
+        - name: init-scripts
+          mountPath: /init-scripts
+          readOnly: true
       volumes:
       - name: migrations
         configMap:
@@ -100,6 +119,10 @@ spec:
       - name: seed
         configMap:
           name: db-seed
+      - name: init-scripts
+        configMap:
+          name: postgres-init-scripts
+          optional: true
       initContainers:
       - name: wait-for-postgres
         image: postgres:15-alpine

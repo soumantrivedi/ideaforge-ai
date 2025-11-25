@@ -32,26 +32,32 @@ make kind-logs
 ### Deploy to EKS
 
 ```bash
-# 1. Configure kubectl for EKS
+# 1. Create namespace first (REQUIRED - deployment will NOT create it)
+kubectl create namespace 20890-ideaforge-ai-dev-58a50
+
+# 2. Configure kubectl for EKS
 aws eks update-kubeconfig --name ideaforge-ai --region us-east-1
 
-# 2. Update secrets.yaml with production values
-# Edit k8s/secrets.yaml and update all secrets
+# 3. Deploy with specific image tags (recommended)
+make eks-deploy-full \
+  EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 \
+  BACKEND_IMAGE_TAG=fab20a2 \
+  FRONTEND_IMAGE_TAG=e1dc1da
 
-# 3. Update image references in backend.yaml and frontend.yaml
-# Replace ghcr.io/YOUR_ORG/YOUR_REPO with your actual registry
+# 4. Test
+make eks-test EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
 
-# 4. Update ingress.yaml with your domain and ACM certificate ARN
-
-# 5. Deploy
-make eks-deploy
-
-# 6. Test
-make eks-test
-
-# 7. Check status
-make eks-status
+# 5. Check status
+make eks-status EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50
 ```
+
+**Note**: The `eks-deploy-full` target handles:
+- GHCR secret setup (for pulling images from GitHub Container Registry)
+- Namespace preparation (updates manifests with namespace and image tags)
+- Secrets loading (from `.env` file)
+- Full deployment
+
+**⚠️ Important**: The namespace must exist before deployment. The system will verify it exists but will NOT create it.
 
 ## Make Targets Reference
 

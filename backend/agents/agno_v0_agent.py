@@ -331,18 +331,30 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                                response_text=response.text[:200] if response.text else "No response text")
                     raise ValueError("V0 API key is invalid or unauthorized. Please check your API key in Settings.")
                 elif response.status_code == 402:
+                    # Parse error response to get detailed message
+                    error_text = response.text
+                    error_detail = ""
+                    try:
+                        error_json = response.json()
+                        error_detail = error_json.get("detail", error_json.get("error", {}).get("message", error_text))
+                        if isinstance(error_detail, dict):
+                            error_detail = error_detail.get("message", str(error_detail))
+                    except:
+                        error_detail = error_text
+                    
                     logger.error("v0_api_credits_exhausted",
                                user_id=user_id,
                                status_code=402,
                                key_source=key_source,
-                               response_text=response.text[:200] if response.text else "No response text")
-                    error_text = response.text
-                    try:
-                        error_json = response.json()
-                        error_text = error_json.get("error", {}).get("message", error_text)
-                    except:
-                        pass
-                    raise ValueError(f"V0 API error: {response.status_code} - {error_text}")
+                               key_prefix=api_key[:8] + "..." if api_key and len(api_key) > 8 else "N/A",
+                               response_text=error_detail[:500] if error_detail else "No response text")
+                    
+                    # Check if it's actually a credit issue or another 402 error
+                    if "out of credits" in error_detail.lower() or "credits" in error_detail.lower():
+                        raise ValueError(f"V0 API error: You are out of credits. Add more or enable Auto-topup at https://v0.app/chat/settings/billing. Please check your V0 account credits at https://v0.app/chat/settings/billing. Error details: {error_detail}")
+                    else:
+                        # 402 might be for other reasons (rate limit, etc.)
+                        raise ValueError(f"V0 API error: {response.status_code} - {error_detail}")
                 elif response.status_code != 200 and response.status_code != 201:
                     logger.error("v0_api_error",
                                user_id=user_id,

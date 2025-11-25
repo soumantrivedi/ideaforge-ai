@@ -18,9 +18,14 @@ fi
 echo "✅ kubectl is configured"
 echo ""
 
-# Create namespace
-echo "📦 Creating namespace..."
-kubectl apply -f "${K8S_DIR}/namespace.yaml"
+# Verify namespace exists (do NOT create it - namespace must pre-exist)
+echo "📦 Verifying namespace exists..."
+if ! kubectl get namespace "${NAMESPACE}" &> /dev/null; then
+    echo "❌ Namespace ${NAMESPACE} does not exist"
+    echo "   Please create it first: kubectl create namespace ${NAMESPACE}"
+    exit 1
+fi
+echo "✅ Namespace ${NAMESPACE} exists"
 
 # Apply ConfigMap
 echo "⚙️  Applying ConfigMap..."
