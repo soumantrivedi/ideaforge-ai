@@ -104,9 +104,16 @@ export function PhaseFormModal({
       completeFormData,
     });
     
-    // Validate all fields are filled
-    if (!allFieldsFilled()) {
-      const missingFields = Array.isArray(phase.required_fields) ? phase.required_fields.filter(field => !completeFormData[field]?.trim()) : [];
+    // Validate all fields are filled (except design_mockups for Design phase)
+    const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
+    const fieldsToCheck = isDesignPhase 
+      ? phase.required_fields.filter(f => f !== 'design_mockups')
+      : phase.required_fields;
+    
+    const allRequiredFilled = fieldsToCheck.every((field) => formData[field]?.trim().length > 0);
+    
+    if (!allRequiredFilled) {
+      const missingFields = fieldsToCheck.filter(field => !completeFormData[field]?.trim());
       alert(`Please fill in all required fields before generating. Missing: ${missingFields.map(f => f.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')).join(', ')}`);
       return;
     }
@@ -114,6 +121,214 @@ export function PhaseFormModal({
     setIsSubmitting(true);
 
     try {
+      // Special handling for Design phase: Auto-generate and validate prompts, then generate prototypes
+      if (isDesignPhase && completeFormData['v0_lovable_prompts']) {
+        const promptsObj = JSON.parse(completeFormData['v0_lovable_prompts'] || '{}');
+        const v0Prompt = promptsObj['v0_prompt'] || '';
+        const lovablePrompt = promptsObj['lovable_prompt'] || '';
+        
+        // If prompts are not generated, generate them first
+        if (!v0Prompt.trim() || !lovablePrompt.trim()) {
+          console.log('Auto-generating prompts for Design phase...');
+          
+          // Generate V0 prompt
+          if (!v0Prompt.trim()) {
+            await handleGeneratePrompt('v0');
+            const updatedPrompts = JSON.parse(formData['v0_lovable_prompts'] || '{}');
+            promptsObj['v0_prompt'] = updatedPrompts['v0_prompt'] || '';
+          }
+          
+          // Generate Lovable prompt
+          if (!lovablePrompt.trim()) {
+            await handleGeneratePrompt('lovable');
+            const updatedPrompts = JSON.parse(formData['v0_lovable_prompts'] || '{}');
+            promptsObj['lovable_prompt'] = updatedPrompts['lovable_prompt'] || '';
+          }
+          
+          // Update formData with generated prompts
+          completeFormData['v0_lovable_prompts'] = JSON.stringify(promptsObj);
+          setFormData({
+            ...formData,
+            v0_lovable_prompts: completeFormData['v0_lovable_prompts'],
+          });
+        }
+        
+        // Validate prompts using validation agent
+        console.log('Validating generated prompts...');
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        
+        const validationResponse = await fetch(`${API_URL}/api/multi-agent/process`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({
+            user_id: user?.id,
+            product_id: productId,
+            query: `You are validating prototype generation prompts for V0 (Vercel) and Lovable AI. These prompts will be used to generate UI prototypes, so they must be comprehensive, detailed, and contain all necessary information.
+
+**V0 Prompt:**
+${promptsObj['v0_prompt']}
+
+**Lovable Prompt:**
+${promptsObj['lovable_prompt']}
+
+**User Experience Context:**
+${completeFormData['user_experience'] || 'N/A'}
+
+**All Previous Phase Data:**
+${JSON.stringify(completeFormData, null, 2)}
+
+**Validation Criteria:**
+1. Do the prompts contain enough detail to generate proper prototypes?
+2. Are all UI components, layouts, and interactions clearly specified?
+3. Are styling requirements (colors, typography, spacing) included?
+4. Are responsive design requirements mentioned?
+5. Are accessibility considerations included?
+6. Is the context from previous phases properly incorporated?
+7. Would these prompts result in production-ready prototypes?
+
+Provide your validation response in this format:
+
+**Validation Status**: [PASS / NEEDS_REFINEMENT / FAIL]
+
+**Completeness Score**: [0-100]
+
+**Issues Found** (if any):
+- [Severity: critical/warning/info] [Issue description] - [Suggestion]
+
+**Recommendations** (if any):
+- [Specific recommendation 1]
+- [Specific recommendation 2]
+
+**Refinement Suggestions** (if NEEDS_REFINEMENT or FAIL):
+- [Specific suggestions for improving the prompts]`,
+            coordination_mode: 'enhanced_collaborative',
+            primary_agent: 'validation',
+            supporting_agents: ['rag', 'analysis'],
+            context: {
+              product_id: productId,
+              phase_id: phase.id,
+              phase_name: phase.phase_name,
+              form_data: completeFormData,
+              v0_prompt: promptsObj['v0_prompt'],
+              lovable_prompt: promptsObj['lovable_prompt'],
+            },
+          }),
+        });
+        
+        if (validationResponse.ok) {
+          const validationData = await validationResponse.json();
+          const validationOutput = validationData.response || '';
+          
+          // Check if validation suggests refinement
+          const needsRefinement = validationOutput.includes('NEEDS_REFINEMENT') || 
+                                  validationOutput.includes('FAIL') ||
+                                  validationOutput.toLowerCase().includes('insufficient') ||
+                                  validationOutput.toLowerCase().includes('missing');
+          
+          if (needsRefinement) {
+            // Show validation feedback and ask user to refine
+            const refinementFeedback = prompt(
+              `Validation Agent suggests the prompts need refinement:\n\n${validationOutput.substring(0, 1000)}${validationOutput.length > 1000 ? '...' : ''}\n\nPlease provide specific feedback on what you would like to improve in the prompts, or click Cancel to proceed anyway:`,
+              ''
+            );
+            
+            if (refinementFeedback && refinementFeedback.trim()) {
+              // Refine the prompts based on user feedback
+              console.log('Refining prompts based on user feedback...');
+              
+              // Refine V0 prompt
+              const v0RefinementResponse = await fetch(`${API_URL}/api/design/generate-prompt`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  product_id: productId,
+                  phase_submission_id: selectedSubmissionId,
+                  provider: 'v0',
+                  context: {
+                    phase_name: phase.phase_name,
+                    form_data: completeFormData,
+                    all_form_fields: phase.required_fields,
+                    refinement_feedback: refinementFeedback,
+                    original_prompt: promptsObj['v0_prompt'],
+                    validation_feedback: validationOutput,
+                  },
+                }),
+              });
+              
+              if (v0RefinementResponse.ok) {
+                const v0Refined = await v0RefinementResponse.json();
+                promptsObj['v0_prompt'] = v0Refined.prompt;
+              }
+              
+              // Refine Lovable prompt
+              const lovableRefinementResponse = await fetch(`${API_URL}/api/design/generate-prompt`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  product_id: productId,
+                  phase_submission_id: selectedSubmissionId,
+                  provider: 'lovable',
+                  context: {
+                    phase_name: phase.phase_name,
+                    form_data: completeFormData,
+                    all_form_fields: phase.required_fields,
+                    refinement_feedback: refinementFeedback,
+                    original_prompt: promptsObj['lovable_prompt'],
+                    validation_feedback: validationOutput,
+                  },
+                }),
+              });
+              
+              if (lovableRefinementResponse.ok) {
+                const lovableRefined = await lovableRefinementResponse.json();
+                promptsObj['lovable_prompt'] = lovableRefined.prompt;
+              }
+              
+              // Update formData with refined prompts
+              completeFormData['v0_lovable_prompts'] = JSON.stringify(promptsObj);
+              setFormData({
+                ...formData,
+                v0_lovable_prompts: completeFormData['v0_lovable_prompts'],
+              });
+              
+              alert('Prompts have been refined based on your feedback.');
+            }
+          }
+          
+          // After validation (and refinement if needed), generate prototypes
+          console.log('Generating prototypes with validated prompts...');
+          
+          // Generate V0 prototype
+          try {
+            await handleGenerateMockup('v0');
+          } catch (error) {
+            console.error('Error generating V0 prototype:', error);
+            // Continue with Lovable even if V0 fails
+          }
+          
+          // Generate Lovable prototype
+          try {
+            await handleGenerateMockup('lovable');
+          } catch (error) {
+            console.error('Error generating Lovable prototype:', error);
+            // Continue with submission even if Lovable fails
+          }
+          
+          // Refresh mockup gallery
+          setMockupRefreshTrigger(prev => prev + 1);
+        }
+      }
+      
       console.log('Submitting ALL form data from all pages:', completeFormData);
       await onSubmit(completeFormData);
       // Don't close immediately - let the parent handle it after processing
@@ -133,14 +348,28 @@ export function PhaseFormModal({
       (phase.required_fields?.length || 0) - 1,
       (phase.template_prompts?.length || 0) - 1
     );
-    if (currentPromptIndex < maxIndex) {
-      const nextIndex = currentPromptIndex + 1;
+    
+    // For Design phase, skip question 3 (design_mockups) since prototypes are auto-generated
+    const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
+    let nextIndex = currentPromptIndex + 1;
+    
+    if (isDesignPhase && nextIndex <= maxIndex && nextIndex < phase.required_fields.length) {
+      const nextField = phase.required_fields[nextIndex];
+      // Skip design_mockups field (question 3) in Design phase
+      if (nextField === 'design_mockups') {
+        nextIndex = maxIndex; // Jump to last question (which will trigger submit)
+      }
+    }
+    
+    if (nextIndex <= maxIndex) {
       console.log('Navigating to next question:', {
         current: currentPromptIndex,
         next: nextIndex,
         max: maxIndex,
         totalFields: phase.required_fields?.length,
-        totalPrompts: phase.template_prompts?.length
+        totalPrompts: phase.template_prompts?.length,
+        isDesignPhase,
+        skippedDesignMockups: isDesignPhase && nextIndex < phase.required_fields.length && phase.required_fields[nextIndex] === 'design_mockups'
       });
       setCurrentPromptIndex(nextIndex);
     } else {
@@ -739,7 +968,7 @@ export function PhaseFormModal({
                       {currentPrompt}
                     </div>
                     <div className="text-xs text-blue-700">
-                      Generate detailed prompts for V0 and Lovable. Use "Help with AI" to auto-generate contextualized prompts based on all previous phases.
+                      Click "Generate Prompts & Prototypes" to automatically generate fully contextualized prompts for V0 and Lovable, validate them, and create prototypes. The system will validate the prompts and ask for refinement if needed.
                     </div>
                   </div>
                 </div>
@@ -1084,7 +1313,34 @@ export function PhaseFormModal({
               );
               const isLastQuestion = currentPromptIndex >= maxIndex;
               
-              return isLastQuestion ? null : (
+              // For Design phase, show "Generate with AI" on question 2 (v0_lovable_prompts) instead of question 3
+              const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
+              const isV0LovableQuestion = isDesignPhase && currentField === 'v0_lovable_prompts';
+              const shouldShowGenerateButton = isLastQuestion || isV0LovableQuestion;
+              
+              if (shouldShowGenerateButton) {
+                return (
+                  <button
+                    type="submit"
+                    disabled={!isCurrentFieldFilled() || isSubmitting}
+                    className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {isDesignPhase && isV0LovableQuestion ? 'Generating prompts & prototypes...' : 'Processing...'}
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        {isDesignPhase && isV0LovableQuestion ? 'Generate Prompts & Prototypes' : 'Generate with AI'}
+                      </>
+                    )}
+                  </button>
+                );
+              }
+              
+              return (
                 <button
                   type="button"
                   onClick={handleNext}
@@ -1094,33 +1350,6 @@ export function PhaseFormModal({
                   Next
                 </button>
               );
-            })()}
-            {(() => {
-              const maxIndex = Math.min(
-                (phase.required_fields?.length || 0) - 1,
-                (phase.template_prompts?.length || 0) - 1
-              );
-              const isLastQuestion = currentPromptIndex >= maxIndex;
-              
-              return isLastQuestion ? (
-                <button
-                  type="submit"
-                  disabled={!allFieldsFilled() || isSubmitting}
-                  className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      Generate with AI
-                    </>
-                  )}
-                </button>
-              ) : null;
             })()}
         </div>
       </form>

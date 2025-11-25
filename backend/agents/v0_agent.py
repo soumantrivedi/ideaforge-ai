@@ -130,11 +130,34 @@ Your output should:
         if design_requirements:
             requirements_text = f"\n\nDesign Requirements:\n{design_requirements}\n"
         
+        # Check for refinement feedback in context
+        refinement_section = ""
+        if isinstance(product_context, dict):
+            refinement_feedback = product_context.get('refinement_feedback')
+            validation_feedback = product_context.get('validation_feedback')
+            original_prompt = product_context.get('original_prompt')
+            
+            if refinement_feedback or validation_feedback:
+                refinement_section = "\n\n--- REFINEMENT REQUEST ---\n"
+                if original_prompt:
+                    refinement_section += f"Original Prompt:\n{original_prompt}\n\n"
+                if validation_feedback:
+                    refinement_section += f"Validation Feedback:\n{validation_feedback}\n\n"
+                if refinement_feedback:
+                    refinement_section += f"User Refinement Request:\n{refinement_feedback}\n\n"
+                refinement_section += "Please refine the prompt based on the feedback above, addressing all concerns and improving clarity, completeness, and specificity.\n"
+        
+        # Extract context string if it's a dict with 'context' key
+        context_text = product_context
+        if isinstance(product_context, dict) and 'context' in product_context:
+            context_text = product_context['context']
+        
         prompt = f"""Generate a comprehensive V0 (Vercel) design prompt for this product:
 
 Product Context:
-{product_context}
+{context_text}
 {requirements_text}
+{refinement_section}
 
 Create a detailed prompt that:
 1. Describes the UI components needed
