@@ -23,8 +23,6 @@ interface VerificationStatus {
   message?: string;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
 export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatus = {} }: ProviderConfigProps) {
   const { token } = useAuth();
   const [openaiKey, setOpenaiKey] = useState('');
@@ -61,15 +59,9 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
     };
 
     try {
-      const headers: HeadersInit = { 'Content-Type': 'application/json' };
-      const authToken = localStorage.getItem('auth_token');
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
-      
-      const response = await fetch(`${API_URL}/api/providers/configure`, {
+      const response = await apiFetch('/api/providers/configure', {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(payload),
       });
