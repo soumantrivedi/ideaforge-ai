@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Frontend React Application
   frontend:
@@ -10,6 +8,10 @@ services:
         - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
         - VITE_OKTA_CLIENT_ID=${VITE_OKTA_CLIENT_ID}
         - VITE_OKTA_ISSUER=${VITE_OKTA_ISSUER}
+        - GIT_SHA=${GIT_SHA:-unknown}
+        - VERSION=${VERSION:-unknown}
+    image: ideaforge-ai-frontend:${GIT_SHA:-latest}
+    container_name: ideaforge-ai-frontend-${GIT_SHA:-latest}
     ports:
       - "3001:3000"
     environment:
@@ -28,6 +30,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      args:
+        - GIT_SHA=${GIT_SHA:-unknown}
+        - VERSION=${VERSION:-unknown}
+    image: ideaforge-ai-backend:${GIT_SHA:-latest}
+    container_name: ideaforge-ai-backend-${GIT_SHA:-latest}
     ports:
       - "8000:8000"
     environment:

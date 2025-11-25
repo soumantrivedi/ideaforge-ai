@@ -1,18 +1,43 @@
-.PHONY: help build up down restart logs clean deploy health test rebuild redeploy check-errors check-logs
+.PHONY: help build up down restart logs clean deploy health test rebuild redeploy check-errors check-logs version clean-all build-versioned deploy-versioned
+
+# Get git SHA for versioning
+GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION := $(GIT_SHA)
+IMAGE_TAG := ideaforge-ai-$(VERSION)
 
 help: ## Show this help message
 	@echo "IdeaForge AI - Deployment Commands"
 	@echo "=================================="
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@echo "Current Git SHA: $(GIT_SHA)"
+	@echo "Image Tag: $(IMAGE_TAG)"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
-build: ## Build Docker images
-	docker-compose build
+version: ## Show current version information
+	@echo "Git SHA: $(GIT_SHA)"
+	@echo "Version: $(VERSION)"
+	@echo "Image Tag: $(IMAGE_TAG)"
+
+clean-all: ## Complete cleanup: remove containers, volumes, networks, and images
+	@echo "🧹 Performing complete cleanup..."
+	docker-compose down -v --remove-orphans
+	docker system prune -f
+	@echo "✅ Cleanup complete"
+
+build: ## Build Docker images with current git SHA
+	@echo "🔨 Building Docker images with tag: $(IMAGE_TAG)"
+	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose build --build-arg GIT_SHA=$(GIT_SHA) --build-arg VERSION=$(VERSION)
+	@echo "✅ Build complete"
 
 build-no-cache: ## Build Docker images without cache
-	docker-compose build --no-cache
+	@echo "🔨 Building Docker images (no cache) with tag: $(IMAGE_TAG)"
+	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose build --no-cache --build-arg GIT_SHA=$(GIT_SHA) --build-arg VERSION=$(VERSION)
+	@echo "✅ Build complete"
+
+build-versioned: build-no-cache ## Alias for build-no-cache with versioning
 
 up: ## Start all services
-	docker-compose up -d
+	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose up -d
 
 down: ## Stop all services
 	docker-compose down
@@ -31,54 +56,29 @@ clean: ## Remove containers, networks, and volumes
 	docker system prune -f
 
 deploy: ## Full deployment (build + start + health check)
-	@echo "🚀 Deploying IdeaForge AI..."
+	@echo "🚀 Deploying IdeaForge AI (Version: $(VERSION))..."
 	@if [ ! -f .env ]; then \
-		echo "⚠️  .env file not found. Please create it from .env.example"; \
-		exit 1; \
+		echo "⚠️  .env file not found. Continuing with environment variables from shell..."; \
 	fi
-	docker-compose build
-	docker-compose up -d
+	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) $(MAKE) build
+	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) $(MAKE) up
 	@echo "⏳ Waiting for services to start..."
 	@sleep 10
-	@echo "🔍 Checking health..."
-	@for i in 1 2 3 4 5; do \
-		if curl -s http://localhost:8000/health > /dev/null 2>&1; then \
-			echo "✅ Backend is healthy"; \
-			break; \
-		fi; \
-		echo "   Waiting... ($$i/5)"; \
-		sleep 2; \
-	done
+	@$(MAKE) health
 	@echo ""
 	@echo "✅ Deployment complete!"
+	@echo "   Version: $(VERSION)"
 	@echo "   Frontend: http://localhost:3001"
 	@echo "   Backend:  http://localhost:8000"
 	@echo "   API Docs: http://localhost:8000/docs"
 
-redeploy: ## Rebuild without cache and redeploy
-	@echo "🔄 Rebuilding and redeploying IdeaForge AI..."
-	docker-compose down
-	docker-compose build --no-cache backend frontend
-	docker-compose up -d
-	@echo "⏳ Waiting for services to start..."
-	@sleep 10
-	@echo "🔍 Checking health..."
-	@for i in 1 2 3 4 5; do \
-		if curl -s http://localhost:8000/health > /dev/null 2>&1; then \
-			echo "✅ Backend is healthy"; \
-			break; \
-		fi; \
-		echo "   Waiting... ($$i/5)"; \
-		sleep 2; \
-	done
+redeploy: clean-all build-no-cache deploy check-errors ## Complete rebuild and redeploy (clean + build + deploy + verify)
 	@echo ""
-	@echo "✅ Redeployment complete!"
-	@echo "   Frontend: http://localhost:3001"
-	@echo "   Backend:  http://localhost:8000"
-	@echo "   API Docs: http://localhost:8000/docs"
-	@echo ""
-	@echo "🔍 Running error check..."
-	@$(MAKE) check-errors
+	@echo "✅ Complete redeployment finished!"
+	@echo "   Version: $(VERSION)"
+	@echo "   All services rebuilt and deployed"
+
+deploy-versioned: redeploy ## Alias for redeploy with versioning
 
 health: ## Check service health
 	@echo "🔍 Checking service health..."
@@ -106,8 +106,8 @@ start: ## Start stopped services
 	docker-compose start
 
 rebuild: ## Rebuild and restart services
-	docker-compose build --no-cache
-	docker-compose up -d
+	@$(MAKE) build-no-cache
+	@$(MAKE) up
 
 logs-backend: ## Tail backend logs
 	docker-compose logs -f backend

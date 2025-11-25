@@ -157,37 +157,6 @@ export function AgentStatusPanel({
         return timeB - timeA;
       })[0];
   };
-  
-  // Extract all unique agents from interactions if agents list is empty
-  useEffect(() => {
-    if ((!agents || agents.length === 0) && agentInteractions.length > 0) {
-      const uniqueAgents = new Set<string>();
-      agentInteractions.forEach(interaction => {
-        if (interaction.from_agent) uniqueAgents.add(interaction.from_agent);
-        if (interaction.to_agent) uniqueAgents.add(interaction.to_agent);
-      });
-      
-      // Convert to AgentStatus format
-      const agentStatuses = Array.from(uniqueAgents).map(agentName => {
-        const role = agentName.toLowerCase().replace(/\s+/g, '_');
-        const latestInteraction = getLatestInteraction(role);
-        return {
-          role,
-          name: agentName.charAt(0).toUpperCase() + agentName.slice(1).replace(/_/g, ' '),
-          isActive: true,
-          lastActivity: latestInteraction?.timestamp ? new Date(latestInteraction.timestamp).toLocaleString() : undefined,
-          interactions: agentInteractions.filter(i => 
-            (i.to_agent || '').toLowerCase().replace(/\s+/g, '_') === role || 
-            (i.from_agent || '').toLowerCase().replace(/\s+/g, '_') === role
-          ).length,
-          latestInteraction,
-        };
-      });
-      
-      // Update agents state if we have a way to do it
-      // Note: This requires passing setAgents as a prop or using a callback
-    }
-  }, [agentInteractions, agents]);
 
   return (
     <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6">

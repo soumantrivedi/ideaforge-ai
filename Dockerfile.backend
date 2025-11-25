@@ -2,6 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Build arguments for versioning
+ARG GIT_SHA=unknown
+ARG VERSION=unknown
+
+# Set environment variables
+ENV GIT_SHA=${GIT_SHA}
+ENV VERSION=${VERSION}
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
