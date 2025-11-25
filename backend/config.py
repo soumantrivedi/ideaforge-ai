@@ -7,10 +7,10 @@ class Settings(BaseSettings):
     # Database Configuration
     database_url: str = os.getenv("DATABASE_URL", "postgresql://user:password@postgres:5432/agentic_pm_db")
 
-    # AI Provider API Keys
-    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY")
-    anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
-    google_api_key: Optional[str] = os.getenv("GOOGLE_API_KEY")
+    # AI Provider API Keys (strip whitespace to ensure proper detection)
+    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY", "").strip() or None
+    anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY", "").strip() or None
+    google_api_key: Optional[str] = os.getenv("GOOGLE_API_KEY", "").strip() or None
 
     # Okta OAuth/SSO Configuration
     okta_client_id: str = os.getenv("OKTA_CLIENT_ID", "")

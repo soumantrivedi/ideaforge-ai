@@ -15,9 +15,10 @@ class ProviderRegistry:
 
     def __init__(self):
         self._lock = Lock()
-        self._openai_key: Optional[str] = settings.openai_api_key
-        self._claude_key: Optional[str] = settings.anthropic_api_key
-        self._gemini_key: Optional[str] = settings.google_api_key
+        # Strip whitespace and ensure non-empty strings
+        self._openai_key: Optional[str] = (settings.openai_api_key.strip() if settings.openai_api_key else None) or None
+        self._claude_key: Optional[str] = (settings.anthropic_api_key.strip() if settings.anthropic_api_key else None) or None
+        self._gemini_key: Optional[str] = (settings.google_api_key.strip() if settings.google_api_key else None) or None
 
         self._openai_client: Optional[OpenAI] = None
         self._claude_client: Optional[Anthropic] = None
@@ -45,11 +46,12 @@ class ProviderRegistry:
         """Update provider API keys and rebuild clients. None means 'no change'."""
         with self._lock:
             if openai_key is not None:
-                self._openai_key = openai_key or None
+                # Strip whitespace and ensure non-empty
+                self._openai_key = (openai_key.strip() if openai_key else None) or None
             if claude_key is not None:
-                self._claude_key = claude_key or None
+                self._claude_key = (claude_key.strip() if claude_key else None) or None
             if gemini_key is not None:
-                self._gemini_key = gemini_key or None
+                self._gemini_key = (gemini_key.strip() if gemini_key else None) or None
 
             self._rebuild_clients()
 

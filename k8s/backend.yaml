@@ -20,7 +20,7 @@ spec:
       containers:
       - name: backend
         # Image will be updated by make kind-update-images
-        image: ideaforge-ai-backend:da359d6
+        image: ideaforge-ai-backend:8ed9c7c
         imagePullPolicy: Never
         ports:
         - containerPort: 8000
