@@ -236,19 +236,22 @@ async def generate_thumbnail_previews(
     try:
         from backend.services.api_key_loader import load_user_api_keys_from_db
         
-        # Load user-specific API keys
-        user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
-        lovable_key = user_keys.get("lovable") or settings.lovable_api_key
+        # Lovable uses link generator, not API keys
+        # Generate Lovable link using the Build with URL format
+        from backend.agents.agno_lovable_agent import AgnoLovableAgent
         
-        if not lovable_key:
-            raise HTTPException(status_code=400, detail="Lovable API key is not configured. Please configure it in Settings.")
-        
-        # Generate 3 thumbnail previews
-        previews = await lovable_agent.generate_thumbnail_previews(
+        lovable_agent = AgnoLovableAgent()
+        result = lovable_agent.generate_lovable_link(
             lovable_prompt=request.lovable_prompt,
-            lovable_api_key=lovable_key,
-            num_previews=request.num_previews
+            image_urls=None
         )
+        
+        # Return link as preview (Lovable doesn't support thumbnail generation via API)
+        previews = [{
+            "url": result["project_url"],
+            "type": "lovable_link",
+            "prompt": request.lovable_prompt
+        }]
         
         return {
             "previews": previews,

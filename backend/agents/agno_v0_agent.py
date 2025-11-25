@@ -120,7 +120,8 @@ Your output should:
                     return "Error: V0 API key is not configured. Please configure it in Settings."
                 
                 async def _create_project():
-                    async with httpx.AsyncClient(timeout=180.0) as client:
+                    # Disable SSL verification for V0 API (as requested)
+                    async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
                         response = await client.post(
                             "https://api.v0.dev/v1/chats",
                             headers={
@@ -182,7 +183,8 @@ Your output should:
                     return "Error: V0 API key is not configured. Please configure it in Settings."
                 
                 async def _generate_code():
-                    async with httpx.AsyncClient(timeout=120.0) as client:
+                    # Disable SSL verification for V0 API (as requested)
+                    async with httpx.AsyncClient(timeout=120.0, verify=False) as client:
                         response = await client.post(
                             "https://api.v0.dev/v1/chat/completions",
                             headers={
@@ -275,7 +277,8 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
         if not api_key:
             raise ValueError("V0 API key is not configured")
         
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        # Disable SSL verification for V0 API (as requested)
+        async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
             try:
                 response = await client.post(
                     "https://api.v0.dev/v1/chats",

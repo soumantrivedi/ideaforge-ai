@@ -314,7 +314,8 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
         if not api_key:
             raise ValueError("V0 API key is not configured")
         
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        # Disable SSL verification for V0 API (as requested)
+        async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
             try:
                 # V0 Platform API endpoint for creating projects
                 # Documentation: https://v0.dev/api

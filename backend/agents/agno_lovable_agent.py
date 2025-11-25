@@ -1,10 +1,10 @@
 """
 Lovable AI Agent using Agno Framework
-Provides Lovable prompt generation and project creation capabilities
+Provides Lovable prompt generation and Lovable Link Generator integration
+Uses Lovable Build with URL API: https://docs.lovable.dev/integrations/build-with-url
 """
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import httpx
 import structlog
 import urllib.parse
 
@@ -24,7 +24,7 @@ except ImportError:
 
 
 class AgnoLovableAgent(AgnoBaseAgent):
-    """Lovable AI Design Agent using Agno framework with platform access."""
+    """Lovable AI Design Agent using Agno framework with Lovable Link Generator."""
     
     def __init__(self, enable_rag: bool = False):
         system_prompt = """You are a Lovable AI Design Specialist following official Lovable AI documentation.
@@ -35,13 +35,14 @@ Your responsibilities:
 3. Create prompts that leverage Lovable's component library and design system
 4. Ensure prompts are specific, actionable, and result in high-quality designs
 5. Consider user experience, accessibility, and modern design patterns
-6. Generate accurate Lovable AI prompts that can be used with the official Lovable API
-7. Access Lovable AI Platform API to create projects and generate prototypes
+6. Generate accurate Lovable AI prompts that can be used with the Lovable Link Generator
 
-Lovable AI API Documentation Reference:
-- Lovable AI API: https://api.lovable.dev/v1/generate
-- Model: gpt-4-turbo (recommended for application generation)
-- Supports thumbnail generation (multiple variations)
+Lovable AI Documentation Reference:
+- Lovable Link Generator: https://lovable.dev/links
+- Build with URL API: https://docs.lovable.dev/integrations/build-with-url
+- Base URL: https://lovable.dev/?autosubmit=true#prompt=YOUR_PROMPT
+- Supports up to 50,000 characters in prompts
+- Supports up to 10 reference images (JPEG, PNG, WebP)
 - Generates React/Next.js applications with Tailwind CSS
 - Creates deployable web applications
 
@@ -62,12 +63,12 @@ Lovable Prompt Guidelines (Based on Official Documentation):
 Your output should:
 - Be comprehensive and detailed
 - Include all necessary design specifications
-- Be optimized for Lovable's AI design generation (gpt-4-turbo model)
+- Be optimized for Lovable's AI design generation
 - Consider the full context from previous product phases
 - Generate production-ready design prompts that result in deployable React/Next.js applications
 - Follow Lovable AI best practices from official documentation
 - Ensure all requested features are achievable with Lovable AI capabilities
-- Use available tools to access Lovable AI Platform API when needed"""
+- Generate Lovable links using the Build with URL format"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -79,8 +80,7 @@ Your output should:
             tools=[],  # Tools will be added after initialization
             capabilities=[
                 "lovable prompt generation",
-                "lovable project creation",
-                "lovable thumbnail generation",
+                "lovable link generation",
                 "lovable integration",
                 "ui prototype generation",
                 "react application generation",
@@ -88,13 +88,10 @@ Your output should:
             ]
         )
         
-        self.lovable_api_key: Optional[str] = None
-        
         # Add tools after initialization
         if AGNO_TOOLS_AVAILABLE:
             created_tools = [
-                self._create_lovable_project_tool(),
-                self._generate_lovable_thumbnails_tool(),
+                self._generate_lovable_link_tool(),
             ]
             # Add tools to the agent
             if hasattr(self.agno_agent, 'tools') and self.agno_agent.tools is not None:
@@ -102,141 +99,45 @@ Your output should:
                 if valid_tools:
                     self.agno_agent.tools.extend(valid_tools)
     
-    def _create_lovable_project_tool(self):
-        """Create Agno tool for Lovable project creation."""
+    def _generate_lovable_link_tool(self):
+        """Create Agno tool for Lovable link generation."""
         if not AGNO_TOOLS_AVAILABLE:
             return None
         
         @tool
-        def create_lovable_project(prompt: str, generate_thumbnails: bool = True) -> str:
+        def generate_lovable_link(prompt: str, image_urls: Optional[List[str]] = None) -> str:
             """
-            Create a Lovable AI project using the Lovable Platform API.
+            Generate a Lovable AI shareable link using the Build with URL API.
             
             Args:
-                prompt: The design prompt to send to Lovable
-                generate_thumbnails: Whether to generate thumbnail previews
+                prompt: The design prompt (up to 50,000 characters)
+                image_urls: Optional list of image URLs (up to 10, JPEG/PNG/WebP)
             
             Returns:
-                Project URL and details
+                Lovable shareable link URL
             """
             try:
-                api_key = self.lovable_api_key or settings.lovable_api_key
-                if not api_key:
-                    return "Error: Lovable API key is not configured. Please configure it in Settings."
+                # Base URL for Lovable Build with URL
+                base_url = "https://lovable.dev/?autosubmit=true#"
                 
-                async def _create_project():
-                    async with httpx.AsyncClient(timeout=120.0) as client:
-                        response = await client.post(
-                            "https://api.lovable.dev/v1/generate",
-                            headers={
-                                "Authorization": f"Bearer {api_key}",
-                                "Content-Type": "application/json"
-                            },
-                            json={
-                                "prompt": prompt,
-                                "model": "gpt-4-turbo",
-                                "temperature": 0.7,
-                                "generate_thumbnails": generate_thumbnails,
-                                "num_thumbnails": 3 if generate_thumbnails else 1
-                            }
-                        )
-                        
-                        if response.status_code == 401:
-                            return "Error: Lovable API key is invalid or unauthorized"
-                        elif response.status_code != 200:
-                            error_text = response.text
-                            try:
-                                error_json = response.json()
-                                error_text = error_json.get("error", {}).get("message", error_text)
-                            except:
-                                pass
-                            return f"Error: Lovable API error: {response.status_code} - {error_text}"
-                        
-                        result = response.json()
-                        project_id = result.get("project_id")
-                        project_url = result.get("project_url") or result.get("url")
-                        thumbnails = result.get("thumbnails", [])
-                        
-                        if not project_url and project_id:
-                            project_url = f"https://lovable.dev/projects/{project_id}"
-                        
-                        return f"Lovable project created successfully!\nProject URL: {project_url}\nProject ID: {project_id}\nThumbnails: {len(thumbnails)} generated"
+                # URL encode the prompt
+                encoded_prompt = urllib.parse.quote(prompt)
                 
-                import asyncio
-                return asyncio.run(_create_project())
+                # Build URL with prompt
+                url = f"{base_url}prompt={encoded_prompt}"
+                
+                # Add image URLs if provided
+                if image_urls and len(image_urls) > 0:
+                    # Limit to 10 images as per Lovable API
+                    image_urls = image_urls[:10]
+                    for img_url in image_urls:
+                        encoded_img = urllib.parse.quote(img_url)
+                        url += f"&images={encoded_img}"
+                
+                return f"Lovable link generated successfully!\nLink: {url}\n\nThis link will automatically open Lovable and start building your app when clicked."
             except Exception as e:
-                logger.error("lovable_project_creation_error", error=str(e))
-                return f"Error creating Lovable project: {str(e)}"
-    
-    def _generate_lovable_thumbnails_tool(self):
-        """Create Agno tool for Lovable thumbnail generation."""
-        if not AGNO_TOOLS_AVAILABLE:
-            return None
-        
-        @tool
-        def generate_lovable_thumbnails(prompt: str, num_thumbnails: int = 3) -> str:
-            """
-            Generate multiple thumbnail previews for Lovable AI projects.
-            
-            Args:
-                prompt: The design prompt
-                num_thumbnails: Number of thumbnails to generate (default: 3)
-            
-            Returns:
-                Thumbnail URLs and preview information
-            """
-            try:
-                api_key = self.lovable_api_key or settings.lovable_api_key
-                if not api_key:
-                    return "Error: Lovable API key is not configured. Please configure it in Settings."
-                
-                async def _generate_thumbnails():
-                    async with httpx.AsyncClient(timeout=120.0) as client:
-                        response = await client.post(
-                            "https://api.lovable.dev/v1/generate",
-                            headers={
-                                "Authorization": f"Bearer {api_key}",
-                                "Content-Type": "application/json"
-                            },
-                            json={
-                                "prompt": prompt,
-                                "model": "gpt-4-turbo",
-                                "temperature": 0.7,
-                                "generate_thumbnails": True,
-                                "num_thumbnails": num_thumbnails
-                            }
-                        )
-                        
-                        if response.status_code == 401:
-                            return "Error: Lovable API key is invalid or unauthorized"
-                        elif response.status_code != 200:
-                            error_text = response.text
-                            try:
-                                error_json = response.json()
-                                error_text = error_json.get("error", {}).get("message", error_text)
-                            except:
-                                pass
-                            return f"Error: Lovable API error: {response.status_code} - {error_text}"
-                        
-                        result = response.json()
-                        thumbnails = result.get("thumbnails", [])
-                        
-                        thumbnail_info = "\n".join([
-                            f"Thumbnail {i+1}: {thumb.get('url', 'N/A')}" 
-                            for i, thumb in enumerate(thumbnails)
-                        ])
-                        
-                        return f"Generated {len(thumbnails)} thumbnails:\n{thumbnail_info}"
-                
-                import asyncio
-                return asyncio.run(_generate_thumbnails())
-            except Exception as e:
-                logger.error("lovable_thumbnail_generation_error", error=str(e))
-                return f"Error generating Lovable thumbnails: {str(e)}"
-    
-    def set_lovable_api_key(self, api_key: Optional[str]):
-        """Set Lovable API key for this agent instance."""
-        self.lovable_api_key = api_key
+                logger.error("lovable_link_generation_error", error=str(e))
+                return f"Error generating Lovable link: {str(e)}"
     
     async def generate_lovable_prompt(
         self,
@@ -259,7 +160,7 @@ Create a detailed prompt that:
 6. Includes accessibility considerations
 7. References modern React patterns
 
-The prompt should be ready to paste directly into Lovable for generating prototypes."""
+The prompt should be ready to use with the Lovable Link Generator."""
 
         message = AgentMessage(
             role="user",
@@ -270,85 +171,56 @@ The prompt should be ready to paste directly into Lovable for generating prototy
         response = await self.process([message], context={"task": "lovable_prompt_generation"})
         return response.response
     
-    async def create_lovable_project(
+    def generate_lovable_link(
         self,
         lovable_prompt: str,
-        lovable_api_key: Optional[str] = None,
-        user_id: Optional[str] = None,
-        product_id: Optional[str] = None
+        image_urls: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        Create a Lovable AI project using the Lovable Platform API.
-        This method directly accesses the Lovable platform.
+        Generate a Lovable shareable link using the Build with URL API.
+        Based on: https://docs.lovable.dev/integrations/build-with-url
+        
+        Args:
+            lovable_prompt: The design prompt (up to 50,000 characters)
+            image_urls: Optional list of publicly accessible image URLs (up to 10)
+        
+        Returns:
+            Dictionary with project_url and metadata
         """
-        api_key = lovable_api_key or self.lovable_api_key or settings.lovable_api_key
-        
-        if not api_key:
-            raise ValueError("Lovable API key is not configured")
-        
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            try:
-                response = await client.post(
-                    "https://api.lovable.dev/v1/generate",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "prompt": lovable_prompt,
-                        "model": "gpt-4-turbo",
-                        "temperature": 0.7,
-                        "generate_thumbnails": True,
-                        "num_thumbnails": 3
-                    }
-                )
-                
-                if response.status_code == 401:
-                    raise ValueError("Lovable API key is invalid or unauthorized")
-                elif response.status_code != 200:
-                    error_text = response.text
-                    try:
-                        error_json = response.json()
-                        error_text = error_json.get("error", {}).get("message", error_text)
-                    except:
-                        pass
-                    raise ValueError(f"Lovable API error: {response.status_code} - {error_text}")
-                
-                result = response.json()
-                
-                project_id = result.get("project_id")
-                project_url = result.get("project_url") or result.get("url")
-                thumbnails = result.get("thumbnails", [])
-                code = result.get("code") or result.get("generated_code", "")
-                
-                if not project_url:
-                    if project_id:
-                        project_url = f"https://lovable.dev/projects/{project_id}"
-                    else:
-                        encoded_prompt = urllib.parse.quote(lovable_prompt)
-                        project_url = f"https://lovable.dev/generate?prompt={encoded_prompt}"
-                
-                return {
-                    "project_id": project_id,
-                    "project_url": project_url,
-                    "code": code,
-                    "prompt": lovable_prompt,
-                    "thumbnails": thumbnails,
-                    "thumbnail_url": thumbnails[0] if thumbnails else None,
-                    "image_url": thumbnails[0] if thumbnails else None,
-                    "metadata": {
-                        "api_version": "v1",
-                        "model_used": "gpt-4-turbo",
-                        "num_thumbnails": len(thumbnails),
-                        "has_project": project_id is not None
-                    }
+        try:
+            # Base URL for Lovable Build with URL
+            base_url = "https://lovable.dev/?autosubmit=true#"
+            
+            # URL encode the prompt
+            encoded_prompt = urllib.parse.quote(lovable_prompt)
+            
+            # Build URL with prompt
+            project_url = f"{base_url}prompt={encoded_prompt}"
+            
+            # Add image URLs if provided
+            if image_urls and len(image_urls) > 0:
+                # Limit to 10 images as per Lovable API
+                image_urls = image_urls[:10]
+                for img_url in image_urls:
+                    encoded_img = urllib.parse.quote(img_url)
+                    project_url += f"&images={encoded_img}"
+            
+            logger.info("lovable_link_generated", 
+                       prompt_length=len(lovable_prompt),
+                       num_images=len(image_urls) if image_urls else 0)
+            
+            return {
+                "project_url": project_url,
+                "prompt": lovable_prompt,
+                "image_urls": image_urls or [],
+                "metadata": {
+                    "api_version": "build-with-url",
+                    "link_type": "shareable",
+                    "auto_submit": True,
+                    "num_images": len(image_urls) if image_urls else 0,
+                    "prompt_length": len(lovable_prompt)
                 }
-                
-            except httpx.TimeoutException:
-                raise ValueError("Lovable API request timed out. Please try again.")
-            except httpx.RequestError as e:
-                raise ValueError(f"Lovable API connection error: {str(e)}")
-            except Exception as e:
-                logger.error("lovable_api_error", error=str(e), api_key_length=len(api_key) if api_key else 0)
-                raise ValueError(f"Lovable API error: {str(e)}")
-
+            }
+        except Exception as e:
+            logger.error("lovable_link_generation_error", error=str(e))
+            raise ValueError(f"Error generating Lovable link: {str(e)}")

@@ -972,18 +972,16 @@ async def configure_provider_keys(
             if settings.v0_api_key:
                 os.environ["V0_API_KEY"] = settings.v0_api_key
         
-        # Lovable
-        if payload.lovableKey is not None and payload.lovableKey.strip():
-            keys_to_save['lovable'] = payload.lovableKey.strip()
-            settings.lovable_api_key = payload.lovableKey.strip()
-            import os
-            os.environ["LOVABLE_API_KEY"] = settings.lovable_api_key
-        elif 'lovable' in existing_keys:
-            # Preserve existing key
-            settings.lovable_api_key = existing_keys['lovable']
-            import os
-            if settings.lovable_api_key:
-                os.environ["LOVABLE_API_KEY"] = settings.lovable_api_key
+        # Lovable - No API key needed (uses link generator)
+        # Remove any existing Lovable API keys from database
+        if 'lovable' in existing_keys:
+            # Delete existing Lovable API key (no longer needed)
+            delete_query = text("""
+                DELETE FROM user_api_keys
+                WHERE user_id = :user_id AND provider = 'lovable'
+            """)
+            await db.execute(delete_query, {"user_id": current_user['id']})
+            logger.info("lovable_api_key_removed", user_id=current_user['id'])
         
         # Save only the keys that were provided
         for provider, key_value in keys_to_save.items():
