@@ -130,7 +130,7 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
         requestBody.verify_ssl = verifySsl;
       }
 
-      const response = await fetch(`${API_URL}/api/providers/verify`, {
+      const response = await apiFetch('/api/providers/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
