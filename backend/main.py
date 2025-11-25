@@ -166,14 +166,48 @@ class ProviderConfigureResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Application lifespan manager."""
+    # Startup
     logger.info("application_startup", version="1.0.0")
+    
     # Initialize database connection
     db_connected = await init_db()
     if db_connected:
         logger.info("database_initialized", status="success")
     else:
         logger.warning("database_initialization_failed", status="warning")
+    
+    # Log provider status at startup (from environment variables/Kubernetes secrets)
+    configured_providers = provider_registry.get_configured_providers()
+    logger.info(
+        "startup_provider_status",
+        providers=configured_providers,
+        has_openai=provider_registry.has_openai_key(),
+        has_claude=provider_registry.has_claude_key(),
+        has_gemini=provider_registry.has_gemini_key(),
+        source="environment_variables"
+    )
+    
+    # Reinitialize orchestrator on startup to ensure Agno is initialized if providers are available
+    global orchestrator, agno_enabled
+    orchestrator, agno_enabled = _initialize_orchestrator()
+    
+    # Log orchestrator initialization status
+    logger.info(
+        "startup_orchestrator_status",
+        orchestrator_type=type(orchestrator).__name__,
+        agno_enabled=agno_enabled,
+        has_providers=bool(configured_providers)
+    )
+    
+    # Agno agents are automatically initialized when orchestrator is created
+    # No additional initialization needed at startup
+    if agno_enabled:
+        logger.info("agno_framework_ready_at_startup", providers=configured_providers)
+    
     yield
+    
+    # Shutdown
     logger.info("application_shutdown")
 
 
