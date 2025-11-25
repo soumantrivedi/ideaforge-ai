@@ -10,11 +10,16 @@ import structlog
 logger = structlog.get_logger()
 
 # Database URL from environment
-# Convert postgresql:// to postgresql+asyncpg:// if needed
-raw_db_url = os.getenv(
-    "DATABASE_URL",
-    "postgresql://agentic_pm:devpassword@postgres:5432/agentic_pm_db"
-)
+# If DATABASE_URL is not set or contains $(POSTGRES_PASSWORD), construct it from individual components
+raw_db_url = os.getenv("DATABASE_URL", "")
+if not raw_db_url or "$(POSTGRES_PASSWORD)" in raw_db_url:
+    # Construct DATABASE_URL from individual POSTGRES_* environment variables
+    postgres_user = os.getenv("POSTGRES_USER", "agentic_pm")
+    postgres_password = os.getenv("POSTGRES_PASSWORD", "devpassword")
+    postgres_host = os.getenv("POSTGRES_HOST", "postgres")
+    postgres_port = os.getenv("POSTGRES_PORT", "5432")
+    postgres_db = os.getenv("POSTGRES_DB", "agentic_pm_db")
+    raw_db_url = f"postgresql://{postgres_user}:{postgres_password}@{postgres_host}:{postgres_port}/{postgres_db}"
 
 # Ensure we use asyncpg driver
 if raw_db_url.startswith("postgresql://"):
