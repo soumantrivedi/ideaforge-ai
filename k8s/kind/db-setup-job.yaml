@@ -41,14 +41,38 @@ spec:
           # Run base schema first (if available)
           echo "🔄 Running base schema initialization..."
           TABLE_COUNT=$$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
-          if [ "$$TABLE_COUNT" = "0" ]; then
-            if [ -f /init-scripts/01-init-schema.sql ]; then
-              echo "   Running base schema from init-scripts: 01-init-schema.sql"
-              psql -h postgres -U agentic_pm -d agentic_pm_db -f /init-scripts/01-init-schema.sql 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
+          if [ "$$TABLE_COUNT" = "0" ] || [ "$$TABLE_COUNT" -lt "5" ]; then
+            # Try multiple locations for the init schema
+            SCHEMA_FILE=""
+            for path in /init-scripts/01-init-schema.sql /migrations/../01-init-schema.sql; do
+              if [ -f "$$path" ]; then
+                SCHEMA_FILE="$$path"
+                break
+              fi
+            done
+            
+            if [ -n "$$SCHEMA_FILE" ]; then
+              echo "   Running base schema from: $$SCHEMA_FILE"
+              psql -h postgres -U agentic_pm -d agentic_pm_db -f "$$SCHEMA_FILE" 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
               echo "   ✅ Base schema initialized"
             else
-              echo "   ⚠️  Base schema not found at /init-scripts/01-init-schema.sql"
-              echo "   ⚠️  Migrations may fail without base schema"
+              echo "   ⚠️  Base schema file not found, creating minimal schema..."
+              # Create minimal schema if file not found
+              psql -h postgres -U agentic_pm -d agentic_pm_db <<EOF 2>&1 | grep -v "NOTICE" || true
+-- Minimal schema to support migrations
+CREATE TABLE IF NOT EXISTS user_profiles (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  email text UNIQUE NOT NULL,
+  full_name text,
+  password_hash text,
+  tenant_id uuid,
+  is_active boolean DEFAULT true,
+  persona text DEFAULT 'product_manager',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+EOF
+              echo "   ✅ Minimal schema created"
             fi
           else
             echo "   ✅ Tables already exist ($$TABLE_COUNT tables), skipping base schema"
