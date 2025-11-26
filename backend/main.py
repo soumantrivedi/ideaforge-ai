@@ -337,6 +337,30 @@ async def health_check():
     )
 
 
+@app.get("/api/", tags=["api"])
+async def api_root():
+    """API root endpoint with available endpoints and documentation links."""
+    return {
+        "name": "IdeaForge AI - Agentic PM Platform API",
+        "version": "1.0.0",
+        "status": "operational",
+        "docs": {
+            "swagger_ui": "/api/docs",
+            "redoc": "/api/redoc",
+            "openapi_json": "/api/openapi.json"
+        },
+        "endpoints": {
+            "health": "/health",
+            "authentication": "/api/auth",
+            "users": "/api/users",
+            "products": "/api/products",
+            "conversations": "/api/conversations",
+            "agents": "/api/agents",
+            "multi_agent": "/api/multi-agent"
+        }
+    }
+
+
 @app.get("/api/agents", tags=["agents"])
 async def list_agents():
     agents = orchestrator.get_available_agents()
