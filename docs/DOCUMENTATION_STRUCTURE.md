@@ -55,7 +55,9 @@ User and developer guides:
 - `deployment-guide.md` - Comprehensive deployment guide
 - `multi-agent-system.md` - Multi-agent system documentation
 - `multi-agent-backend.md` - Backend multi-agent implementation
+- `multi-agent-memory.md` - Multi-agent memory and conversation history
 - `product-lifecycle.md` - Product lifecycle workflows
+- `flexible-lifecycle-and-export.md` - Flexible lifecycle and enhanced export features
 - `database-migration.md` - Database migration procedures
 - `implementation-guide.md` - Implementation guide
 - `agno-migration.md` - Agno framework migration guide

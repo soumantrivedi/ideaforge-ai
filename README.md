@@ -88,8 +88,11 @@ make eks-deploy-full \
 ### Guides
 - [Quick Start Guide](docs/guides/quick-start.md)
 - [Quick Deploy](docs/guides/quick-deploy.md)
+- [Make Targets Reference](docs/guides/make-targets.md)
 - [Multi-Agent System](docs/guides/multi-agent-system.md)
+- [Multi-Agent Memory](docs/guides/multi-agent-memory.md)
 - [Product Lifecycle](docs/guides/product-lifecycle.md)
+- [Flexible Lifecycle and Export](docs/guides/flexible-lifecycle-and-export.md)
 - [Agno Framework Migration](docs/guides/agno-migration.md)
 
 ### Troubleshooting

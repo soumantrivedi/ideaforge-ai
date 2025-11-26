@@ -440,7 +440,8 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
                 
                 multi_agent_response = await orchestrator.process_multi_agent_request(
                     user_id=UUID(current_user["id"]),
-                    request=multi_agent_request
+                    request=multi_agent_request,
+                    db=db
                 )
                 
                 enhanced_prompt = multi_agent_response.response.strip()

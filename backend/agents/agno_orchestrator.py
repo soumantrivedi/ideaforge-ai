@@ -74,9 +74,10 @@ class AgnoAgenticOrchestrator:
         product_id: Optional[UUID],
         agent_type: str,
         messages: List[AgentMessage],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        db: Optional[Any] = None
     ) -> AgentResponse:
-        """Route request to appropriate agent."""
+        """Route request to appropriate agent with automatic conversation history inclusion."""
         if agent_type not in self.agents:
             available = ", ".join(self.agents.keys())
             raise ValueError(f"Unknown agent type: {agent_type}. Available: {available}")
@@ -96,6 +97,40 @@ class AgnoAgenticOrchestrator:
             enhanced_context = context or {}
             if product_id:
                 enhanced_context["product_id"] = str(product_id)
+            
+            # Automatically load conversation history if product_id is available and db is provided
+            # This ensures ideation from chatbot is available to agents
+            if product_id and db:
+                try:
+                    from sqlalchemy import text
+                    conv_query = text("""
+                        SELECT ch.message_type, ch.content, ch.agent_name, ch.created_at
+                        FROM conversation_history ch
+                        WHERE ch.product_id = :product_id
+                        ORDER BY ch.created_at DESC
+                        LIMIT 50
+                    """)
+                    conv_result = await db.execute(conv_query, {"product_id": str(product_id)})
+                    conv_rows = conv_result.fetchall()
+                    conversation_history = [
+                        {
+                            "role": row[0],
+                            "content": row[1],
+                            "agent_name": row[2],
+                            "timestamp": row[3].isoformat() if row[3] else None
+                        }
+                        for row in conv_rows
+                    ]
+                    if conversation_history:
+                        enhanced_context["conversation_history"] = conversation_history
+                        enhanced_context["ideation_from_chat"] = self._extract_ideation_from_history(conversation_history)
+                        self.logger.info(
+                            "conversation_history_loaded",
+                            product_id=str(product_id),
+                            message_count=len(conversation_history)
+                        )
+                except Exception as e:
+                    self.logger.warning("failed_to_load_conversation_history", error=str(e))
             
             response = await agent.process(messages, enhanced_context)
             
@@ -123,9 +158,12 @@ class AgnoAgenticOrchestrator:
     async def process_multi_agent_request(
         self,
         user_id: UUID,
-        request: MultiAgentRequest
+        request: MultiAgentRequest,
+        db: Optional[Any] = None
     ) -> MultiAgentResponse:
-        """Process a multi-agent coordination request using Agno teams."""
+        """Process a multi-agent coordination request using Agno teams.
+        Automatically includes conversation history if product_id is available.
+        """
         self.logger.info(
             "multi_agent_request",
             user_id=str(user_id),
@@ -138,15 +176,63 @@ class AgnoAgenticOrchestrator:
             # Add user and product context
             enhanced_context = request.context or {}
             enhanced_context["user_id"] = str(user_id)
+            product_id = None
             if hasattr(request, 'product_id') and request.product_id:
-                enhanced_context["product_id"] = str(request.product_id)
+                product_id = request.product_id
+                enhanced_context["product_id"] = str(product_id)
+            
+            # Automatically load conversation history if product_id is available
+            # This ensures ideation from chatbot is available to all agents
+            if product_id and db:
+                try:
+                    from sqlalchemy import text
+                    conv_query = text("""
+                        SELECT ch.message_type, ch.content, ch.agent_name, ch.created_at
+                        FROM conversation_history ch
+                        WHERE ch.product_id = :product_id
+                        ORDER BY ch.created_at DESC
+                        LIMIT 50
+                    """)
+                    conv_result = await db.execute(conv_query, {"product_id": str(product_id)})
+                    conv_rows = conv_result.fetchall()
+                    conversation_history = [
+                        {
+                            "role": row[0],
+                            "content": row[1],
+                            "agent_name": row[2],
+                            "timestamp": row[3].isoformat() if row[3] else None
+                        }
+                        for row in conv_rows
+                    ]
+                    if conversation_history:
+                        enhanced_context["conversation_history"] = conversation_history
+                        enhanced_context["ideation_from_chat"] = self._extract_ideation_from_history(conversation_history)
+                        # Enhance query with ideation context if available
+                        if enhanced_context.get("ideation_from_chat"):
+                            enhanced_query = f"{request.query}\n\n[Context from previous conversations - Ideation]:\n{enhanced_context['ideation_from_chat'][:1000]}"
+                        else:
+                            enhanced_query = request.query
+                        self.logger.info(
+                            "conversation_history_included_in_multi_agent",
+                            product_id=str(product_id),
+                            message_count=len(conversation_history),
+                            has_ideation=bool(enhanced_context.get("ideation_from_chat"))
+                        )
+                    else:
+                        enhanced_query = request.query
+                except Exception as e:
+                    self.logger.warning("failed_to_load_conversation_history_for_multi_agent", error=str(e))
+                    enhanced_query = request.query
+            else:
+                enhanced_query = request.query
             
             response = await self.coordinator.route_query(
-                query=request.query,
+                query=enhanced_query,
                 coordination_mode=request.coordination_mode,
                 primary_agent=request.primary_agent,
                 supporting_agents=request.supporting_agents,
-                context=enhanced_context
+                context=enhanced_context,
+                db=db
             )
             
             # Get interaction history
@@ -216,4 +302,25 @@ class AgnoAgenticOrchestrator:
         """Get capabilities of all agents."""
         capabilities = self.coordinator.get_agent_capabilities()
         return [cap.dict() for cap in capabilities]
+    
+    def _extract_ideation_from_history(self, conversation_history: List[Dict[str, Any]]) -> str:
+        """Extract ideation-related content from conversation history."""
+        ideation_keywords = [
+            "idea", "ideation", "concept", "product vision", "feature", "requirement",
+            "user need", "problem", "solution", "goal", "objective", "purpose"
+        ]
+        
+        ideation_messages = []
+        for msg in conversation_history:
+            content = msg.get("content", "").lower()
+            role = msg.get("role", "")
+            
+            # Extract user messages that contain ideation keywords
+            if role in ["user", "human"] and any(keyword in content for keyword in ideation_keywords):
+                ideation_messages.append(msg.get("content", ""))
+        
+        # Combine ideation messages
+        if ideation_messages:
+            return "\n\n".join(ideation_messages[:10])  # Last 10 ideation messages
+        return ""
 
