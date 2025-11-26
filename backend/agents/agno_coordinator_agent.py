@@ -22,6 +22,10 @@ from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
 from backend.agents.agno_ideation_agent import AgnoIdeationAgent
 from backend.agents.agno_research_agent import AgnoResearchAgent
 from backend.agents.agno_analysis_agent import AgnoAnalysisAgent
+from backend.agents.agno_v0_agent import AgnoV0Agent
+from backend.agents.agno_lovable_agent import AgnoLovableAgent
+from backend.agents.agno_atlassian_agent import AgnoAtlassianAgent
+from backend.agents.agno_export_agent import AgnoExportAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.models.schemas import AgentMessage, AgentResponse, AgentInteraction, AgentCapability
 from backend.services.provider_registry import provider_registry
@@ -45,6 +49,8 @@ class AgnoCoordinatorAgent:
         self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=enable_rag)
         self.v0_agent = AgnoV0Agent(enable_rag=enable_rag)
         self.lovable_agent = AgnoLovableAgent(enable_rag=enable_rag)
+        self.atlassian_agent = AgnoAtlassianAgent(enable_rag=enable_rag)
+        self.export_agent = AgnoExportAgent(enable_rag=enable_rag)
         self.rag_agent = RAGAgent()  # RAG agent always has RAG enabled
         
         # Register all agents
@@ -55,6 +61,8 @@ class AgnoCoordinatorAgent:
             "prd_authoring": self.prd_agent,
             "v0": self.v0_agent,
             "lovable": self.lovable_agent,
+            "atlassian_mcp": self.atlassian_agent,
+            "export": self.export_agent,
             "rag": self.rag_agent,
         }
         
@@ -142,6 +150,14 @@ class AgnoCoordinatorAgent:
         if any(kw in query_lower for kw in ["knowledge", "document", "search", "retrieve"]):
             if primary_agent != "rag":
                 supporting.append("rag")
+        
+        if any(kw in query_lower for kw in ["confluence", "jira", "atlassian", "publish", "page"]):
+            if primary_agent != "atlassian_mcp":
+                supporting.append("atlassian_mcp")
+        
+        if any(kw in query_lower for kw in ["export", "prd", "document", "generate document"]):
+            if primary_agent != "export":
+                supporting.append("export")
         
         return supporting
     

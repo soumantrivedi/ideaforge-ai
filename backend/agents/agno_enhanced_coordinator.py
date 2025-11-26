@@ -28,6 +28,7 @@ from backend.agents.agno_validation_agent import AgnoValidationAgent
 from backend.agents.agno_export_agent import AgnoExportAgent
 from backend.agents.agno_v0_agent import AgnoV0Agent
 from backend.agents.agno_lovable_agent import AgnoLovableAgent
+from backend.agents.agno_atlassian_agent import AgnoAtlassianAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.models.schemas import AgentMessage, AgentResponse, AgentInteraction, AgentCapability
 from backend.services.provider_registry import provider_registry
@@ -58,6 +59,7 @@ class AgnoEnhancedCoordinator:
         self.export_agent = AgnoExportAgent(enable_rag=enable_rag)
         self.v0_agent = AgnoV0Agent(enable_rag=enable_rag)
         self.lovable_agent = AgnoLovableAgent(enable_rag=enable_rag)
+        self.atlassian_agent = AgnoAtlassianAgent(enable_rag=enable_rag)
         self.rag_agent = RAGAgent()
         
         # Register all agents
@@ -72,6 +74,7 @@ class AgnoEnhancedCoordinator:
             "export": self.export_agent,
             "v0": self.v0_agent,
             "lovable": self.lovable_agent,
+            "atlassian_mcp": self.atlassian_agent,
             "rag": self.rag_agent,
         }
         
@@ -531,6 +534,7 @@ INSTRUCTIONS:
     
     def determine_supporting_agents(self, query: str, primary_agent: str) -> List[str]:
         """Determine which supporting agents should be consulted.
+        Automatically includes RAG, Atlassian (for Confluence/Jira), and Export (for PRD generation) when relevant.
         ALWAYS includes RAG agent for knowledge base context.
         """
         query_lower = query.lower()
@@ -549,7 +553,15 @@ INSTRUCTIONS:
             if primary_agent != "analysis":
                 supporting.append("analysis")
         
-        # RAG is already added above, so we don't need to add it again here
+        # Include Atlassian agent for Confluence/Jira operations
+        if any(kw in query_lower for kw in ["confluence", "jira", "atlassian", "publish", "page", "space", "documentation"]):
+            if primary_agent != "atlassian_mcp":
+                supporting.append("atlassian_mcp")
+        
+        # Include Export agent for PRD/document generation
+        if any(kw in query_lower for kw in ["export", "prd", "document", "generate document", "publish document"]):
+            if primary_agent != "export":
+                supporting.append("export")
         
         return supporting
     
