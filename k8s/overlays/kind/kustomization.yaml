@@ -5,6 +5,7 @@ namespace: ideaforge-ai
 
 resources:
   - ../../base
+  - configmap-env.yaml  # Kind-specific ConfigMap overrides
 
 # Kind-specific image configuration (uses local images with imagePullPolicy: Never)
 images:

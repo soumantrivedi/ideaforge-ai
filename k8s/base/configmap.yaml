@@ -25,12 +25,13 @@ data:
   AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
   
   # Frontend Configuration
-  # Use relative path /api so frontend nginx proxies to backend service internally
-  # The frontend nginx.conf already has: location /api { proxy_pass http://backend:8000; }
-  VITE_API_URL: ""  # Empty string = use relative paths, nginx will proxy /api to backend service
-  # Frontend URL for CORS - use ingress URL or hostname
-  FRONTEND_URL: "http://localhost:80"  # For kind cluster ingress access (or http://ideaforge.local if using hostnames)
-  CORS_ORIGINS: "http://localhost,http://localhost:80,http://localhost:8080,http://ideaforge.local,http://api.ideaforge.local"
+  # Platform-specific values are overridden by overlays:
+  # - kind: k8s/overlays/kind/configmap-env.yaml
+  # - eks: k8s/overlays/eks/configmap-env.yaml
+  # - docker-compose: Uses .env file directly
+  VITE_API_URL: ""  # Overridden by platform-specific overlays
+  FRONTEND_URL: ""  # Overridden by platform-specific overlays
+  CORS_ORIGINS: ""  # Overridden by platform-specific overlays
 
 ---
 apiVersion: v1
