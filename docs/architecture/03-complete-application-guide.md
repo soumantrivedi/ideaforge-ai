@@ -377,6 +377,16 @@ graph TB
         E1[Export Agent]
         E2[GitHub Agent]
         E3[Atlassian Agent]
+        E4[RAG Agent]
+    end
+    
+    subgraph "Multi-Agent Coordination"
+        M1[Export Agent]
+        M2[Atlassian Agent]
+        M3[RAG Agent]
+        M1 <-->|Coordinate| M2
+        M1 <-->|Coordinate| M3
+        M2 <-->|Coordinate| M3
     end
     
     style I1 fill:#e1f5ff
