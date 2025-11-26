@@ -36,9 +36,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
             
             if token:
                 # Import here to avoid circular dependency
-                from backend.api.auth import active_tokens
-                if token in active_tokens:
-                    token_data = active_tokens[token]
+                from backend.services.token_storage import get_token_storage
+                token_storage = await get_token_storage()
+                token_data = await token_storage.get_token(token)
+                if token_data:
                     user_id = token_data.get("user_id")
         except Exception as e:
             logger.debug("token_extraction_failed", error=str(e))

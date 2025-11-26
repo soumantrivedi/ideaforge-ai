@@ -58,8 +58,8 @@ class RegisterRequest(BaseModel):
     tenant_id: Optional[str] = None
 
 
-# Simple token storage (in production, use Redis or JWT)
-active_tokens: dict[str, dict] = {}
+# Token storage using Redis for distributed access across multiple backend pods
+from backend.services.token_storage import get_token_storage
 
 
 def hash_password(password: str) -> str:
@@ -110,13 +110,15 @@ async def get_current_user(
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
-    # Check token in active_tokens
-    if token not in active_tokens:
+    # Check token in Redis or fallback storage
+    token_storage = await get_token_storage()
+    token_data = await token_storage.get_token(token)
+    
+    if not token_data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     
-    token_data = active_tokens[token]
     if datetime.utcnow() > datetime.fromisoformat(token_data["expires_at"]):
-        del active_tokens[token]
+        await token_storage.delete_token(token)
         raise HTTPException(status_code=401, detail="Token expired")
     
     # Verify user still exists and is active
@@ -130,7 +132,7 @@ async def get_current_user(
     row = result.fetchone()
     
     if not row:
-        del active_tokens[token]
+        await token_storage.delete_token(token)
         raise HTTPException(status_code=401, detail="User not found or inactive")
     
     return {
@@ -179,13 +181,16 @@ async def login(
         token = generate_token()
         expires_at = datetime.utcnow() + timedelta(days=7)
         
-        # Store token
-        active_tokens[token] = {
+        # Store token in Redis or fallback storage
+        token_storage = await get_token_storage()
+        token_data = {
             "user_id": str(user_id),
             "email": email,
             "tenant_id": str(tenant_id),
             "expires_at": expires_at.isoformat(),
         }
+        expires_in_seconds = int((expires_at - datetime.utcnow()).total_seconds())
+        await token_storage.store_token(token, token_data, expires_in_seconds)
         
         # Update last login
         update_query = text("""
@@ -236,8 +241,9 @@ async def logout(
     elif session_token:
         token = session_token
     
-    if token and token in active_tokens:
-        del active_tokens[token]
+    if token:
+        token_storage = await get_token_storage()
+        await token_storage.delete_token(token)
     
     response.delete_cookie(key="session_token")
     return {"message": "Logged out successfully"}
