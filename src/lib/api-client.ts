@@ -3,7 +3,9 @@
  * Automatically clears invalid tokens and redirects to login on 401 errors
  */
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Use relative path if VITE_API_URL is empty or not set (cloud-native pattern)
+// Frontend nginx will proxy /api requests to backend service internally
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 let onUnauthorizedCallback: (() => void) | null = null;
 

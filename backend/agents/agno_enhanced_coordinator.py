@@ -87,13 +87,19 @@ class AgnoEnhancedCoordinator:
         self.shared_context: Dict[str, Any] = {}
     
     def _get_agno_model(self):
-        """Get appropriate Agno model."""
+        """Get appropriate Agno model.
+        Priority: ChatGPT 5.1 (primary) > Gemini 3.0 Pro (tertiary) > Claude 4 Sonnet (secondary)
+        Prefers ChatGPT 5.1 for best reasoning, falls back to Gemini 3.0 Pro if OpenAI not available.
+        """
+        # Prefer ChatGPT 5.1 for best reasoning capabilities
         if provider_registry.has_openai_key():
-            return OpenAIChat(id=settings.agent_model_primary)
+            return OpenAIChat(id=settings.agent_model_primary)  # gpt-5.1
+        # Fall back to Gemini 3.0 Pro if OpenAI not available
+        elif provider_registry.has_gemini_key():
+            return Gemini(id=settings.agent_model_tertiary)  # gemini-3.0-pro
+        # Last resort: Claude 4 Sonnet
         elif provider_registry.has_claude_key():
             return Claude(id=settings.agent_model_secondary)
-        elif provider_registry.has_gemini_key():
-            return Gemini(id=settings.agent_model_tertiary)
         else:
             raise ValueError("No AI provider configured")
     
