@@ -69,12 +69,25 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash."""
+    if not hashed_password:
+        return False
+    
     try:
+        # Convert hashed_password to bytes if it's a string
+        if isinstance(hashed_password, str):
+            hashed_bytes = hashed_password.encode('utf-8')
+        else:
+            hashed_bytes = hashed_password
+        
         # Use bcrypt directly to avoid passlib issues
-        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-    except Exception:
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_bytes)
+    except Exception as e:
         # Fallback to passlib if bcrypt fails
-        return pwd_context.verify(plain_password, hashed_password)
+        try:
+            return pwd_context.verify(plain_password, hashed_password)
+        except Exception:
+            logger.warning("password_verification_failed", error=str(e))
+            return False
 
 
 def generate_token() -> str:
@@ -141,9 +154,9 @@ async def login(
         # Get user from database
         query = text("""
             SELECT up.id, up.email, up.full_name, up.password_hash, up.tenant_id, 
-                   up.is_active, t.name as tenant_name
+                   up.is_active, COALESCE(t.name, 'Default') as tenant_name
             FROM user_profiles up
-            JOIN tenants t ON up.tenant_id = t.id
+            LEFT JOIN tenants t ON up.tenant_id = t.id
             WHERE up.email = :email
         """)
         
@@ -206,8 +219,8 @@ async def login(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("login_error", error=str(e))
-        raise HTTPException(status_code=500, detail="Login failed")
+        logger.error("login_error", error=str(e), error_type=type(e).__name__, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 
 @router.post("/logout")
@@ -237,13 +250,19 @@ async def get_current_user_info(
 ):
     """Get current user information."""
     try:
-        # Get tenant name
-        query = text("""
-            SELECT name FROM tenants WHERE id = :tenant_id
-        """)
-        result = await db.execute(query, {"tenant_id": current_user["tenant_id"]})
-        row = result.fetchone()
-        tenant_name = row[0] if row else "Unknown"
+        # Get tenant name (handle case where tenant might not exist)
+        tenant_name = "Default Tenant"
+        try:
+            query = text("""
+                SELECT name FROM tenants WHERE id = :tenant_id
+            """)
+            result = await db.execute(query, {"tenant_id": current_user["tenant_id"]})
+            row = result.fetchone()
+            if row:
+                tenant_name = row[0]
+        except Exception:
+            # If tenant table doesn't exist or query fails, use default
+            pass
         
         return UserInfo(
             id=current_user["id"],
@@ -254,6 +273,9 @@ async def get_current_user_info(
             persona=current_user["persona"],
             avatar_url=current_user.get("avatar_url"),
         )
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 401) as-is
+        raise
     except Exception as e:
         logger.error("get_user_info_error", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to get user info")
