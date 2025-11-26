@@ -12,12 +12,39 @@
 4. **Test multi-agent coordination** when adding new agents
 5. **Maintain backward compatibility** when possible
 
+## Docker Prerequisites
+
+**CRITICAL:** Always check and start Docker before any deployment operations.
+
+### Docker Startup Check:
+1. **Always check Docker status first**: `docker info > /dev/null 2>&1`
+2. **If Docker is not running, attempt to start it**:
+   - macOS: `open -a Docker` or check if Docker Desktop is running
+   - Linux: `sudo systemctl start docker` (if systemd) or `sudo service docker start`
+   - Windows: Check Docker Desktop status
+3. **Wait for Docker to be ready**: Poll `docker info` until it succeeds (max 30 seconds)
+4. **Never bypass Docker check** - All deployment operations require Docker
+5. **If Docker cannot be started automatically, inform user and wait for manual start**
+
+### Docker Check Commands:
+```bash
+# Check if Docker is running
+docker info > /dev/null 2>&1 && echo "✅ Docker is running" || echo "❌ Docker is not running"
+
+# Attempt to start Docker (macOS)
+open -a Docker 2>/dev/null || echo "⚠️  Could not start Docker automatically"
+
+# Wait for Docker to be ready (with timeout)
+timeout=30; elapsed=0; while ! docker info > /dev/null 2>&1 && [ $elapsed -lt $timeout ]; do sleep 2; elapsed=$((elapsed+2)); done
+```
+
 ## Verification Workflow
 
 ### Before Making Changes:
-1. Read `.cursor/VERIFICATION_CHECKLIST.md`
-2. Understand current state of all 19 requirements
-3. Identify which requirements may be affected
+1. **Check Docker is running** (see Docker Prerequisites above)
+2. Read `.cursor/VERIFICATION_CHECKLIST.md`
+3. Understand current state of all 19 requirements
+4. Identify which requirements may be affected
 
 ### After Making Changes:
 1. Run verification commands from checklist
