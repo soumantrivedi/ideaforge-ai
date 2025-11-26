@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, Download, FileText, AlertCircle, CheckCircle, Loader2, BookOpen, ExternalLink } from 'lucide-react';
+import { getValidatedApiUrl } from '../lib/runtime-config';
 
 interface ExportPRDModalProps {
   productId: string;
@@ -32,7 +33,7 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{ url?: string; page_id?: string; title?: string } | null>(null);
 
-  const API_URL = import.meta.env.VITE_API_URL || '';
+  const API_URL = getValidatedApiUrl();
 
   useEffect(() => {
     if (isOpen && productId) {
