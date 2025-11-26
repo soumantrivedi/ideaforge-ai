@@ -13,7 +13,7 @@ patchesStrategicMerge:
   - postgres-eks-patch.yaml
   - redis-eks-patch.yaml
   - ingress-eks-patch.yaml
-  - configmap-env.yaml  # EKS-specific ConfigMap overrides
+  - configmap-env.yaml  # EKS-specific ConfigMap overrides (merges with base)
 
 # Override namespace (will be set by make target)
 # namespace: ideaforge-ai

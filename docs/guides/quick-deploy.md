@@ -220,7 +220,7 @@ make eks-deploy-full \
 **Important Notes**:
 - The namespace **MUST exist** before deployment
 - Use specific image tags (commit SHAs or versions) instead of `latest` for production
-- See `k8s/EKS_DEPLOYMENT_GUIDE.md` for detailed EKS deployment guide
+- See `docs/deployment/eks.md` for detailed EKS deployment guide
 - See `k8s/EKS_IMAGE_TAGS.md` for image tag configuration details
 
 ### Docker Compose Production
