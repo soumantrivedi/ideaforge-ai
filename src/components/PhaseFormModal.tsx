@@ -42,6 +42,8 @@ export function PhaseFormModal({
   const [mockupRefreshTrigger, setMockupRefreshTrigger] = useState(0);
   const [lovableThumbnails, setLovableThumbnails] = useState<any[]>([]);
   const [showThumbnailSelector, setShowThumbnailSelector] = useState(false);
+  const [promptScores, setPromptScores] = useState<{v0: number | null, lovable: number | null}>({v0: null, lovable: null});
+  const [showSaveToChatbot, setShowSaveToChatbot] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -125,7 +127,7 @@ export function PhaseFormModal({
 
     try {
       // Special handling for Design phase: Only save prompts, don't auto-generate prototypes
-      // Users can refine prompts using "Help with AI" or manually, then generate prototypes separately
+      // Users can refine prompts using "Help with AI" or manually, then save to chatbot separately
       if (isDesignPhase && completeFormData['v0_lovable_prompts']) {
         const promptsObj = JSON.parse(completeFormData['v0_lovable_prompts'] || '{}');
         // Just ensure the prompts are saved - no auto-generation of prototypes
@@ -134,6 +136,10 @@ export function PhaseFormModal({
       
       console.log('Submitting ALL form data from all pages:', completeFormData);
       await onSubmit(completeFormData);
+      // For design phase, show save to chatbot option after saving
+      if (isDesignPhase) {
+        setShowSaveToChatbot(true);
+      }
       // Don't close immediately - let the parent handle it after processing
       // The parent will close the modal after successful generation
     } catch (error) {
@@ -141,6 +147,136 @@ export function PhaseFormModal({
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       alert(`Error processing your request: ${errorMessage}. Please check the console for details.`);
       // Don't close modal on error so user can retry
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveToChatbot = async () => {
+    if (!productId || !sessionId || !token) {
+      alert('Product ID, Session ID, and authentication token are required');
+      return;
+    }
+
+    const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+    const v0Prompt = promptsObj['v0_prompt'] || '';
+    const lovablePrompt = promptsObj['lovable_prompt'] || '';
+
+    if (!v0Prompt.trim() && !lovablePrompt.trim()) {
+      alert('Please generate at least one prompt (V0 or Lovable) before saving to chatbot');
+      return;
+    }
+
+    // Get the highest score (or prompt user to score if not scored)
+    const maxScore = Math.max(
+      promptScores.v0 || 0,
+      promptScores.lovable || 0
+    );
+
+    if (maxScore === 0 && !promptScores.v0 && !promptScores.lovable) {
+      const shouldScore = confirm('You haven\'t scored the prompts yet. Would you like to score them now? (Click Cancel to save without scoring)');
+      if (shouldScore) {
+        // Show scoring UI - we'll add this
+        return;
+      }
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      // Build the message to save to chatbot
+      let chatbotMessage = `## Design Phase Prompts\n\n`;
+      
+      if (v0Prompt.trim()) {
+        chatbotMessage += `### V0 Vercel Prompt\n${v0Prompt}\n\n`;
+        if (promptScores.v0 !== null) {
+          chatbotMessage += `**Score: ${promptScores.v0}/5**\n\n`;
+        }
+      }
+      
+      if (lovablePrompt.trim()) {
+        chatbotMessage += `### Lovable.dev Prompt\n${lovablePrompt}\n\n`;
+        if (promptScores.lovable !== null) {
+          chatbotMessage += `**Score: ${promptScores.lovable}/5**\n\n`;
+        }
+      }
+
+      if (maxScore > 0) {
+        chatbotMessage += `**Design Phase Score: ${maxScore}/5**\n`;
+      }
+
+      // Save to conversation history
+      const response = await fetch(`${API_URL}/api/db/conversation-history`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          product_id: productId,
+          phase_id: phase.id,
+          message_type: 'agent',
+          agent_name: 'Design Phase',
+          agent_role: 'design',
+          content: chatbotMessage,
+          formatted_content: chatbotMessage,
+          interaction_metadata: {
+            phase_name: phase.phase_name,
+            v0_prompt: v0Prompt,
+            lovable_prompt: lovablePrompt,
+            v0_score: promptScores.v0,
+            lovable_score: promptScores.lovable,
+            design_phase_score: maxScore,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to save to chatbot: ${response.status} - ${errorText}`);
+      }
+
+      // Dispatch event to update chatbot UI
+      window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+        detail: {
+          message: chatbotMessage,
+          productId,
+        }
+      }));
+
+      // Update phase submission with score
+      if (maxScore > 0 && productId) {
+        try {
+          const submission = await lifecycleService.getPhaseSubmission(productId, phase.id);
+          if (submission) {
+            const metadata = {
+              ...(submission.metadata || {}),
+              design_phase_score: maxScore,
+              v0_score: promptScores.v0,
+              lovable_score: promptScores.lovable,
+              prompts_saved_to_chatbot: true,
+              saved_at: new Date().toISOString(),
+            };
+            await lifecycleService.updatePhaseContent(
+              submission.id,
+              submission.generated_content || '',
+              submission.status || 'completed',
+              metadata
+            );
+          }
+        } catch (error) {
+          console.error('Error updating phase submission with score:', error);
+          // Don't fail the whole operation if this fails
+        }
+      }
+
+      alert('Prompts saved to chatbot successfully!');
+      setShowSaveToChatbot(false);
+      onClose();
+    } catch (error) {
+      console.error('Error saving to chatbot:', error);
+      alert(`Failed to save to chatbot: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -928,6 +1064,28 @@ export function PhaseFormModal({
                       placeholder="V0 prompt will be generated here... Click 'Help with AI' to generate based on all previous phases"
                       disabled={isSubmitting || isGeneratingPrompt.v0}
                     />
+                    {/* Prompt Quality Score */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-gray-600">Quality Score:</span>
+                      {[1, 2, 3, 4, 5].map((score) => (
+                        <button
+                          key={score}
+                          type="button"
+                          onClick={() => setPromptScores({...promptScores, v0: score})}
+                          className={`w-6 h-6 rounded-full border-2 transition ${
+                            promptScores.v0 === score
+                              ? 'bg-blue-600 border-blue-600 text-white'
+                              : 'bg-white border-gray-300 text-gray-400 hover:border-blue-400'
+                          }`}
+                          disabled={isSubmitting}
+                        >
+                          {score}
+                        </button>
+                      ))}
+                      {promptScores.v0 !== null && (
+                        <span className="text-blue-600 font-medium">{promptScores.v0}/5</span>
+                      )}
+                    </div>
                            <button
                              type="button"
                              onClick={() => handleGenerateMockup('v0')}
@@ -1000,6 +1158,28 @@ export function PhaseFormModal({
                       placeholder="Lovable prompt will be generated here... Click 'Help with AI' to generate based on all previous phases"
                       disabled={isSubmitting || isGeneratingPrompt.lovable}
                     />
+                    {/* Prompt Quality Score */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-gray-600">Quality Score:</span>
+                      {[1, 2, 3, 4, 5].map((score) => (
+                        <button
+                          key={score}
+                          type="button"
+                          onClick={() => setPromptScores({...promptScores, lovable: score})}
+                          className={`w-6 h-6 rounded-full border-2 transition ${
+                            promptScores.lovable === score
+                              ? 'bg-purple-600 border-purple-600 text-white'
+                              : 'bg-white border-gray-300 text-gray-400 hover:border-purple-400'
+                          }`}
+                          disabled={isSubmitting}
+                        >
+                          {score}
+                        </button>
+                      ))}
+                      {promptScores.lovable !== null && (
+                        <span className="text-purple-600 font-medium">{promptScores.lovable}/5</span>
+                      )}
+                    </div>
                            <button
                              type="button"
                              onClick={() => handleGenerateMockup('lovable')}
@@ -1330,11 +1510,40 @@ export function PhaseFormModal({
               );
               const isLastQuestion = currentPromptIndex >= maxIndex;
               
-              // For Design phase, show "Generate with AI" on question 2 (v0_lovable_prompts) or question 3 (design_mockups)
+              // For Design phase, show "Save to Chatbot" on question 2 (v0_lovable_prompts)
               const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
               const isV0LovableQuestion = isDesignPhase && currentField === 'v0_lovable_prompts';
               const isDesignMockupsQuestion = isDesignPhase && currentField === 'design_mockups';
-              const shouldShowGenerateButton = isLastQuestion || isV0LovableQuestion || isDesignMockupsQuestion;
+              const shouldShowSaveButton = isDesignPhase && isV0LovableQuestion;
+              const shouldShowGenerateButton = !isDesignPhase && (isLastQuestion || isDesignMockupsQuestion);
+              
+              // For Design phase, show "Save to Chatbot" button
+              if (shouldShowSaveButton) {
+                const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts'] || '{}') : {};
+                const hasPrompts = promptsObj['v0_prompt']?.trim() || promptsObj['lovable_prompt']?.trim();
+                const isButtonDisabled = !hasPrompts || isSubmitting;
+                
+                return (
+                  <button
+                    type="button"
+                    onClick={handleSaveToChatbot}
+                    disabled={isButtonDisabled}
+                    className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg hover:from-green-700 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Saving to Chatbot...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        Save to Chatbot
+                      </>
+                    )}
+                  </button>
+                );
+              }
               
               if (shouldShowGenerateButton) {
                 // For design_mockups, check if prompts are filled; for other fields, check current field
@@ -1354,12 +1563,12 @@ export function PhaseFormModal({
                     {isSubmitting ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        {isDesignPhase && (isV0LovableQuestion || isDesignMockupsQuestion) ? 'Generating prompts & prototypes...' : 'Processing...'}
+                        Processing...
                       </>
                     ) : (
                       <>
                         <Send className="w-4 h-4" />
-                        {isDesignPhase && (isV0LovableQuestion || isDesignMockupsQuestion) ? 'Generate Prompts & Prototypes' : 'Generate with AI'}
+                        Generate with AI
                       </>
                     )}
                   </button>

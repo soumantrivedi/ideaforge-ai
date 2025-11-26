@@ -197,9 +197,26 @@ export function MainApp() {
   const handleFormSubmit = async (formData: Record<string, string>) => {
     if (!productId || !currentPhase || !user || !token) return;
     
+    const isDesignPhase = currentPhase.phase_name.toLowerCase() === 'design';
+    
     try {
       // First, save the form data
       await lifecycleService.submitPhaseData(productId, currentPhase.id, formData, user.id);
+      
+      // For Design phase, skip multi-agent generation - just save prompts
+      // User will save prompts to chatbot separately with scoring
+      if (isDesignPhase) {
+        // Get submission to store prompts
+        const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
+        
+        // Close the form modal - prompts are saved, user can now save to chatbot
+        setIsFormModalOpen(false);
+        
+        // Reload submissions to update UI
+        await loadSubmissions();
+        
+        return; // Don't proceed with multi-agent generation
+      }
       
       // Build a comprehensive query for agent processing
       const formDataSummary = Object.entries(formData)
@@ -218,9 +235,6 @@ export function MainApp() {
       } else if (currentPhase.phase_name.toLowerCase().includes('requirement')) {
         primaryAgent = 'analysis';
         supportingAgents = ['rag', 'research'];
-      } else if (currentPhase.phase_name.toLowerCase().includes('design')) {
-        primaryAgent = 'ideation';
-        supportingAgents = ['rag', 'analysis'];
       } else if (currentPhase.phase_name.toLowerCase().includes('development')) {
         primaryAgent = 'prd_authoring';
         supportingAgents = ['rag', 'analysis'];
