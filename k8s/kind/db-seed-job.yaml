@@ -1,0 +1,114 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-seed
+  namespace: ideaforge-ai
+  labels:
+    app: db-seed
+    component: database
+spec:
+  # Allow multiple runs (for re-seeding)
+  completions: 1
+  parallelism: 1
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: db-seed
+        component: database
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: db-seed
+        image: pgvector/pgvector:pg15
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "🌱 Starting database seeding..."
+          
+          # Wait for PostgreSQL to be ready
+          echo "⏳ Waiting for PostgreSQL to be ready..."
+          until pg_isready -h postgres -U agentic_pm -d agentic_pm_db; do
+            echo "   PostgreSQL not ready, waiting..."
+            sleep 2
+          done
+          echo "✅ PostgreSQL is ready"
+          
+          # Check if database is already seeded
+          echo "🔍 Checking if database needs seeding..."
+          USER_COUNT=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM user_profiles WHERE email LIKE '%@ideaforge.ai';" 2>/dev/null | xargs || echo "0")
+          PRODUCT_COUNT=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM products;" 2>/dev/null | xargs || echo "0")
+          
+          echo "   Current users: $$USER_COUNT"
+          echo "   Current products: $$PRODUCT_COUNT"
+          
+          # Always run seed script (it uses ON CONFLICT, so it's safe to re-run)
+          if [ -f /seed/seed_sample_data.sql ]; then
+            echo "🌱 Running seed script..."
+            psql -h postgres -U agentic_pm -d agentic_pm_db -f /seed/seed_sample_data.sql 2>&1 | grep -v "NOTICE" || true
+            echo "✅ Seed script executed"
+          else
+            echo "⚠️  Seed file not found at /seed/seed_sample_data.sql"
+            exit 1
+          fi
+          
+          # Verify seeding
+          echo "📊 Verifying database seeding..."
+          psql -h postgres -U agentic_pm -d agentic_pm_db -c "
+            SELECT 
+              (SELECT COUNT(*) FROM tenants) as tenants,
+              (SELECT COUNT(*) FROM user_profiles WHERE email LIKE '%@ideaforge.ai') as demo_users,
+              (SELECT COUNT(*) FROM products) as products;
+          " 2>&1 | grep -E "[0-9]+" || true
+          
+          echo "✅ Database seeding complete!"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_DB
+        volumeMounts:
+        - name: seed
+          mountPath: /seed
+          readOnly: true
+      volumes:
+      - name: seed
+        configMap:
+          name: db-seed
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres -U agentic_pm; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+

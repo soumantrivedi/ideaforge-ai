@@ -661,6 +661,15 @@ kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manif
 		 kubectl logs -n $(K8S_NAMESPACE) job/db-setup --context kind-$(KIND_CLUSTER_NAME) --tail=50 && \
 		 echo "   Continuing with deployment...")
 	@echo "✅ Database setup complete"
+	@echo "🌱 Running database seeding job..."
+	@kubectl delete job db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
+	@kubectl apply -f $(K8S_DIR)/kind/db-seed-job.yaml --context kind-$(KIND_CLUSTER_NAME)
+	@echo "⏳ Waiting for database seeding job to complete..."
+	@kubectl wait --for=condition=complete job/db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=120s || \
+		(echo "⚠️  Database seeding job did not complete, checking logs..." && \
+		 kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=50 && \
+		 echo "⚠️  Continuing anyway...")
+	@echo "✅ Database seeding complete"
 	@kubectl apply -f $(K8S_DIR)/backend.yaml --context kind-$(KIND_CLUSTER_NAME)
 	@kubectl apply -f $(K8S_DIR)/frontend.yaml --context kind-$(KIND_CLUSTER_NAME)
 	@echo "⏳ Waiting for application pods to be ready..."
@@ -1136,7 +1145,25 @@ kind-update-db-configmaps: ## Update database ConfigMaps in Kind with latest see
 	@K8S_NAMESPACE=$(K8S_NAMESPACE) bash $(K8S_DIR)/create-db-configmaps.sh
 	@echo "✅ ConfigMaps updated"
 
-kind-add-demo-accounts: ## Add demo accounts to existing Kind database
+kind-seed-database: ## Run database seeding job in Kind cluster (can be invoked separately)
+	@echo "🌱 Running database seeding job in Kind cluster..."
+	@if ! kubectl get namespace $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) &>/dev/null; then \
+		echo "❌ Namespace $(K8S_NAMESPACE) does not exist"; \
+		echo "   Please deploy the application first: make kind-deploy"; \
+		exit 1; \
+	fi
+	@kubectl delete job db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
+	@kubectl apply -f $(K8S_DIR)/kind/db-seed-job.yaml --context kind-$(KIND_CLUSTER_NAME)
+	@echo "⏳ Waiting for database seeding job to complete..."
+	@kubectl wait --for=condition=complete job/db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=120s || \
+		(echo "⚠️  Database seeding job did not complete, checking logs..." && \
+		 kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=50 && \
+		 exit 1)
+	@echo "✅ Database seeding complete"
+	@echo "📊 Verifying seeded data..."
+	@kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=20 | grep -E "tenants|demo_users|products" || true
+
+kind-add-demo-accounts: ## Add demo accounts to existing Kind database (legacy method, use kind-seed-database instead)
 	@echo "👥 Adding demo accounts to Kind database..."
 	@POSTGRES_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
 	if [ -z "$$POSTGRES_POD" ]; then \
