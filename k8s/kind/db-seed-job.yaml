@@ -36,12 +36,23 @@ spec:
           done
           echo "✅ PostgreSQL is ready"
           
+          # Check if database tables exist first
+          echo "🔍 Checking if database tables exist..."
+          TABLE_EXISTS=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'user_profiles');" 2>/dev/null | xargs || echo "false")
+          
+          if [ "$$TABLE_EXISTS" != "t" ]; then
+            echo "⚠️  Database tables do not exist. Please run db-setup job first."
+            echo "   Run: kubectl delete job db-setup -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true"
+            echo "   Then: kubectl apply -f $(K8S_DIR)/db-setup-job.yaml --context kind-$(KIND_CLUSTER_NAME)"
+            exit 1
+          fi
+          
           # Check if database is already seeded
           echo "🔍 Checking if database needs seeding..."
           USER_COUNT=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM user_profiles WHERE email LIKE '%@ideaforge.ai';" 2>/dev/null | xargs || echo "0")
           PRODUCT_COUNT=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM products;" 2>/dev/null | xargs || echo "0")
           
-          echo "   Current users: $$USER_COUNT"
+          echo "   Current demo users: $$USER_COUNT"
           echo "   Current products: $$PRODUCT_COUNT"
           
           # Always run seed script (it uses ON CONFLICT, so it's safe to re-run)

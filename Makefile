@@ -594,9 +594,17 @@ kind-deploy-full: ## Complete kind cluster setup: create cluster, setup ingress,
 	@echo "Step 8: Verifying access..."
 	@$(MAKE) kind-verify-access
 	@echo ""
+	@echo "Step 9: Verifying demo accounts..."
+	@$(MAKE) kind-verify-demo-accounts || echo "⚠️  Demo account verification failed - run 'make kind-seed-database' to seed accounts"
+	@echo ""
 	@echo "✅ Complete setup finished!"
 	@echo ""
 	@$(MAKE) kind-show-access-info
+	@echo ""
+	@echo "📝 Demo Account Credentials:"
+	@echo "   Email: admin@ideaforge.ai (or user1@ideaforge.ai, user2@ideaforge.ai, etc.)"
+	@echo "   Password: password123"
+	@echo ""
 
 kind-deploy: kind-create kind-setup-ingress kind-load-images ## Deploy to kind cluster (creates cluster, installs ingress, loads images, deploys)
 	@echo "🚀 Deploying to kind cluster..."
@@ -753,6 +761,61 @@ kind-verify-access: ## Verify application access via ingress
 	fi; \
 	echo ""
 
+kind-verify-demo-accounts: ## Verify demo accounts exist and can login
+	@echo "👥 Verifying Demo Accounts"
+	@echo "=========================="
+	@INGRESS_PORT=$$(docker ps --filter "name=$(KIND_CLUSTER_NAME)-control-plane" --format "{{.Ports}}" | grep -o "0.0.0.0:[0-9]*->80" | cut -d: -f2 | cut -d- -f1 || echo "8080"); \
+	echo ""; \
+	echo "1️⃣  Checking demo accounts in database..."; \
+	POSTGRES_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$POSTGRES_POD" ]; then \
+		echo "   ❌ PostgreSQL pod not found"; \
+		exit 1; \
+	fi; \
+	USER_COUNT=$$(kubectl exec -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) $$POSTGRES_POD -- psql -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM user_profiles WHERE email LIKE '%@ideaforge.ai';" 2>/dev/null | xargs || echo "0"); \
+	if [ "$$USER_COUNT" -gt "0" ]; then \
+		echo "   ✅ Found $$USER_COUNT demo accounts"; \
+		kubectl exec -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) $$POSTGRES_POD -- psql -U agentic_pm -d agentic_pm_db -c "SELECT email, full_name, is_active FROM user_profiles WHERE email LIKE '%@ideaforge.ai' ORDER BY email LIMIT 5;" 2>/dev/null | grep -E "@ideaforge.ai|Admin|User" | head -5 || true; \
+	else \
+		echo "   ⚠️  No demo accounts found. Run 'make kind-seed-database' to seed demo accounts."; \
+	fi; \
+	echo ""; \
+	echo "2️⃣  Testing demo account login..."; \
+	LOGIN_RESPONSE=$$(curl -s -X POST http://localhost:$$INGRESS_PORT/api/auth/login -H "Content-Type: application/json" -d '{"email":"admin@ideaforge.ai","password":"password123"}' 2>/dev/null); \
+	if echo "$$LOGIN_RESPONSE" | grep -q "token"; then \
+		TOKEN=$$(echo "$$LOGIN_RESPONSE" | grep -o '"token":"[^"]*"' | cut -d'"' -f4); \
+		if [ -n "$$TOKEN" ]; then \
+			echo "   ✅ Demo account login successful (admin@ideaforge.ai)"; \
+			echo "   Testing authenticated API call..."; \
+			USER_INFO=$$(curl -s http://localhost:$$INGRESS_PORT/api/auth/me -H "Authorization: Bearer $$TOKEN" 2>/dev/null); \
+			if echo "$$USER_INFO" | grep -q "email"; then \
+				USER_EMAIL=$$(echo "$$USER_INFO" | grep -o '"email":"[^"]*"' | cut -d'"' -f4); \
+				USER_NAME=$$(echo "$$USER_INFO" | grep -o '"full_name":"[^"]*"' | cut -d'"' -f4); \
+				echo "   ✅ Authenticated API call successful"; \
+				echo "   User: $$USER_NAME ($$USER_EMAIL)"; \
+			else \
+				echo "   ⚠️  Authenticated API call failed"; \
+			fi; \
+		else \
+			echo "   ❌ Login failed - no token received"; \
+		fi; \
+	else \
+		echo "   ❌ Demo account login failed"; \
+		echo "   Response: $$LOGIN_RESPONSE" | head -3; \
+	fi; \
+	echo ""; \
+	echo "3️⃣  Testing additional demo accounts..."; \
+	for email in user1@ideaforge.ai user2@ideaforge.ai; do \
+		TEST_RESPONSE=$$(curl -s -X POST http://localhost:$$INGRESS_PORT/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"$$email\",\"password\":\"password123\"}" 2>/dev/null); \
+		if echo "$$TEST_RESPONSE" | grep -q "token"; then \
+			echo "   ✅ $$email login successful"; \
+		else \
+			echo "   ⚠️  $$email login failed"; \
+		fi; \
+	done; \
+	echo ""; \
+	echo "✅ Demo account verification complete"
+
 kind-show-access-info: ## Show all access methods for the application
 	@echo "🌐 Application Access Information"
 	@echo "================================"
@@ -901,7 +964,7 @@ kind-check-logs-before-commit: ## Check all pod logs for errors and Agno initial
 	@echo ""
 	@echo "✅ Log check complete"
 
-verify-kind-complete: ## Complete verification: pods, replicasets, image tags, secrets, Agno initialization
+verify-kind-complete: ## Complete verification: pods, replicasets, image tags, secrets, Agno initialization, demo accounts
 	@echo "🔍 Complete Verification for Kind Cluster"
 	@echo "=========================================="
 	@echo ""
@@ -942,6 +1005,12 @@ verify-kind-complete: ## Complete verification: pods, replicasets, image tags, s
 	@kubectl exec -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -- \
 		python -c "from backend.services.provider_registry import provider_registry; print('Providers:', provider_registry.get_configured_providers())" 2>/dev/null | \
 		grep -v "warning\|no_embedder" | tail -1 || echo "⚠️  Could not check provider configuration"
+	@echo ""
+	@echo "7️⃣  Verifying Application Access..."
+	@$(MAKE) kind-verify-access
+	@echo ""
+	@echo "8️⃣  Verifying Demo Accounts..."
+	@$(MAKE) kind-verify-demo-accounts || echo "⚠️  Demo account verification failed"
 	@echo ""
 	@echo "✅ Verification complete"
 
