@@ -27,11 +27,16 @@
 5. Update documentation and diagrams if architecture changed
 
 ### Before Committing:
-1. All 19 requirements verified
-2. Documentation updated (if needed)
-3. Mermaid diagrams updated (if architecture changed)
-4. Agent list documented (if agents added/modified)
-5. Integration examples provided (if new integrations)
+1. **Run complete verification**: `make verify-kind-complete` (checks all pods, logs, replicasets, Agno initialization)
+2. **Inspect all pod logs**: `make kind-check-logs-before-commit` (must show no errors, Agno agents initialized)
+3. **Check for old replicasets**: `kubectl get replicasets -n ideaforge-ai --context kind-ideaforge-ai | grep "0.*0.*0"` (delete any with 0 desired/current)
+4. **Verify image tags**: `kubectl get deployments -n ideaforge-ai --context kind-ideaforge-ai -o jsonpath='{.items[*].spec.template.spec.containers[*].image}'` (must match current git SHA)
+5. **Check dockerconfig secrets**: `kubectl get secrets -n ideaforge-ai --context kind-ideaforge-ai | grep dockerconfig` (must exist if using private registry)
+6. All 19 requirements verified
+7. Documentation updated (if needed)
+8. Mermaid diagrams updated (if architecture changed)
+9. Agent list documented (if agents added/modified)
+10. Integration examples provided (if new integrations)
 
 ## Key Requirements Summary
 
@@ -94,11 +99,20 @@
 5. Verify RAG support if applicable
 
 ### After Deployment:
-1. Verify all services running
-2. Check logs for errors
-3. Test external URLs
-4. Verify ConfigMap values
-5. Test multi-agent coordination
+1. **Complete refresh verification** (for major changes):
+   - Kill docker-compose: `docker-compose down -v`
+   - Backup database: `kubectl exec -n ideaforge-ai --context kind-ideaforge-ai deployment/postgres -- pg_dump -U agentic_pm ideaforge_ai > /tmp/backup.sql`
+   - Delete old replicasets: `kubectl get replicasets -n ideaforge-ai --context kind-ideaforge-ai -o json | jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' | xargs -I {} kubectl delete replicaset {} -n ideaforge-ai --context kind-ideaforge-ai`
+   - Delete and recreate kind cluster: `make kind-delete && make kind-create && make kind-setup-ingress`
+   - Restore database: `kubectl exec -i -n ideaforge-ai --context kind-ideaforge-ai deployment/postgres -- psql -U agentic_pm ideaforge_ai < /tmp/backup.sql`
+   - Deploy fresh: `make build-apps && make kind-load-images && make kind-load-secrets && make kind-deploy-internal`
+   - Verify: `make verify-kind-complete`
+2. Verify all services running: `kubectl get pods -n ideaforge-ai --context kind-ideaforge-ai`
+3. Check logs for errors: `make kind-check-logs-before-commit`
+4. Test external URLs: `curl http://localhost:80/health && curl http://localhost:80/api/docs`
+5. Verify ConfigMap values: `kubectl get configmap ideaforge-ai-config -n ideaforge-ai --context kind-ideaforge-ai -o yaml`
+6. Test multi-agent coordination: Verify Agno agents initialized in logs
+7. **Verify Agno initialization**: `kubectl logs -n ideaforge-ai --context kind-ideaforge-ai deployment/backend --tail=100 | grep -E "agno.*initialized|agno_enabled.*true"`
 
 ## Code Quality Rules
 

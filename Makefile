@@ -789,6 +789,82 @@ kind-cleanup: ## Clean up kind cluster deployment (keeps cluster)
 	@kubectl delete namespace $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
 	@echo "✅ Cleanup complete (cluster still exists, use 'make kind-delete' to remove cluster)"
 
+kind-cleanup-replicasets: ## Clean up old replicasets with 0 replicas
+	@echo "🧹 Cleaning up old replicasets..."
+	@kubectl get replicasets -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -o json 2>/dev/null | \
+		jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' | \
+		while read rs; do \
+			if [ -n "$$rs" ]; then \
+				echo "   Deleting replicaset: $$rs"; \
+				kubectl delete replicaset $$rs -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true; \
+			fi; \
+		done || echo "⚠️  No replicasets to clean up or cluster not accessible"
+	@echo "✅ Replicaset cleanup complete"
+
+kind-check-logs-before-commit: ## Check all pod logs for errors and Agno initialization (run before commit)
+	@echo "🔍 Checking pod logs before commit..."
+	@echo ""
+	@echo "=== Backend Logs (Errors) ==="
+	@kubectl logs -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) --tail=200 2>/dev/null | \
+		grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | \
+		grep -v "warning" | grep -v "WARNING" | head -20 || echo "✅ No errors found"
+	@echo ""
+	@echo "=== Agno Initialization Status ==="
+	@kubectl logs -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) --tail=200 2>/dev/null | \
+		grep -E "(agno.*initialized|agno_enabled.*true|agno_orchestrator_initialized)" | tail -5 || \
+		echo "⚠️  Agno initialization not found in logs"
+	@echo ""
+	@echo "=== Frontend Logs (Errors) ==="
+	@kubectl logs -n $(K8S_NAMESPACE) -l app=frontend --context kind-$(KIND_CLUSTER_NAME) --tail=200 2>/dev/null | \
+		grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | \
+		grep -v "warning" | grep -v "WARNING" | head -20 || echo "✅ No errors found"
+	@echo ""
+	@echo "✅ Log check complete"
+
+verify-kind-complete: ## Complete verification: pods, replicasets, image tags, secrets, Agno initialization
+	@echo "🔍 Complete Verification for Kind Cluster"
+	@echo "=========================================="
+	@echo ""
+	@echo "1️⃣  Checking Pod Status..."
+	@kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) 2>/dev/null || (echo "❌ Cluster not accessible"; exit 1)
+	@echo ""
+	@echo "2️⃣  Checking for Old Replicasets..."
+	@OLD_RS=$$(kubectl get replicasets -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -o json 2>/dev/null | \
+		jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' | wc -l | tr -d ' '); \
+	if [ "$$OLD_RS" -gt 0 ]; then \
+		echo "⚠️  Found $$OLD_RS old replicasets. Run 'make kind-cleanup-replicasets' to clean up"; \
+	else \
+		echo "✅ No old replicasets found"; \
+	fi
+	@echo ""
+	@echo "3️⃣  Checking Image Tags..."
+	@CURRENT_SHA=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown"); \
+	BACKEND_IMAGE=$$(kubectl get deployment backend -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null); \
+	FRONTEND_IMAGE=$$(kubectl get deployment frontend -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null); \
+	echo "   Current Git SHA: $$CURRENT_SHA"; \
+	echo "   Backend Image: $$BACKEND_IMAGE"; \
+	echo "   Frontend Image: $$FRONTEND_IMAGE"; \
+	if echo "$$BACKEND_IMAGE" | grep -q "$$CURRENT_SHA" && echo "$$FRONTEND_IMAGE" | grep -q "$$CURRENT_SHA"; then \
+		echo "✅ Image tags match current git SHA"; \
+	else \
+		echo "⚠️  Image tags may not match current git SHA"; \
+	fi
+	@echo ""
+	@echo "4️⃣  Checking Docker Config Secrets..."
+	@kubectl get secrets -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) 2>/dev/null | grep dockerconfig || echo "ℹ️  No dockerconfig secrets (using public images)"
+	@echo ""
+	@echo "5️⃣  Checking Agno Initialization..."
+	@kubectl logs -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) --tail=100 2>/dev/null | \
+		grep -E "(agno.*initialized|agno_enabled.*true|agno_orchestrator_initialized)" | tail -3 || \
+		echo "⚠️  Agno initialization not found in logs"
+	@echo ""
+	@echo "6️⃣  Checking Provider Configuration..."
+	@kubectl exec -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -- \
+		python -c "from backend.services.provider_registry import provider_registry; print('Providers:', provider_registry.get_configured_providers())" 2>/dev/null | \
+		grep -v "warning\|no_embedder" | tail -1 || echo "⚠️  Could not check provider configuration"
+	@echo ""
+	@echo "✅ Verification complete"
+
 eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespace (use EKS_NAMESPACE=your-namespace). Uses GitHub PAT from .env or EKS_GITHUB_TOKEN env var.
 	@echo "🔐 Setting up GitHub Container Registry secret..."
 	@echo "ℹ️  Note: GitHub Personal Access Token (PAT) can be used for GHCR authentication"
