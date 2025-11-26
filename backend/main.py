@@ -1266,6 +1266,19 @@ async def get_agno_status(
     # Load user's API keys from database (user keys take precedence)
     user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
     
+    # Log for debugging
+    logger.debug(
+        "agno_status_check",
+        user_id=str(current_user["id"]),
+        env_providers=env_providers,
+        has_env_openai=has_env_openai,
+        has_env_claude=has_env_claude,
+        has_env_gemini=has_env_gemini,
+        user_keys_providers=list(user_keys.keys()) if user_keys else [],
+        agno_enabled=agno_enabled,
+        agno_available=AGNO_AVAILABLE
+    )
+    
     # Check if any provider is configured (either from env or user keys)
     has_openai = bool(user_keys.get("openai")) or has_env_openai
     has_claude = bool(user_keys.get("claude")) or has_env_claude
