@@ -32,6 +32,12 @@ spec:
           done
           echo "✅ PostgreSQL is ready"
           
+          # Enable required extensions first
+          echo "🔄 Enabling PostgreSQL extensions..."
+          psql -h postgres -U agentic_pm -d agentic_pm_db -c "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";" 2>&1 | grep -v "NOTICE" || true
+          psql -h postgres -U agentic_pm -d agentic_pm_db -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>&1 | grep -v "NOTICE" || true
+          echo "   ✅ Extensions enabled"
+          
           # Run base schema first (if available)
           echo "🔄 Running base schema initialization..."
           TABLE_COUNT=$$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
