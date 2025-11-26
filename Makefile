@@ -565,6 +565,39 @@ rebuild-and-deploy-kind: build-apps kind-load-images kind-update-images ## Rebui
 	@$(MAKE) kind-deploy-internal
 	@echo "✅ Deployment to kind complete!"
 
+kind-deploy-full: ## Complete kind cluster setup: create cluster, setup ingress, build images, load secrets, deploy, seed database, verify access
+	@echo "🚀 Complete Kind Cluster Setup"
+	@echo "=============================="
+	@echo ""
+	@echo "Step 1: Checking Docker..."
+	@docker info > /dev/null 2>&1 && echo "✅ Docker is running" || (echo "⚠️  Docker not running, attempting to start..." && open -a Docker 2>/dev/null && sleep 5 && timeout=30 elapsed=0 && while ! docker info > /dev/null 2>&1 && [ $$elapsed -lt $$timeout ]; do sleep 2; elapsed=$$((elapsed+2)); done && docker info > /dev/null 2>&1 && echo "✅ Docker is now running" || (echo "❌ Docker failed to start - please start Docker Desktop manually" && exit 1))
+	@echo ""
+	@echo "Step 2: Creating kind cluster..."
+	@$(MAKE) kind-create
+	@echo ""
+	@echo "Step 3: Setting up ingress controller..."
+	@$(MAKE) kind-setup-ingress
+	@echo ""
+	@echo "Step 4: Building application images..."
+	@$(MAKE) build-apps
+	@echo ""
+	@echo "Step 5: Loading images into kind cluster..."
+	@$(MAKE) kind-load-images
+	@echo ""
+	@echo "Step 6: Loading secrets from .env file..."
+	@$(MAKE) kind-load-secrets
+	@echo ""
+	@echo "Step 7: Deploying application..."
+	@$(MAKE) kind-update-images
+	@$(MAKE) kind-deploy-internal
+	@echo ""
+	@echo "Step 8: Verifying access..."
+	@$(MAKE) kind-verify-access
+	@echo ""
+	@echo "✅ Complete setup finished!"
+	@echo ""
+	@$(MAKE) kind-show-access-info
+
 kind-deploy: kind-create kind-setup-ingress kind-load-images ## Deploy to kind cluster (creates cluster, installs ingress, loads images, deploys)
 	@echo "🚀 Deploying to kind cluster..."
 	@$(MAKE) kind-update-images
@@ -679,35 +712,73 @@ kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manif
 	@echo "🤖 Initializing Agno framework..."
 	@$(MAKE) kind-agno-init || echo "⚠️  Agno initialization skipped"
 	@echo "🌐 Applying ingress for kind..."
-	@if [ -f $(K8S_DIR)/ingress-kind.yaml ]; then \
+	@if [ -f $(K8S_DIR)/kind/ingress.yaml ]; then \
+		kubectl apply -f $(K8S_DIR)/kind/ingress.yaml --context kind-$(KIND_CLUSTER_NAME); \
+	elif [ -f $(K8S_DIR)/ingress-kind.yaml ]; then \
 		kubectl apply -f $(K8S_DIR)/ingress-kind.yaml --context kind-$(KIND_CLUSTER_NAME); \
 	else \
 		echo "⚠️  ingress-kind.yaml not found, using default ingress"; \
 		kubectl apply -f $(K8S_DIR)/ingress.yaml --context kind-$(KIND_CLUSTER_NAME); \
 	fi
+	@echo "✅ Ingress applied"
 	@echo ""
 	@echo "✅ Deployment complete!"
 	@echo ""
-	@INGRESS_PORT=$$(docker ps --filter "name=$(KIND_CLUSTER_NAME)-control-plane" --format "{{.Ports}}" | grep -o "0.0.0.0:[0-9]*->80" | cut -d: -f2 | cut -d- -f1 || echo "80"); \
-	echo "🌐 Access the application:"; \
-	echo "   Method 1 - Direct access (port $$INGRESS_PORT):"; \
-	echo "     Frontend: http://localhost:$$INGRESS_PORT/"; \
-	echo "     Backend API: http://localhost:$$INGRESS_PORT/api/"; \
-	echo "     Backend Health: http://localhost:$$INGRESS_PORT/health"; \
-	echo ""; \
-	echo "   Method 2 - With host headers:"; \
-	echo "     Frontend: curl -H 'Host: ideaforge.local' http://localhost:$$INGRESS_PORT/"; \
-	echo "     Backend: curl -H 'Host: api.ideaforge.local' http://localhost:$$INGRESS_PORT/"; \
-	echo ""; \
-	echo "   Method 3 - Add to /etc/hosts (then use hostnames):"; \
-	echo "     sudo sh -c 'echo \"127.0.0.1 ideaforge.local api.ideaforge.local\" >> /etc/hosts'"; \
-	echo "     Frontend: http://ideaforge.local"; \
-	echo "     Backend API: http://api.ideaforge.local"; \
-	echo ""; \
-	echo "   Method 4 - Port forward (recommended for development):"; \
-	echo "     make kind-port-forward"
+	@$(MAKE) kind-show-access-info
 	@echo ""
 	@$(MAKE) kind-status
+
+kind-verify-access: ## Verify application access via ingress
+	@echo "🔍 Verifying application access..."
+	@INGRESS_PORT=$$(docker ps --filter "name=$(KIND_CLUSTER_NAME)-control-plane" --format "{{.Ports}}" | grep -o "0.0.0.0:[0-9]*->80" | cut -d: -f2 | cut -d- -f1 || echo "8080"); \
+	echo "   Testing ingress on port $$INGRESS_PORT..."; \
+	echo ""; \
+	echo "   Testing frontend..."; \
+	if curl -s -f http://localhost:$$INGRESS_PORT/ > /dev/null 2>&1; then \
+		echo "   ✅ Frontend accessible at http://localhost:$$INGRESS_PORT/"; \
+	else \
+		echo "   ❌ Frontend not accessible"; \
+	fi; \
+	echo "   Testing backend health..."; \
+	if curl -s -f http://localhost:$$INGRESS_PORT/health > /dev/null 2>&1; then \
+		echo "   ✅ Backend health accessible at http://localhost:$$INGRESS_PORT/health"; \
+	else \
+		echo "   ❌ Backend health not accessible"; \
+	fi; \
+	echo "   Testing backend API..."; \
+	if curl -s -f http://localhost:$$INGRESS_PORT/api/health > /dev/null 2>&1; then \
+		echo "   ✅ Backend API accessible at http://localhost:$$INGRESS_PORT/api/"; \
+	else \
+		echo "   ❌ Backend API not accessible"; \
+	fi; \
+	echo ""
+
+kind-show-access-info: ## Show all access methods for the application
+	@echo "🌐 Application Access Information"
+	@echo "================================"
+	@INGRESS_PORT=$$(docker ps --filter "name=$(KIND_CLUSTER_NAME)-control-plane" --format "{{.Ports}}" | grep -o "0.0.0.0:[0-9]*->80" | cut -d: -f2 | cut -d- -f1 || echo "8080"); \
+	echo ""; \
+	echo "📍 Primary Access Method (Ingress on port $$INGRESS_PORT):"; \
+	echo "   Frontend:     http://localhost:$$INGRESS_PORT/"; \
+	echo "   Backend API:  http://localhost:$$INGRESS_PORT/api/"; \
+	echo "   Health Check: http://localhost:$$INGRESS_PORT/health"; \
+	echo "   Swagger Docs: http://localhost:$$INGRESS_PORT/api/docs"; \
+	echo ""; \
+	echo "📍 Alternative Access Methods:"; \
+	echo "   1. With host headers:"; \
+	echo "      Frontend: curl -H 'Host: ideaforge.local' http://localhost:$$INGRESS_PORT/"; \
+	echo "      Backend:  curl -H 'Host: api.ideaforge.local' http://localhost:$$INGRESS_PORT/"; \
+	echo ""; \
+	echo "   2. Add to /etc/hosts (then use hostnames):"; \
+	echo "      sudo sh -c 'echo \"127.0.0.1 ideaforge.local api.ideaforge.local\" >> /etc/hosts'"; \
+	echo "      Frontend: http://ideaforge.local:$$INGRESS_PORT"; \
+	echo "      Backend:  http://api.ideaforge.local:$$INGRESS_PORT"; \
+	echo ""; \
+	echo "   3. Port forward (separate ports):"; \
+	echo "      make kind-port-forward"; \
+	echo "      Frontend: http://localhost:3001"; \
+	echo "      Backend:  http://localhost:8000"; \
+	echo ""
 
 kind-port-forward: ## Port forward frontend and backend services for local access
 	@echo "🔌 Setting up port forwarding..."
