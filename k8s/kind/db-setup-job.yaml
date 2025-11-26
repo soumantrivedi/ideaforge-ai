@@ -58,20 +58,8 @@ spec:
             else
               echo "   ⚠️  Base schema file not found, creating minimal schema..."
               # Create minimal schema if file not found
-              psql -h postgres -U agentic_pm -d agentic_pm_db <<EOF 2>&1 | grep -v "NOTICE" || true
--- Minimal schema to support migrations
-CREATE TABLE IF NOT EXISTS user_profiles (
-  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-  email text UNIQUE NOT NULL,
-  full_name text,
-  password_hash text,
-  tenant_id uuid,
-  is_active boolean DEFAULT true,
-  persona text DEFAULT 'product_manager',
-  created_at timestamptz DEFAULT now(),
-  updated_at timestamptz DEFAULT now()
-);
-EOF
+              psql -h postgres -U agentic_pm -d agentic_pm_db -c "CREATE TABLE IF NOT EXISTS user_profiles (id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), email text UNIQUE NOT NULL, full_name text, password_hash text, tenant_id uuid, is_active boolean DEFAULT true, persona text DEFAULT 'product_manager', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());" 2>&1 | grep -v "NOTICE" || true
+              psql -h postgres -U agentic_pm -d agentic_pm_db -c "CREATE TABLE IF NOT EXISTS products (id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), user_id uuid NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE, name text NOT NULL, description text, status text DEFAULT 'ideation', metadata jsonb DEFAULT '{}', created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now());" 2>&1 | grep -v "NOTICE" || true
               echo "   ✅ Minimal schema created"
             fi
           else
