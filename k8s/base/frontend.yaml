@@ -84,4 +84,5 @@ spec:
     name: http
   selector:
     app: frontend
+    component: web
 
