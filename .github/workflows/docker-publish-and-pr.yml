@@ -10,6 +10,10 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # github.repository automatically resolves to the correct repo name:
+  # - soumantrivedi/ideaforge-ai (for origin remote)
+  # - McK-Internal/ideaforge-ai (for mck-internal remote)
+  # Final image paths: ghcr.io/soumantrivedi/ideaforge-ai/backend, etc.
   IMAGE_NAME_BACKEND: ${{ github.repository }}/backend
   IMAGE_NAME_FRONTEND: ${{ github.repository }}/frontend
 
