@@ -3,9 +3,9 @@
  * Automatically clears invalid tokens and redirects to login on 401 errors
  */
 
-// Use relative path if VITE_API_URL is empty or not set (cloud-native pattern)
-// Frontend nginx will proxy /api requests to backend service internally
-const API_URL = import.meta.env.VITE_API_URL || '';
+// Use runtime configuration for API URL (supports ConfigMap-based configuration)
+import { getValidatedApiUrl } from './runtime-config';
+const API_URL = getValidatedApiUrl();
 
 let onUnauthorizedCallback: (() => void) | null = null;
 

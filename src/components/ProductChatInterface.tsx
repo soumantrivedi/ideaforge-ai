@@ -5,7 +5,8 @@ import type { MultiAgentMessage, CoordinationMode } from '../agents/multi-agent-
 import { useAuth } from '../contexts/AuthContext';
 import { saveChatSession, loadChatSession, clearProductSession } from '../lib/session-storage';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+const API_URL = getValidatedApiUrl();
 
 interface ProductChatInterfaceProps {
   productId: string;

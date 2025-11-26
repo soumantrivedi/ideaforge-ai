@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 // Using backend API instead of Supabase
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getValidatedApiUrl } from './runtime-config';
+const API_URL = getValidatedApiUrl();
 
 export interface Document {
   id: string;
@@ -38,7 +39,7 @@ export class RAGSystem {
     try {
       const embedding = await this.generateEmbedding(content);
       
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/db/knowledge-articles`, {
+      const response = await fetch(`${API_URL}/api/db/knowledge-articles`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -155,7 +156,7 @@ export class RAGSystem {
         params.append('product_id', productId);
       }
       
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/db/knowledge-articles?${params}`);
+      const response = await fetch(`${API_URL}/api/db/knowledge-articles?${params}`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }

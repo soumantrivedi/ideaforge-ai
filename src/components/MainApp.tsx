@@ -13,6 +13,9 @@ import { ConversationHistory } from './ConversationHistory';
 import { UserProfile } from './UserProfile';
 import { IdeaScoreDashboard } from './IdeaScoreDashboard';
 import { ProductSummaryPRDGenerator } from './ProductSummaryPRDGenerator';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+
+const API_URL = getValidatedApiUrl();
 import { useAuth } from '../contexts/AuthContext';
 import { lifecycleService, type LifecyclePhase, type PhaseSubmission } from '../lib/product-lifecycle-service';
 import { saveAppState, loadAppState } from '../lib/session-storage';
@@ -118,7 +121,6 @@ export function MainApp() {
       }
 
       try {
-        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
         const response = await fetch(
           `${API_URL}/api/agents/by-phase?phase_name=${encodeURIComponent(currentPhase.phase_name)}`,
           {
