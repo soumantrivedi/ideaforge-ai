@@ -45,6 +45,7 @@ Configuration and environment setup:
 - `PLATFORM_ENV_GUIDE.md` - Platform-specific environment configuration
 - `ENVIRONMENT_URL_CONFIG.md` - URL configuration across environments
 - `API_KEYS_SETUP.md` - API keys setup and verification
+- `AGNO_INITIALIZATION.md` - Agno framework initialization from .env and user override
 
 ### Guides (`docs/guides/`)
 

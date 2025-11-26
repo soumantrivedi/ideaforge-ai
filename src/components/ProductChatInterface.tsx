@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { EnhancedChatInterface } from './EnhancedChatInterface';
+import { ExportPRDModal } from './ExportPRDModal';
 import type { MultiAgentMessage, CoordinationMode } from '../agents/multi-agent-system';
 import { useAuth } from '../contexts/AuthContext';
 import { saveChatSession, loadChatSession, clearProductSession } from '../lib/session-storage';
@@ -329,60 +330,38 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
     loadConversationHistory();
   }, [token, productId]);
 
-  const handleExport = async () => {
-    if (!token || !productId) return;
-    
-    try {
-      // Get all conversation messages for export
-      const conversationText = messages
-        .map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-        .join('\n\n');
-      
-      // Call export endpoint
-      const response = await fetch(`${API_URL}/api/products/${productId}/export-prd`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          conversation_history: messages,
-          format: 'html', // Request HTML format
-        }),
-      });
-      
-      if (response.ok) {
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `PRD_${productId}_${new Date().toISOString().split('T')[0]}.html`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-      } else {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to export PRD');
-      }
-    } catch (error) {
-      console.error('Export error:', error);
-      alert(`Failed to export PRD: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
+  const [showExportModal, setShowExportModal] = useState(false);
+
+  const handleExport = () => {
+    setShowExportModal(true);
   };
 
   return (
-    <EnhancedChatInterface
-      messages={messages}
-      onSendMessage={handleSendMessage}
-      isLoading={isLoading}
-      coordinationMode={coordinationMode}
-      onCoordinationModeChange={setCoordinationMode}
-      activeAgents={activeAgents}
-      productId={productId}
-      onExport={handleExport}
-    />
+    <>
+      <EnhancedChatInterface
+        messages={messages}
+        onSendMessage={handleSendMessage}
+        isLoading={isLoading}
+        coordinationMode={coordinationMode}
+        onCoordinationModeChange={setCoordinationMode}
+        activeAgents={activeAgents}
+        productId={productId}
+        onExport={handleExport}
+      />
+      {showExportModal && (
+        <ExportPRDModal
+          productId={productId || ''}
+          isOpen={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          token={token}
+          conversationHistory={messages.map(msg => ({
+            role: msg.role,
+            content: msg.content,
+            timestamp: msg.timestamp
+          }))}
+        />
+      )}
+    </>
   );
 }
 

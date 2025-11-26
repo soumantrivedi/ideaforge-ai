@@ -178,6 +178,7 @@ async def lifespan(app: FastAPI):
         logger.warning("database_initialization_failed", status="warning")
     
     # Log provider status at startup (from environment variables/Kubernetes secrets)
+    # Provider registry is initialized from .env file via Settings class
     configured_providers = provider_registry.get_configured_providers()
     logger.info(
         "startup_provider_status",
@@ -185,10 +186,14 @@ async def lifespan(app: FastAPI):
         has_openai=provider_registry.has_openai_key(),
         has_claude=provider_registry.has_claude_key(),
         has_gemini=provider_registry.has_gemini_key(),
-        source="environment_variables"
+        source="environment_variables",
+        openai_key_present=bool(settings.openai_api_key),
+        anthropic_key_present=bool(settings.anthropic_api_key),
+        google_key_present=bool(settings.google_api_key)
     )
     
     # Reinitialize orchestrator on startup to ensure Agno is initialized if providers are available
+    # This uses API keys from .env file (via provider_registry which reads from Settings)
     global orchestrator, agno_enabled
     orchestrator, agno_enabled = _initialize_orchestrator()
     
@@ -197,13 +202,30 @@ async def lifespan(app: FastAPI):
         "startup_orchestrator_status",
         orchestrator_type=type(orchestrator).__name__,
         agno_enabled=agno_enabled,
-        has_providers=bool(configured_providers)
+        has_providers=bool(configured_providers),
+        feature_agno_framework=settings.feature_agno_framework,
+        agno_available=AGNO_AVAILABLE
     )
     
     # Agno agents are automatically initialized when orchestrator is created
-    # No additional initialization needed at startup
+    # No additional initialization needed at startup if providers are in .env
     if agno_enabled:
-        logger.info("agno_framework_ready_at_startup", providers=configured_providers)
+        logger.info(
+            "agno_framework_ready_at_startup",
+            providers=configured_providers,
+            message="Agno framework initialized automatically from .env file API keys"
+        )
+    elif configured_providers and AGNO_AVAILABLE and settings.feature_agno_framework:
+        logger.warning(
+            "agno_framework_not_enabled_despite_providers",
+            providers=configured_providers,
+            message="Providers available but Agno not enabled. Check feature flag and Agno availability."
+        )
+    elif not configured_providers:
+        logger.info(
+            "agno_framework_waiting_for_providers",
+            message="No AI providers configured in .env. Users can configure API keys in Settings to enable Agno."
+        )
     
     yield
     
@@ -1285,7 +1307,10 @@ async def initialize_agno_agents(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Initialize Agno agents on demand."""
+    """
+    Initialize Agno agents on demand.
+    Uses user's API keys from database if available, otherwise falls back to .env keys.
+    """
     from backend.services.api_key_loader import load_user_api_keys_from_db
     
     if not AGNO_AVAILABLE:
@@ -1294,17 +1319,18 @@ async def initialize_agno_agents(
             detail="Agno framework is not available. Please ensure agno package is installed."
         )
     
-    # Load user's API keys and update provider registry
+    # Load user's API keys from database (if any)
     user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
     
-    # Update provider registry with user's keys
+    # Update provider registry with user's keys (user keys override .env keys)
+    # If user hasn't set keys, provider_registry still has .env keys from initialization
     provider_registry.update_keys(
         openai_key=user_keys.get("openai"),
         claude_key=user_keys.get("claude"),
         gemini_key=user_keys.get("gemini"),
     )
     
-    # Check if any provider is configured
+    # Check if any provider is configured (either from user keys or .env)
     has_provider = (
         provider_registry.has_openai_key() or
         provider_registry.has_claude_key() or
@@ -1314,7 +1340,7 @@ async def initialize_agno_agents(
     if not has_provider:
         raise HTTPException(
             status_code=400,
-            detail="No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) before initializing agents."
+            detail="No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) in Settings or ensure .env file has API keys."
         )
     
     # Get configured providers list

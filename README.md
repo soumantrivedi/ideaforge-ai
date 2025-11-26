@@ -83,6 +83,7 @@ make eks-deploy-full \
 - [Environment Variables](docs/configuration/environment-variables.md)
 - [Platform-Specific Configuration](docs/configuration/PLATFORM_ENV_GUIDE.md)
 - [API Keys Setup](docs/configuration/API_KEYS_SETUP.md)
+- [Agno Framework Initialization](docs/configuration/AGNO_INITIALIZATION.md)
 - [AI Model Configuration](docs/AI_MODEL_UPGRADE.md)
 
 ### Guides

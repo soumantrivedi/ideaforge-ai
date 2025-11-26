@@ -123,9 +123,21 @@ export function EnhancedChatInterface({
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-purple-500" />
-            <span className="text-xs font-medium text-purple-600">Enhanced Mode</span>
+          <div className="flex items-center gap-3">
+            {onExport && (
+              <button
+                onClick={onExport}
+                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition"
+                title="Export PRD"
+              >
+                <Download className="w-4 h-4" />
+                Export PRD
+              </button>
+            )}
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-500" />
+              <span className="text-xs font-medium text-purple-600">Enhanced Mode</span>
+            </div>
           </div>
         </div>
 
