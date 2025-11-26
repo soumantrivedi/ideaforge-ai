@@ -24,9 +24,9 @@ data:
   AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning
   
   # Frontend Configuration
-  VITE_API_URL: "http://localhost:80/api"  # For kind cluster ingress access
-  FRONTEND_URL: "http://localhost:80"  # For CORS configuration
-  CORS_ORIGINS: "http://localhost,http://localhost:80,http://localhost:8080,http://ideaforge.local,http://api.ideaforge.local"
+  VITE_API_URL: "https://api-ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud"  # Backend API URL for EKS
+  FRONTEND_URL: "https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud"  # Frontend URL for CORS
+  CORS_ORIGINS: "https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud,https://api-ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud,http://localhost,http://localhost:80,http://localhost:8080,http://ideaforge.local,http://api.ideaforge.local"
 
 ---
 apiVersion: v1
