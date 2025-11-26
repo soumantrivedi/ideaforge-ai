@@ -230,7 +230,6 @@ export function MainApp() {
       }
       
       // Trigger agent processing
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
       const response = await fetch(`${API_URL}/api/multi-agent/process`, {
         method: 'POST',
         headers: {
@@ -293,6 +292,17 @@ export function MainApp() {
           details: errorDetails
         });
         
+        // Check if error is about missing AI provider
+        if (errorMessage.includes('No AI provider') || errorMessage.includes('configure at least one AI provider')) {
+          const shouldGoToSettings = confirm(
+            `${errorMessage}\n\nWould you like to go to Settings to configure an AI provider now?`
+          );
+          if (shouldGoToSettings) {
+            setView('settings');
+          }
+          return; // Don't throw error, user chose to go to Settings or dismissed
+        }
+        
         throw new Error(errorMessage);
       }
       
@@ -343,7 +353,20 @@ export function MainApp() {
       setValidationModalOpen(true);
     } catch (error) {
       console.error('Error submitting form:', error);
-      alert(`Failed to process form: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Check if error is about missing AI provider
+      if (errorMessage.includes('No AI provider') || errorMessage.includes('configure at least one AI provider')) {
+        const shouldGoToSettings = confirm(
+          `${errorMessage}\n\nWould you like to go to Settings to configure an AI provider now?`
+        );
+        if (shouldGoToSettings) {
+          setView('settings');
+        }
+        return; // Don't show alert, user chose to go to Settings or dismissed
+      }
+      
+      alert(`Failed to process form: ${errorMessage}`);
     }
   };
 
@@ -351,8 +374,6 @@ export function MainApp() {
     if (!validationData || !productId || !currentPhase || !token) return;
     
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      
       // Update phase submission with generated content and score
       const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
       if (submission) {
@@ -400,7 +421,6 @@ export function MainApp() {
     if (!validationData || !productId || !currentPhase || !user || !token) return;
     
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
       
       // Refine the response
       const refinedResponse = await fetch(`${API_URL}/api/multi-agent/process`, {

@@ -1257,15 +1257,22 @@ async def get_agno_status(
     """Get Agno framework status and initialization capability."""
     from backend.services.api_key_loader import load_user_api_keys_from_db
     
-    # Load user's API keys
+    # First check environment-provided keys (from Kubernetes secrets)
+    env_providers = provider_registry.get_configured_providers()
+    has_env_openai = provider_registry.has_openai_key()
+    has_env_claude = provider_registry.has_claude_key()
+    has_env_gemini = provider_registry.has_gemini_key()
+    
+    # Load user's API keys from database (user keys take precedence)
     user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
     
-    # Check if any provider is configured
-    has_openai = bool(user_keys.get("openai"))
-    has_claude = bool(user_keys.get("claude"))
-    has_gemini = bool(user_keys.get("gemini"))
+    # Check if any provider is configured (either from env or user keys)
+    has_openai = bool(user_keys.get("openai")) or has_env_openai
+    has_claude = bool(user_keys.get("claude")) or has_env_claude
+    has_gemini = bool(user_keys.get("gemini")) or has_env_gemini
     providers_configured = has_openai or has_claude or has_gemini
     
+    # Build list of configured providers (prioritize user keys, then env keys)
     configured_providers = []
     if has_openai:
         configured_providers.append("openai")
