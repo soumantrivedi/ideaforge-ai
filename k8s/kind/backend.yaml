@@ -219,7 +219,15 @@ spec:
               name: ideaforge-ai-secrets
               key: API_KEY_ENCRYPTION_KEY
         - name: FRONTEND_URL
-          value: "https://ideaforge.ai"  # Update with your frontend domain
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: FRONTEND_URL
+        - name: CORS_ORIGINS
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: CORS_ORIGINS
         resources:
           requests:
             memory: "1Gi"
