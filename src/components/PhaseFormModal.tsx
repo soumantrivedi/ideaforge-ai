@@ -162,8 +162,8 @@ export function PhaseFormModal({
     const v0Prompt = promptsObj['v0_prompt'] || '';
     const lovablePrompt = promptsObj['lovable_prompt'] || '';
 
-    if (!v0Prompt.trim() && !lovablePrompt.trim()) {
-      alert('Please generate at least one prompt (V0 or Lovable) before saving to chatbot');
+      if (!v0Prompt.trim() && !lovablePrompt.trim()) {
+      alert('Please generate at least one prompt (V0 or Lovable) before saving to chat');
       return;
     }
 
@@ -271,12 +271,17 @@ export function PhaseFormModal({
         }
       }
 
-      alert('Prompts saved to chatbot successfully!');
-      setShowSaveToChatbot(false);
+      // Close modal first to prevent UI distortion
       onClose();
+      setShowSaveToChatbot(false);
+      
+      // Show success message after a brief delay to ensure modal is closed
+      setTimeout(() => {
+        alert('Prompts saved to chat successfully!');
+      }, 100);
     } catch (error) {
-      console.error('Error saving to chatbot:', error);
-      alert(`Failed to save to chatbot: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error saving to chat:', error);
+      alert(`Failed to save to chat: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -1533,12 +1538,12 @@ export function PhaseFormModal({
                     {isSubmitting ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        Saving to Chatbot...
+                        Saving to Chat...
                       </>
                     ) : (
                       <>
                         <Send className="w-4 h-4" />
-                        Save to Chatbot
+                        Save to Chat
                       </>
                     )}
                   </button>

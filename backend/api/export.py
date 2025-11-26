@@ -115,25 +115,32 @@ async def review_prd_content(
             ]
         
         # Get knowledge base articles
-        kb_query = text("""
-            SELECT title, content, source_type, source_url
-            FROM knowledge_articles
-            WHERE product_id = :product_id
-            ORDER BY created_at DESC
-            LIMIT 50
-        """)
-        kb_result = await db.execute(kb_query, {"product_id": str(product_id)})
-        kb_rows = kb_result.fetchall()
-        
-        knowledge_base = [
-            {
-                "title": row[0],
-                "content": row[1],
-                "source_type": row[2],
-                "source_url": row[3]
-            }
-            for row in kb_rows
-        ]
+        # Handle case where table might not exist or has different schema
+        knowledge_base = []
+        try:
+            kb_query = text("""
+                SELECT title, content, source, metadata
+                FROM knowledge_articles
+                WHERE product_id = :product_id
+                ORDER BY created_at DESC
+                LIMIT 50
+            """)
+            kb_result = await db.execute(kb_query, {"product_id": str(product_id)})
+            kb_rows = kb_result.fetchall()
+            
+            knowledge_base = [
+                {
+                    "title": row[0],
+                    "content": row[1],
+                    "source_type": row[2] or "manual",  # source column
+                    "source_url": row[3].get("source_url", "") if isinstance(row[3], dict) else ""  # from metadata
+                }
+                for row in kb_rows
+            ]
+        except Exception as e:
+            # If knowledge_articles table doesn't exist or query fails, continue without it
+            logger.warning(f"Could not fetch knowledge articles: {str(e)}")
+            knowledge_base = []
         
         # Review content using export agent
         if export_agent:
@@ -239,25 +246,32 @@ async def export_prd_document(
             ]
         
         # Get knowledge base articles
-        kb_query = text("""
-            SELECT title, content, source_type, source_url
-            FROM knowledge_articles
-            WHERE product_id = :product_id
-            ORDER BY created_at DESC
-            LIMIT 50
-        """)
-        kb_result = await db.execute(kb_query, {"product_id": str(product_id)})
-        kb_rows = kb_result.fetchall()
-        
-        knowledge_base = [
-            {
-                "title": row[0],
-                "content": row[1],
-                "source_type": row[2],
-                "source_url": row[3]
-            }
-            for row in kb_rows
-        ]
+        # Handle case where table might not exist or has different schema
+        knowledge_base = []
+        try:
+            kb_query = text("""
+                SELECT title, content, source, metadata
+                FROM knowledge_articles
+                WHERE product_id = :product_id
+                ORDER BY created_at DESC
+                LIMIT 50
+            """)
+            kb_result = await db.execute(kb_query, {"product_id": str(product_id)})
+            kb_rows = kb_result.fetchall()
+            
+            knowledge_base = [
+                {
+                    "title": row[0],
+                    "content": row[1],
+                    "source_type": row[2] or "manual",  # source column
+                    "source_url": row[3].get("source_url", "") if isinstance(row[3], dict) else ""  # from metadata
+                }
+                for row in kb_rows
+            ]
+        except Exception as e:
+            # If knowledge_articles table doesn't exist or query fails, continue without it
+            logger.warning(f"Could not fetch knowledge articles: {str(e)}")
+            knowledge_base = []
         
         # Generate PRD using export agent
         if export_agent:
