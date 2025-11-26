@@ -661,9 +661,43 @@ async def process_multi_agent_request(
             from backend.api.database import router as db_router
             import json
             from sqlalchemy import text
+            import uuid
             
             session_id = request.context.get("session_id") if request.context else None
             product_id_str = str(request.product_id) if request.product_id else None
+            
+            # Create or get session_id if not provided
+            if not session_id:
+                # Check if a session exists for this product and user
+                session_check_query = text("""
+                    SELECT id FROM conversation_sessions
+                    WHERE product_id = :product_id
+                    AND user_id = :user_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                session_result = await db.execute(session_check_query, {
+                    "product_id": product_id_str,
+                    "user_id": str(authenticated_user_id)
+                })
+                existing_session = session_result.fetchone()
+                
+                if existing_session:
+                    session_id = str(existing_session[0])
+                else:
+                    # Create a new session
+                    session_id = str(uuid.uuid4())
+                    session_create_query = text("""
+                        INSERT INTO conversation_sessions (id, user_id, product_id, tenant_id, title)
+                        VALUES (:id, :user_id, :product_id, :tenant_id, :title)
+                    """)
+                    await db.execute(session_create_query, {
+                        "id": session_id,
+                        "user_id": str(authenticated_user_id),
+                        "product_id": product_id_str,
+                        "tenant_id": current_user.get("tenant_id"),
+                        "title": f"Product {product_id_str[:8]}..." if product_id_str else "New Conversation"
+                    })
             
             # Save user message
             user_message_query = text("""
