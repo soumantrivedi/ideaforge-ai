@@ -42,7 +42,7 @@ export async function apiFetch(
       localStorage.removeItem('user_id');
       localStorage.removeItem('tenant_id');
       
-      // Call unauthorized handler if set
+      // Call unauthorized handler if set (this will update React state and show login page)
       if (onUnauthorizedCallback) {
         onUnauthorizedCallback();
       } else {
@@ -50,7 +50,8 @@ export async function apiFetch(
         window.location.reload();
       }
       
-      // Throw error to prevent further processing
+      // Throw error to prevent further processing (but don't log it - it's expected)
+      // The error will be caught by the caller, which should handle it gracefully
       throw new Error('Unauthorized: Session expired. Please login again.');
     }
     

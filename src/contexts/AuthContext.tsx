@@ -89,11 +89,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (userData.id) localStorage.setItem('user_id', userData.id);
         if (userData.tenant_id) localStorage.setItem('tenant_id', userData.tenant_id);
       } else {
-        // Token invalid, clear storage
+        // Token invalid, clear storage (silently - this is expected after pod restart)
         handleUnauthorized();
       }
     } catch (error) {
-      console.error('Failed to fetch user info:', error);
+      // Only log non-401 errors (401 is expected when token expires/backend restarts)
+      if (error instanceof Error && !error.message.includes('Unauthorized')) {
+        console.error('Failed to fetch user info:', error);
+      }
+      // handleUnauthorized is already called by apiFetch for 401, but call it here too for other errors
       handleUnauthorized();
     } finally {
       setIsLoading(false);
