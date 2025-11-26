@@ -645,6 +645,9 @@ kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manif
 		exit 1; \
 	fi
 	@kubectl apply -f $(K8S_DIR)/kind/ --context kind-$(KIND_CLUSTER_NAME) --recursive
+	@echo "📈 Applying HorizontalPodAutoscalers for auto-scaling..."
+	@kubectl apply -f $(K8S_DIR)/kind/hpa-backend.yaml --context kind-$(KIND_CLUSTER_NAME) || echo "⚠️  HPA may not be available in kind cluster (requires metrics-server)"
+	@kubectl apply -f $(K8S_DIR)/kind/hpa-frontend.yaml --context kind-$(KIND_CLUSTER_NAME) || echo "⚠️  HPA may not be available in kind cluster (requires metrics-server)"
 	@if ! kubectl get secret ideaforge-ai-secrets -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) &>/dev/null; then \
 		echo "⚠️  secrets not found, creating default secrets..."; \
 		echo "   Run 'make kind-load-secrets' to load from .env file"; \

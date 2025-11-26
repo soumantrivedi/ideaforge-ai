@@ -19,8 +19,10 @@ data:
   LOG_LEVEL: "info"
   SESSION_EXPIRES_IN: "86400"
   # Updated to latest models as of November 2025
-  # Default to ChatGPT 5.1 for best reasoning, with Gemini 3.0 Pro as fallback
-  AGENT_MODEL_PRIMARY: "gpt-5.1"  # ChatGPT 5.1: Best for product requirements, ideation, reasoning, discovery
+  # Default to GPT-5.1 for best reasoning, with Gemini 3.0 Pro as fallback
+  # GPT-5.1: Released November 12, 2025 - Enhanced capabilities in writing, data science, and business tasks
+  # GPT-5: Released August 7, 2025 - Enhanced reasoning with "Thinking" mode and 400K token context
+  AGENT_MODEL_PRIMARY: "gpt-5.1"  # GPT-5.1: Best for product requirements, ideation, reasoning, discovery (or gpt-5 as fallback)
   AGENT_MODEL_SECONDARY: "claude-sonnet-4-20250522"  # Claude 4 Sonnet: Advanced reasoning and ideation
   AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
   

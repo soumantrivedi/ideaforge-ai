@@ -78,20 +78,25 @@ class AgnoCoordinatorAgent:
     
     def _get_agno_model(self):
         """Get appropriate Agno model based on provider registry.
-        Priority: ChatGPT 5.1 (primary) > Gemini 3.0 Pro (tertiary) > Claude 4 Sonnet (secondary)
-        Prefers ChatGPT 5.1 for best reasoning, falls back to Gemini 3.0 Pro if OpenAI not available.
+        Priority: GPT-5.1 (primary) > Gemini 3.0 Pro (tertiary) > Claude 4 Sonnet (secondary)
+        Prefers GPT-5.1 for best reasoning, falls back to Gemini 3.0 Pro if OpenAI not available.
         """
-        # Prefer ChatGPT 5.1 for best reasoning capabilities
+        # Prefer GPT-5.1 for best reasoning capabilities
         if provider_registry.has_openai_key():
-            return OpenAIChat(id=settings.agent_model_primary)  # gpt-5.1
+            api_key = provider_registry.get_openai_key()
+            if api_key:
+                return OpenAIChat(id=settings.agent_model_primary, api_key=api_key)  # gpt-5.1 or gpt-5
         # Fall back to Gemini 3.0 Pro if OpenAI not available
         elif provider_registry.has_gemini_key():
-            return Gemini(id=settings.agent_model_tertiary)  # gemini-3.0-pro
+            api_key = provider_registry.get_gemini_key()
+            if api_key:
+                return Gemini(id=settings.agent_model_tertiary, api_key=api_key)  # gemini-3.0-pro
         # Last resort: Claude 4 Sonnet
         elif provider_registry.has_claude_key():
-            return Claude(id=settings.agent_model_secondary)
-        else:
-            raise ValueError("No AI provider configured")
+            api_key = provider_registry.get_claude_key()
+            if api_key:
+                return Claude(id=settings.agent_model_secondary, api_key=api_key)
+        raise ValueError("No AI provider configured")
     
     def _create_agno_teams(self):
         """Create coordination logic for different modes.

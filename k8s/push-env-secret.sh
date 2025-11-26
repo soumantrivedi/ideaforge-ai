@@ -31,11 +31,22 @@ if ! $KUBECTL_CMD get namespace "$NAMESPACE" &>/dev/null; then
 fi
 
 # Create secret from .env file
+# Strip quotes from values to avoid issues with API keys
 echo "🔐 Creating/updating Kubernetes secret: ideaforge-ai-secrets from $ENV_FILE"
+# Create a temporary file with cleaned values (strip surrounding quotes)
+TEMP_ENV=$(mktemp)
+grep -v '^#' "$ENV_FILE" | grep -v '^$' | while IFS='=' read -r key value; do
+    # Remove surrounding quotes if present
+    cleaned_value=$(echo "$value" | sed 's/^"\(.*\)"$/\1/')
+    echo "${key}=${cleaned_value}"
+done > "$TEMP_ENV"
+
 $KUBECTL_CMD create secret generic ideaforge-ai-secrets \
-    --from-env-file="$ENV_FILE" \
+    --from-env-file="$TEMP_ENV" \
     --namespace="$NAMESPACE" \
     --dry-run=client -o yaml | $KUBECTL_CMD apply -f -
+
+rm -f "$TEMP_ENV"
 
 echo "✅ Secret created/updated successfully!"
 echo ""
