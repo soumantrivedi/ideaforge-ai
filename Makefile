@@ -517,7 +517,7 @@ kind-update-images: ## Update image references in deployments for kind using lat
 	FRONTEND_IMAGE="ideaforge-ai-frontend:$(GIT_SHA)"; \
 	\
 	# Check if images with GIT_SHA tag exist, if not check for latest
-	if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^$$BACKEND_IMAGE$$"; then \
+	if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^$${BACKEND_IMAGE}$$"; then \
 		if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^ideaforge-ai-backend:latest$$"; then \
 			BACKEND_IMAGE="ideaforge-ai-backend:latest"; \
 			echo "   ⚠️  Backend image with tag $(GIT_SHA) not found, using latest"; \
@@ -526,10 +526,10 @@ kind-update-images: ## Update image references in deployments for kind using lat
 			exit 1; \
 		fi; \
 	else \
-		echo "   ✅ Found backend image: $$BACKEND_IMAGE"; \
+		echo "   ✅ Found backend image: $${BACKEND_IMAGE}"; \
 	fi; \
 	\
-	if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^$$FRONTEND_IMAGE$$"; then \
+	if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^$${FRONTEND_IMAGE}$$"; then \
 		if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^ideaforge-ai-frontend:latest$$"; then \
 			FRONTEND_IMAGE="ideaforge-ai-frontend:latest"; \
 			echo "   ⚠️  Frontend image with tag $(GIT_SHA) not found, using latest"; \
@@ -538,19 +538,19 @@ kind-update-images: ## Update image references in deployments for kind using lat
 			exit 1; \
 		fi; \
 	else \
-		echo "   ✅ Found frontend image: $$FRONTEND_IMAGE"; \
+		echo "   ✅ Found frontend image: $${FRONTEND_IMAGE}"; \
 	fi; \
 	\
 	# Update deployments directly using kubectl (no file modification needed)
-	echo "   Updating backend deployment to use: $$BACKEND_IMAGE"; \
-	kubectl set image deployment/backend backend=$$BACKEND_IMAGE -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) || \
+	echo "   Updating backend deployment to use: $${BACKEND_IMAGE}"; \
+	kubectl set image deployment/backend backend=$${BACKEND_IMAGE} -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) || \
 		(echo "⚠️  Backend deployment not found, will be created on next apply" && true); \
 	\
-	echo "   Updating frontend deployment to use: $$FRONTEND_IMAGE"; \
-	kubectl set image deployment/frontend frontend=$$FRONTEND_IMAGE -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) || \
+	echo "   Updating frontend deployment to use: $${FRONTEND_IMAGE}"; \
+	kubectl set image deployment/frontend frontend=$${FRONTEND_IMAGE} -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) || \
 		(echo "⚠️  Frontend deployment not found, will be created on next apply" && true); \
 	\
-	echo "✅ Image references updated: backend=$$BACKEND_IMAGE, frontend=$$FRONTEND_IMAGE"
+	echo "✅ Image references updated: backend=$${BACKEND_IMAGE}, frontend=$${FRONTEND_IMAGE}"
 
 rebuild-and-deploy: build-apps ## Rebuild apps and deploy to docker-compose
 	@echo "🚀 Rebuilding and deploying to docker-compose..."
