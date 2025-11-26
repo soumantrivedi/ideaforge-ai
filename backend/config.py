@@ -59,7 +59,10 @@ class Settings(BaseSettings):
 
     # Backend Configuration
     backend_port: int = int(os.getenv("BACKEND_PORT", "8000"))
-    frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    # Frontend URL - Environment-specific default:
+    # - docker-compose: http://localhost:3001 (frontend on port 3001)
+    # - kind/eks: Set via ConfigMap (external URL or ingress URL)
+    frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:3001")
 
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "info")

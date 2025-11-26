@@ -222,11 +222,15 @@ app = FastAPI(
 )
 
 # Build CORS allowed origins list
+# Environment-specific defaults:
+# - docker-compose: localhost:3001 (frontend on port 3001)
+# - kind: localhost:80 (ingress) or ideaforge.local
+# - eks: external domain (set via ConfigMap)
 cors_origins = [
     settings.frontend_url,
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:5173",
+    "http://localhost:3000",  # Vite dev server
+    "http://localhost:3001",  # docker-compose frontend
+    "http://localhost:5173",  # Vite HMR port
     "http://localhost",  # For ingress access (port 80)
     "http://localhost:80",  # Explicit port 80
     "http://localhost:8080",  # For kind cluster with port 8080

@@ -12,6 +12,9 @@ RUN npm ci
 COPY . .
 
 # Build arguments for environment variables
+# VITE_API_URL - Environment-specific:
+# - docker-compose: http://localhost:8000 (direct backend access)
+# - kind/eks: "" (empty = use relative paths, nginx proxies to backend service)
 ARG VITE_API_URL=http://localhost:8000
 ARG VITE_OKTA_CLIENT_ID
 ARG VITE_OKTA_ISSUER

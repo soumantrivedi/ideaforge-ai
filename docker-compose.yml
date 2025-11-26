@@ -68,7 +68,7 @@ services:
       - SESSION_EXPIRES_IN=${SESSION_EXPIRES_IN:-86400}
       - API_KEY_ENCRYPTION_KEY=${API_KEY_ENCRYPTION_KEY}
       - BACKEND_PORT=${BACKEND_PORT:-8000}
-      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3001}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       - ./backend:/app/backend
