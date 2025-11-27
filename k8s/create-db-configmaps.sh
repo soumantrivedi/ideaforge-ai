@@ -4,14 +4,21 @@
 
 set -e
 
-NAMESPACE=${EKS_NAMESPACE:-${K8S_NAMESPACE:-ideaforge-ai}}
+# Accept namespace as first argument, or use K8S_NAMESPACE env var, or default to ideaforge-ai
+NAMESPACE=${1:-${K8S_NAMESPACE:-${EKS_NAMESPACE:-ideaforge-ai}}}
+CONTEXT=${2:-}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "📦 Creating ConfigMaps for database setup in namespace: $NAMESPACE"
 
 # Verify namespace exists (don't create it)
-if ! kubectl get namespace "$NAMESPACE" &>/dev/null; then
+KUBECTL_CMD="kubectl"
+if [ -n "$CONTEXT" ]; then
+  KUBECTL_CMD="kubectl --context=$CONTEXT"
+fi
+
+if ! $KUBECTL_CMD get namespace "$NAMESPACE" &>/dev/null; then
   echo "❌ Namespace $NAMESPACE does not exist"
   echo "   Please create it first or ensure it exists in your cluster"
   exit 1
@@ -19,26 +26,26 @@ fi
 
 # Create ConfigMap for migrations
 echo "🔄 Creating ConfigMap for database migrations..."
-kubectl create configmap db-migrations \
+$KUBECTL_CMD create configmap db-migrations \
   --namespace="$NAMESPACE" \
   --from-file="$PROJECT_ROOT/init-db/migrations/" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | $KUBECTL_CMD apply -f -
 
 # Create ConfigMap for seed data
 echo "🌱 Creating ConfigMap for seed data..."
-kubectl create configmap db-seed \
+$KUBECTL_CMD create configmap db-seed \
   --namespace="$NAMESPACE" \
   --from-file=seed_sample_data.sql="$PROJECT_ROOT/init-db/seed_sample_data.sql" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | $KUBECTL_CMD apply -f -
 
 # Create ConfigMap for init scripts (for postgres init container)
 echo "📝 Creating ConfigMap for postgres init scripts..."
-kubectl create configmap postgres-init-scripts \
+$KUBECTL_CMD create configmap postgres-init-scripts \
   --namespace="$NAMESPACE" \
   --from-file="$PROJECT_ROOT/init-db/01-init-schema.sql" \
   --from-file="$PROJECT_ROOT/init-db/migrations/" \
   --from-file=seed_sample_data.sql="$PROJECT_ROOT/init-db/seed_sample_data.sql" \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml | $KUBECTL_CMD apply -f -
 
 echo "✅ ConfigMaps created successfully!"
 echo ""
