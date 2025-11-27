@@ -57,15 +57,29 @@ class ProviderRegistry:
         claude_key: Optional[str] = None,
         gemini_key: Optional[str] = None,
     ) -> List[str]:
-        """Update provider API keys and rebuild clients. None means 'no change'."""
+        """
+        Update provider API keys and rebuild clients. None means 'no change'.
+        If a key is provided, it overrides the .env key. If None, keeps existing value.
+        If empty string, clears the key (falls back to .env if available).
+        """
         with self._lock:
             if openai_key is not None:
-                # Strip whitespace and ensure non-empty
-                self._openai_key = (openai_key.strip() if openai_key else None) or None
+                # If empty string, fall back to .env key, otherwise use provided key
+                if openai_key.strip():
+                    self._openai_key = openai_key.strip()
+                else:
+                    # Empty string means clear user override, fall back to .env
+                    self._openai_key = (settings.openai_api_key.strip() if settings.openai_api_key else None) or None
             if claude_key is not None:
-                self._claude_key = (claude_key.strip() if claude_key else None) or None
+                if claude_key.strip():
+                    self._claude_key = claude_key.strip()
+                else:
+                    self._claude_key = (settings.anthropic_api_key.strip() if settings.anthropic_api_key else None) or None
             if gemini_key is not None:
-                self._gemini_key = (gemini_key.strip() if gemini_key else None) or None
+                if gemini_key.strip():
+                    self._gemini_key = gemini_key.strip()
+                else:
+                    self._gemini_key = (settings.google_api_key.strip() if settings.google_api_key else None) or None
 
             self._rebuild_clients()
 

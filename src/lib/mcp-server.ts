@@ -7,7 +7,8 @@ import {
   CallToolRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 // MCP Server - using backend API instead of Supabase
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getValidatedApiUrl } from './runtime-config';
+const API_URL = getValidatedApiUrl();
 
 export class MCPServer {
   private server: Server;

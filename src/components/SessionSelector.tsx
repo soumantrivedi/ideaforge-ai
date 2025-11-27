@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { CheckSquare, Square, Calendar, MessageSquare, Users } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+const API_URL = getValidatedApiUrl();
 
 interface Session {
   id: string;

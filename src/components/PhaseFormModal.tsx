@@ -5,6 +5,9 @@ import { lifecycleService } from '../lib/product-lifecycle-service';
 import { DesignMockupGallery } from './DesignMockupGallery';
 import { ThumbnailSelector } from './ThumbnailSelector';
 import { useAuth } from '../contexts/AuthContext';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+
+const API_URL = getValidatedApiUrl();
 
 interface PhaseFormModalProps {
   phase: LifecyclePhase;
@@ -216,7 +219,6 @@ export function PhaseFormModal({
         throw new Error('User not authenticated. Please log in to use AI help.');
       }
 
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
       
       // Fetch conversation history for context
       const conversationHistory = await lifecycleService.getProductConversationHistory(productId);
@@ -541,7 +543,6 @@ export function PhaseFormModal({
     setIsGeneratingPrompt({ ...isGeneratingPrompt, [provider]: true });
 
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
       const headers: HeadersInit = {
         'Content-Type': 'application/json',
       };
@@ -606,7 +607,6 @@ export function PhaseFormModal({
     setIsGeneratingMockup({ ...isGeneratingMockup, [provider]: true });
 
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
       // Use the new create-project endpoint with multi-agent enhancement
       const response = await fetch(`${API_URL}/api/design/create-project`, {
@@ -702,7 +702,6 @@ export function PhaseFormModal({
     setIsGeneratingMockup({ ...isGeneratingMockup, [provider]: true });
 
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
       
       // For Lovable, generate 3 thumbnail previews first
       if (provider === 'lovable') {
@@ -1394,7 +1393,6 @@ export function PhaseFormModal({
           onSelect={async (selectedIndex: number) => {
             try {
               const selectedPreview = lovableThumbnails[selectedIndex];
-              const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
               
               // Get prompt from formData or selectedPreview
               const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};

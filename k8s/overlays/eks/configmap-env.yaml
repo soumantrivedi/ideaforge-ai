@@ -1,0 +1,13 @@
+# ConfigMap generator for EKS using env.eks file
+# This will be merged with base configmap via kustomize
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ideaforge-ai-config
+  namespace: ideaforge-ai
+data:
+  # EKS-specific overrides
+  VITE_API_URL: ""
+  FRONTEND_URL: "https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud"
+  CORS_ORIGINS: "https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud,https://api-ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud,http://localhost,http://localhost:80,http://localhost:8080"
+

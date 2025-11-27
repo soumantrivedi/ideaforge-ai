@@ -44,12 +44,14 @@ class Settings(BaseSettings):
 
     # Agent Configuration
     # Updated to latest models as of November 2025:
-    # - GPT-5.1: Best for product requirements, ideation, reasoning, and discovery
+    # - GPT-5.1 (gpt-5.1): Released November 12, 2025 - Best for product requirements, ideation, reasoning, and discovery
+    # - GPT-5 (gpt-5): Released August 7, 2025 - Enhanced reasoning with "Thinking" mode
     # - Claude 4 Sonnet: Advanced reasoning and ideation capabilities
     # - Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
-    agent_model_primary: str = os.getenv("AGENT_MODEL_PRIMARY", "gpt-5.1")
+    # Default to GPT-5.1 for best reasoning, with Gemini 3.0 Pro as secondary option
+    agent_model_primary: str = os.getenv("AGENT_MODEL_PRIMARY", "gpt-5.1")  # GPT-5.1 for best reasoning (or gpt-5 as fallback)
     agent_model_secondary: str = os.getenv("AGENT_MODEL_SECONDARY", "claude-sonnet-4-20250522")
-    agent_model_tertiary: str = os.getenv("AGENT_MODEL_TERTIARY", "gemini-3.0-pro")
+    agent_model_tertiary: str = os.getenv("AGENT_MODEL_TERTIARY", "gemini-3.0-pro")  # Gemini 3.0 Pro
 
     # MCP Server Configuration
     mcp_github_url: str = os.getenv("MCP_GITHUB_URL", "http://mcp-github:8001")
@@ -58,7 +60,10 @@ class Settings(BaseSettings):
 
     # Backend Configuration
     backend_port: int = int(os.getenv("BACKEND_PORT", "8000"))
-    frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    # Frontend URL - Environment-specific default:
+    # - docker-compose: http://localhost:3001 (frontend on port 3001)
+    # - kind/eks: Set via ConfigMap (external URL or ingress URL)
+    frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:3001")
 
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "info")

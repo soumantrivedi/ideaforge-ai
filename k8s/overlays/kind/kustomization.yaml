@@ -6,6 +6,11 @@ namespace: ideaforge-ai
 resources:
   - ../../base
 
+# Kind-specific ConfigMap patches (merges with base)
+patchesStrategicMerge:
+  - configmap-env.yaml
+  - service-selector-patch.yaml  # Fix service selectors to match pod labels
+
 # Kind-specific image configuration (uses local images with imagePullPolicy: Never)
 images:
   - name: ideaforge-ai-backend

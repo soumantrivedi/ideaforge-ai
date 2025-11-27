@@ -2,7 +2,8 @@ import { useState, useRef } from 'react';
 import { Upload, File, Link, Github, BookOpen, X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+const API_URL = getValidatedApiUrl();
 
 interface DocumentUploaderProps {
   productId?: string;

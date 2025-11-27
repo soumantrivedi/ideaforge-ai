@@ -30,6 +30,7 @@ spec:
   - host: ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud
     http:
       paths:
+      # All requests go to frontend - frontend nginx proxies /api to backend service internally
       - path: /
         pathType: Prefix
         backend:
@@ -37,6 +38,7 @@ spec:
             name: frontend
             port:
               number: 3000
+  # Keep API subdomain for direct backend access if needed
   - host: api-ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud
     http:
       paths:

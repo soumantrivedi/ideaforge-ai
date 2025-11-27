@@ -3,7 +3,8 @@ import { Plus, Folder, Users, Clock, MoreVertical, Share2, Edit, Trash2, Externa
 import { useAuth } from '../contexts/AuthContext';
 import { ProductShareModal } from './ProductShareModal';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+const API_URL = getValidatedApiUrl();
 
 interface Product {
   id: string;
