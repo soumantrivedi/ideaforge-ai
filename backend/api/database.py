@@ -599,6 +599,8 @@ async def get_phase_submission(
             "created_at": row[8].isoformat() if row[8] else None,
             "updated_at": row[9].isoformat() if row[9] else None,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("error_getting_phase_submission", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -685,6 +687,9 @@ async def create_phase_submission(
             "created_at": row[1].isoformat() if row[1] else None,
             "updated_at": row[2].isoformat() if row[2] else None,
         }
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         await db.rollback()
         logger.error("error_creating_phase_submission", error=str(e))
