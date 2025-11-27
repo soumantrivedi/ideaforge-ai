@@ -795,7 +795,7 @@ graph TB
 - **Vector embeddings** for RAG knowledge base
 
 ### AI Providers
-- **OpenAI** (GPT-4, GPT-4o, embeddings)
+- **OpenAI** (GPT-5.1, GPT-5, embeddings)
 - **Anthropic** (Claude Sonnet 4.5)
 - **Google** (Gemini 2.0 Flash)
 

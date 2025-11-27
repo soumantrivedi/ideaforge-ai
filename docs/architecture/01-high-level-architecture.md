@@ -219,7 +219,7 @@ graph TB
 - **Persistence**: Docker volumes
 
 ### AI Providers
-- OpenAI (GPT-4, GPT-4o, text-embedding-3-small)
+- OpenAI (GPT-5.1, GPT-5, text-embedding-3-small)
 - Anthropic (Claude Sonnet 4.5)
 - Google (Gemini 2.0 Flash)
 

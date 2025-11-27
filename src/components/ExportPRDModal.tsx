@@ -13,12 +13,22 @@ interface ExportPRDModalProps {
 
 interface ReviewResult {
   status: 'ready' | 'needs_attention';
+  score?: number; // Overall score as percentage
   missing_sections: Array<{
     section: string;
+    phase_name?: string;
+    phase_id?: string;
     importance: string;
     recommendation: string;
+    score?: number; // Section-specific score
   }>;
   summary: string;
+  phase_scores?: Array<{
+    phase_name: string;
+    phase_id: string;
+    score: number;
+    status: 'complete' | 'incomplete' | 'missing';
+  }>;
 }
 
 export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, token, conversationHistory }: ExportPRDModalProps) {
@@ -213,7 +223,55 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
                 <span>Reviewing PRD content...</span>
               </div>
             ) : reviewResult ? (
-              <div className="space-y-3">
+              <div className="space-y-4">
+                {/* Overall Score */}
+                {reviewResult.score !== undefined && (
+                  <div className="bg-white rounded-lg p-4 border-2 border-blue-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-700">Overall PRD Completeness</span>
+                      <span className="text-2xl font-bold text-blue-600">{reviewResult.score}%</span>
+                    </div>
+                    <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all ${
+                          reviewResult.score >= 80 ? 'bg-green-500' :
+                          reviewResult.score >= 60 ? 'bg-yellow-500' : 'bg-red-500'
+                        }`}
+                        style={{ width: `${reviewResult.score}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Phase Scores */}
+                {reviewResult.phase_scores && reviewResult.phase_scores.length > 0 && (
+                  <div className="bg-white rounded-lg p-4 border border-gray-200">
+                    <h4 className="text-sm font-semibold text-gray-900 mb-3">Phase Scores</h4>
+                    <div className="space-y-2">
+                      {reviewResult.phase_scores.map((phase, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                          <span className="text-sm text-gray-700">{phase.phase_name}</span>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-sm font-medium ${
+                              phase.score >= 80 ? 'text-green-600' :
+                              phase.score >= 60 ? 'text-yellow-600' : 'text-red-600'
+                            }`}>
+                              {phase.score}%
+                            </span>
+                            <span className={`text-xs px-2 py-1 rounded ${
+                              phase.status === 'complete' ? 'bg-green-100 text-green-700' :
+                              phase.status === 'incomplete' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {phase.status}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {reviewResult.status === 'ready' ? (
                   <div className="flex items-center gap-2 text-green-700">
                     <CheckCircle className="w-5 h-5" />
@@ -226,12 +284,37 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
                       <span className="font-medium">PRD needs attention</span>
                     </div>
                     {reviewResult.missing_sections.length > 0 && (
-                      <div className="ml-7 space-y-2">
+                      <div className="ml-7 space-y-3">
                         {reviewResult.missing_sections.map((section, idx) => (
-                          <div key={idx} className="text-sm">
-                            <div className="font-medium text-gray-900">{section.section}</div>
+                          <div key={idx} className="text-sm p-3 bg-amber-50 rounded-lg border border-amber-200">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="font-medium text-gray-900">{section.section}</div>
+                              {section.score !== undefined && (
+                                <span className={`text-xs font-medium px-2 py-1 rounded ${
+                                  section.score >= 80 ? 'bg-green-100 text-green-700' :
+                                  section.score >= 60 ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>
+                                  {section.score}%
+                                </span>
+                              )}
+                            </div>
                             <div className="text-gray-600 text-xs mt-1">{section.importance}</div>
                             <div className="text-blue-600 text-xs mt-1">{section.recommendation}</div>
+                            {section.phase_id && (
+                              <button
+                                onClick={() => {
+                                  // Dispatch event to navigate to phase
+                                  window.dispatchEvent(new CustomEvent('navigateToPhase', {
+                                    detail: { phaseId: section.phase_id, phaseName: section.phase_name }
+                                  }));
+                                  onClose();
+                                }}
+                                className="mt-2 text-xs text-blue-600 hover:text-blue-700 font-medium underline"
+                              >
+                                Navigate to {section.phase_name || section.section}
+                              </button>
+                            )}
                           </div>
                         ))}
                       </div>

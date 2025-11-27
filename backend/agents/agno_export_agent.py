@@ -185,10 +185,27 @@ Your output should:
 
 Respond in JSON format:
 {{
-    "is_complete": true/false,
-    "missing_sections": ["section1", "section2"],
-    "recommendations": ["recommendation1", "recommendation2"],
-    "warnings": ["warning1", "warning2"]
+    "status": "ready" or "needs_attention",
+    "score": <0-100>,  // Overall completeness score as percentage
+    "missing_sections": [
+        {{
+            "section": "section name",
+            "phase_name": "Phase Name (if applicable)",
+            "phase_id": "phase-uuid (if applicable)",
+            "importance": "why this section matters",
+            "recommendation": "what to do",
+            "score": <0-100>  // Section-specific score
+        }}
+    ],
+    "phase_scores": [
+        {{
+            "phase_name": "Phase Name",
+            "phase_id": "phase-uuid",
+            "score": <0-100>,
+            "status": "complete" or "incomplete" or "missing"
+        }}
+    ],
+    "summary": "Overall assessment summary"
 }}"""
 
         messages = [
@@ -219,20 +236,71 @@ Respond in JSON format:
         except:
             pass
         
-        # Fallback: analyze response text
+        # Fallback: analyze response text and calculate scores
         missing_sections = []
-        if "market research" not in response.response.lower() and "competitive analysis" not in response.response.lower():
-            missing_sections.append("Market Research")
-        if "user persona" not in response.response.lower():
-            missing_sections.append("User Personas")
-        if "functional requirement" not in response.response.lower():
-            missing_sections.append("Functional Requirements")
+        phase_scores = []
+        total_score = 100
+        
+        # Check each required section
+        required_sections = [
+            ("Market Research", "Market Research"),
+            ("User Personas", "Ideation"),
+            ("Functional Requirements", "Requirements"),
+            ("Technical Architecture", "Design"),
+            ("Success Metrics", "Requirements"),
+            ("Go-to-Market Strategy", "Go-to-Market")
+        ]
+        
+        for section_name, phase_name in required_sections:
+            section_lower = section_name.lower()
+            if section_lower not in response.response.lower():
+                missing_sections.append({
+                    "section": section_name,
+                    "phase_name": phase_name,
+                    "importance": f"{section_name} is critical for a complete PRD",
+                    "recommendation": f"Complete the {phase_name} phase or add {section_name} content",
+                    "score": 0
+                })
+                total_score -= 15  # Deduct 15 points per missing section
+        
+        # Calculate phase scores based on phase_data
+        if phase_data:
+            for phase in phase_data:
+                phase_name = phase.get('phase_name', '')
+                phase_id = phase.get('phase_id', '')
+                form_data = phase.get('form_data', {})
+                generated_content = phase.get('generated_content', '')
+                
+                # Calculate phase completeness score
+                has_form_data = bool(form_data and any(v for v in form_data.values() if v))
+                has_content = bool(generated_content and generated_content.strip())
+                
+                if has_form_data and has_content:
+                    phase_score = 100
+                    status = "complete"
+                elif has_form_data or has_content:
+                    phase_score = 50
+                    status = "incomplete"
+                else:
+                    phase_score = 0
+                    status = "missing"
+                
+                phase_scores.append({
+                    "phase_name": phase_name,
+                    "phase_id": phase_id,
+                    "score": phase_score,
+                    "status": status
+                })
+        
+        # Ensure score is between 0-100
+        total_score = max(0, min(100, total_score))
         
         return {
-            "is_complete": len(missing_sections) == 0,
+            "status": "ready" if total_score >= 80 else "needs_attention",
+            "score": total_score,
             "missing_sections": missing_sections,
-            "recommendations": [f"Consider adding {section}" for section in missing_sections],
-            "warnings": []
+            "phase_scores": phase_scores,
+            "summary": f"PRD completeness: {total_score}%. {'Ready for export' if total_score >= 80 else 'Some sections need attention'}."
         }
 
     async def generate_comprehensive_prd(

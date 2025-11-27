@@ -260,7 +260,7 @@ class AgenticOrchestrator:
     def _create_prd_authoring_agent(self) -> Agent:
         return Agent(
             name="PRD Authoring Agent",
-            model="gpt-4o",
+            model="gpt-5.1",
             instructions="""
             You are a PRD authoring expert following McKinsey CodeBeyond standards.
             Conduct a seven-step guided interview to generate professional PRDs.

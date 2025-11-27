@@ -47,36 +47,96 @@ export function PhaseFormModal({
 
   useEffect(() => {
     if (isOpen) {
-      // Initialize form data with existing data or empty strings
-      // This ensures ALL fields from ALL pages are captured
-      const initialData: Record<string, string> = {};
-      phase.required_fields.forEach((field) => {
-        if (field === 'v0_lovable_prompts') {
-          // Initialize as JSON string for v0_lovable_prompts
-          const existing = existingData?.[field];
-          if (existing && typeof existing === 'string') {
-            try {
-              JSON.parse(existing); // Validate it's valid JSON
-              initialData[field] = existing;
-            } catch {
-              initialData[field] = JSON.stringify({ v0_prompt: '', lovable_prompt: '' });
+      // Load existing submission data if available
+      const loadExistingData = async () => {
+        if (productId && phase.id && token) {
+          try {
+            const { lifecycleService } = await import('../lib/product-lifecycle-service');
+            lifecycleService.setToken(token);
+            const submission = await lifecycleService.getPhaseSubmission(productId, phase.id);
+            
+            if (submission && submission.form_data) {
+              // Merge existing form_data with any passed existingData
+              const mergedData = { ...(existingData || {}), ...submission.form_data };
+              
+              // Initialize form data with existing data or empty strings
+              const initialData: Record<string, string> = {};
+              phase.required_fields.forEach((field) => {
+                if (field === 'v0_lovable_prompts') {
+                  // Initialize as JSON string for v0_lovable_prompts
+                  const existing = mergedData[field];
+                  if (existing && typeof existing === 'string') {
+                    try {
+                      JSON.parse(existing); // Validate it's valid JSON
+                      initialData[field] = existing;
+                    } catch {
+                      initialData[field] = JSON.stringify({ v0_prompt: '', lovable_prompt: '' });
+                    }
+                  } else {
+                    initialData[field] = JSON.stringify({ v0_prompt: '', lovable_prompt: '' });
+                  }
+                } else {
+                  // For all other fields, use existing data from submission
+                  initialData[field] = mergedData[field] || existingData?.[field] || '';
+                }
+              });
+              
+              setFormData(initialData);
+              console.log('Form initialized with existing submission data:', {
+                phaseName: phase.phase_name,
+                totalFields: phase.required_fields.length,
+                fields: phase.required_fields,
+                initialData,
+                submissionId: submission.id,
+              });
+            } else {
+              // No existing submission, initialize with empty values
+              const initialData: Record<string, string> = {};
+              phase.required_fields.forEach((field) => {
+                if (field === 'v0_lovable_prompts') {
+                  initialData[field] = JSON.stringify({ v0_prompt: '', lovable_prompt: '' });
+                } else {
+                  initialData[field] = existingData?.[field] || '';
+                }
+              });
+              setFormData(initialData);
+              console.log('Form initialized with no existing data:', {
+                phaseName: phase.phase_name,
+                totalFields: phase.required_fields.length,
+                initialData,
+              });
             }
-          } else {
-            initialData[field] = JSON.stringify({ v0_prompt: '', lovable_prompt: '' });
+          } catch (error) {
+            console.error('Error loading existing submission:', error);
+            // Fallback to existingData prop
+            const initialData: Record<string, string> = {};
+            phase.required_fields.forEach((field) => {
+              if (field === 'v0_lovable_prompts') {
+                initialData[field] = JSON.stringify({ v0_prompt: '', lovable_prompt: '' });
+              } else {
+                initialData[field] = existingData?.[field] || '';
+              }
+            });
+            setFormData(initialData);
           }
         } else {
-          initialData[field] = existingData?.[field] || '';
+          // No productId or phase.id, use existingData prop only
+          const initialData: Record<string, string> = {};
+          phase.required_fields.forEach((field) => {
+            if (field === 'v0_lovable_prompts') {
+              initialData[field] = JSON.stringify({ v0_prompt: '', lovable_prompt: '' });
+            } else {
+              initialData[field] = existingData?.[field] || '';
+            }
+          });
+          setFormData(initialData);
         }
-      });
-      setFormData(initialData);
+      };
+      
+      loadExistingData();
       setCurrentPromptIndex(0);
-      console.log('Form initialized with all fields:', {
-        totalFields: phase.required_fields.length,
-        fields: phase.required_fields,
-        initialData,
-      });
     }
-  }, [isOpen, phase, existingData]);
+  }, [isOpen, phase, existingData, productId, token]);
 
   // Fix index bounds - must be in useEffect to avoid hooks order issues
   useEffect(() => {
@@ -1025,11 +1085,61 @@ export function PhaseFormModal({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* V0 Prompt */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-700">V0 (Vercel) Prompt</label>
+                <div className="space-y-4">
+                  {/* Tab Navigation */}
+                  <div className="flex gap-2 border-b border-gray-200">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : { v0_prompt: '', lovable_prompt: '' };
+                        setFormData({
+                          ...formData,
+                          v0_lovable_prompts: JSON.stringify({ ...promptsObj, activeTab: 'v0' })
+                        });
+                      }}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition ${
+                        (() => {
+                          const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                          return promptsObj.activeTab !== 'lovable';
+                        })()
+                          ? 'border-blue-500 text-blue-600'
+                          : 'border-transparent text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      V0 (Vercel) Prompt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : { v0_prompt: '', lovable_prompt: '' };
+                        setFormData({
+                          ...formData,
+                          v0_lovable_prompts: JSON.stringify({ ...promptsObj, activeTab: 'lovable' })
+                        });
+                      }}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 transition ${
+                        (() => {
+                          const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                          return promptsObj.activeTab === 'lovable';
+                        })()
+                          ? 'border-purple-500 text-purple-600'
+                          : 'border-transparent text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      Lovable Prompt
+                    </button>
+                  </div>
+
+                  {/* Stacked Content - Show active tab */}
+                  {(() => {
+                    const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                    const activeTab = promptsObj.activeTab || 'v0';
+                    
+                    return activeTab === 'v0' ? (
+                      /* V0 Prompt */
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium text-gray-700">V0 (Vercel) Prompt</label>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -1118,10 +1228,10 @@ export function PhaseFormModal({
                                <span>Please wait while V0 generates your prototype. The prompt used will be shown in the chatbot.</span>
                              </div>
                            )}
-                  </div>
-
-                  {/* Lovable Prompt */}
-                  <div className="space-y-2">
+                      </div>
+                    ) : (
+                      /* Lovable Prompt */
+                      <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium text-gray-700">Lovable Prompt</label>
                       <div className="flex items-center gap-2">
@@ -1212,7 +1322,9 @@ export function PhaseFormModal({
                                <span>Generating 3 design variations. Please wait and select your preferred option when ready. The selected prototype will open in your browser.</span>
                              </div>
                            )}
-                  </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             ) : isDesignMockupsSection ? (

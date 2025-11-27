@@ -87,6 +87,25 @@ export function MainApp() {
     };
 
     window.addEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
+    
+    // Listen for phase navigation events from ExportPRDModal
+    const handleNavigateToPhase = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail && customEvent.detail.phaseId && phases.length > 0) {
+        const phase = phases.find(p => p.id === customEvent.detail.phaseId);
+        if (phase) {
+          setCurrentPhase(phase);
+          setView('chat');
+        }
+      }
+    };
+    
+    window.addEventListener('navigateToPhase', handleNavigateToPhase);
+    
+    return () => {
+      window.removeEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
+      window.removeEventListener('navigateToPhase', handleNavigateToPhase);
+    };
     return () => {
       window.removeEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
     };

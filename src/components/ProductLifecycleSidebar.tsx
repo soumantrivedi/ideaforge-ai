@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle2, Circle, Lock, ChevronRight, Star } from 'lucide-react';
+import { CheckCircle2, Circle, Lock, ChevronRight, Star, Lightbulb, Search, FileText, Palette, Settings, Rocket } from 'lucide-react';
 import type { LifecyclePhase, PhaseSubmission } from '../lib/product-lifecycle-service';
 
 interface ProductLifecycleSidebarProps {
@@ -17,6 +17,7 @@ export function ProductLifecycleSidebar({
   onPhaseSelect,
   productId,
 }: ProductLifecycleSidebarProps) {
+  const [currentPhase, setCurrentPhase] = useState<string | null>(currentPhaseId || null);
   const [completedPhases, setCompletedPhases] = useState<Set<string>>(new Set());
   const [inProgressPhases, setInProgressPhases] = useState<Set<string>>(new Set());
 
@@ -65,6 +66,18 @@ export function ProductLifecycleSidebar({
       return <Lock className={`w-5 h-5 ${isActive ? 'text-white' : 'text-gray-400'}`} />;
     }
     return <Circle className={`w-5 h-5 ${isActive ? 'text-white' : 'text-gray-400'}`} />;
+  };
+
+  const getPhaseIcon = (phaseName: string, isActive: boolean) => {
+    const iconMap: Record<string, React.ReactNode> = {
+      'Ideation': <Lightbulb className={`w-5 h-5 ${isActive ? 'text-white' : 'text-yellow-500'}`} />,
+      'Market Research': <Search className={`w-5 h-5 ${isActive ? 'text-white' : 'text-blue-500'}`} />,
+      'Requirements': <FileText className={`w-5 h-5 ${isActive ? 'text-white' : 'text-indigo-500'}`} />,
+      'Design': <Palette className={`w-5 h-5 ${isActive ? 'text-white' : 'text-pink-500'}`} />,
+      'Development Planning': <Settings className={`w-5 h-5 ${isActive ? 'text-white' : 'text-gray-500'}`} />,
+      'Go-to-Market': <Rocket className={`w-5 h-5 ${isActive ? 'text-white' : 'text-green-500'}`} />,
+    };
+    return iconMap[phaseName] || <Circle className={`w-5 h-5 ${isActive ? 'text-white' : 'text-gray-400'}`} />;
   };
 
   const getStatusColor = (status: string, isActive: boolean) => {
@@ -138,7 +151,7 @@ export function ProductLifecycleSidebar({
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-2xl">{phase.icon}</span>
+                    {getPhaseIcon(phase.phase_name, isActive)}
                     <h3 className="font-semibold text-sm truncate">
                       {phase.phase_name}
                     </h3>
