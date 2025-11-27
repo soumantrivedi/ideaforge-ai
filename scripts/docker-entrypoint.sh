@@ -4,14 +4,17 @@
 
 set -e
 
-# Get API URL from environment variable (set via ConfigMap)
+# Get configuration from environment variables (set via ConfigMap)
 API_URL="${VITE_API_URL:-}"
+JOB_POLL_INTERVAL_MS="${JOB_POLL_INTERVAL_MS:-5000}"
+JOB_MAX_POLL_ATTEMPTS="${JOB_MAX_POLL_ATTEMPTS:-120}"
+JOB_TIMEOUT_MS="${JOB_TIMEOUT_MS:-600000}"
 
 # Path to index.html
 INDEX_HTML="/usr/share/nginx/html/index.html"
 
-# Create the injection script
-INJECT_SCRIPT="<script>window.__API_URL__='${API_URL}';</script>"
+# Create the injection script with all configuration
+INJECT_SCRIPT="<script>window.__API_URL__='${API_URL}';window.__JOB_POLL_INTERVAL_MS__='${JOB_POLL_INTERVAL_MS}';window.__JOB_MAX_POLL_ATTEMPTS__='${JOB_MAX_POLL_ATTEMPTS}';window.__JOB_TIMEOUT_MS__='${JOB_TIMEOUT_MS}';</script>"
 
 # Check if index.html exists
 if [ ! -f "$INDEX_HTML" ]; then

@@ -34,21 +34,6 @@ spec:
             configMapKeyRef:
               name: ideaforge-ai-config
               key: VITE_API_URL
-        - name: JOB_POLL_INTERVAL_MS
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: JOB_POLL_INTERVAL_MS
-        - name: JOB_MAX_POLL_ATTEMPTS
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: JOB_MAX_POLL_ATTEMPTS
-        - name: JOB_TIMEOUT_MS
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: JOB_TIMEOUT_MS
         - name: VITE_OKTA_CLIENT_ID
           valueFrom:
             secretKeyRef:

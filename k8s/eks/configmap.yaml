@@ -27,6 +27,11 @@ data:
   AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
   AGENT_RESPONSE_TIMEOUT: "45.0"  # Timeout in seconds (45s to avoid Cloudflare 60s timeout, leaving 15s buffer for network/processing overhead)
   
+  # Async Job Processing Configuration
+  JOB_POLL_INTERVAL_MS: "5000"  # Polling interval in milliseconds (5 seconds default, configurable for load management)
+  JOB_MAX_POLL_ATTEMPTS: "120"  # Maximum polling attempts (10 minutes at 5s intervals)
+  JOB_TIMEOUT_MS: "600000"  # Job timeout in milliseconds (10 minutes)
+  
   # Frontend Configuration
   # Use relative path /api so frontend nginx proxies to backend service internally
   # The frontend nginx.conf already has: location /api { proxy_pass http://backend:8000; }

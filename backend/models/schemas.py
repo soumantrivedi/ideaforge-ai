@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from uuid import UUID
@@ -197,6 +197,11 @@ class JobStatusResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     estimated_remaining_seconds: Optional[int] = None
+    
+    @field_serializer('created_at', 'updated_at')
+    def serialize_datetime(self, value: datetime, _info):
+        """Serialize datetime to ISO format string"""
+        return value.isoformat() if value else None
 
 
 class JobResultResponse(BaseModel):
@@ -207,3 +212,8 @@ class JobResultResponse(BaseModel):
     error: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None
+    
+    @field_serializer('created_at', 'completed_at')
+    def serialize_datetime(self, value: datetime, _info):
+        """Serialize datetime to ISO format string"""
+        return value.isoformat() if value else None

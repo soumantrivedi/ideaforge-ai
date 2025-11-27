@@ -14,6 +14,7 @@ import { UserProfile } from './UserProfile';
 import { IdeaScoreDashboard } from './IdeaScoreDashboard';
 import { ProductSummaryPRDGenerator } from './ProductSummaryPRDGenerator';
 import { getValidatedApiUrl } from '../lib/runtime-config';
+import { getJobPollInterval, getJobMaxPollAttempts, getJobTimeout } from '../lib/job-config';
 
 const API_URL = getValidatedApiUrl();
 import { useAuth } from '../contexts/AuthContext';
@@ -327,9 +328,9 @@ export function MainApp() {
             setLoadingMessage(progressMessage);
             console.log('Job progress:', status);
           },
-          pollInterval: 2000, // Poll every 2 seconds
-          maxPollAttempts: 150, // 5 minutes max
-          timeout: 300000, // 5 minutes timeout
+          pollInterval: getJobPollInterval(), // Configurable via ConfigMap (default: 5 seconds)
+          maxPollAttempts: getJobMaxPollAttempts(), // Configurable via ConfigMap (default: 120 attempts = 10 minutes)
+          timeout: getJobTimeout(), // Configurable via ConfigMap (default: 10 minutes)
         });
         console.log('Multi-agent response received:', {
           hasResponse: !!data.response,
