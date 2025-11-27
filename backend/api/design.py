@@ -102,13 +102,45 @@ async def generate_design_prompt(
         if request.context:
             product_context.update(request.context)
         
+        # Load user-specific API keys
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+        
         if request.provider == "v0":
-            prompt = await v0_agent.generate_v0_prompt(
-                product_context=product_context
-            )
+            # Use AgnoV0Agent when Agno is available, otherwise use legacy V0Agent
+            from backend.agents import AGNO_AVAILABLE
+            if AGNO_AVAILABLE:
+                agno_v0_agent = AgnoV0Agent()
+                # Set V0 API key if user has one, otherwise use global settings
+                # Note: V0 API key is needed if agent tools are invoked, but not for prompt generation
+                v0_key = user_keys.get("v0") or settings.v0_api_key
+                if v0_key:
+                    agno_v0_agent.set_v0_api_key(v0_key)
+                try:
+                    prompt = await agno_v0_agent.generate_v0_prompt(
+                        product_context=product_context
+                    )
+                except Exception as e:
+                    # If error mentions V0 API key, provide helpful message
+                    error_msg = str(e)
+                    if "api" in error_msg.lower() and ("key" in error_msg.lower() or "401" in error_msg or "authentication" in error_msg.lower()):
+                        logger.error("v0_api_key_error_in_prompt_generation", 
+                                   user_id=str(current_user["id"]),
+                                   has_user_key=bool(user_keys.get("v0")),
+                                   has_global_key=bool(settings.v0_api_key),
+                                   error=error_msg)
+                        raise HTTPException(
+                            status_code=400,
+                            detail="V0 API key error during prompt generation. Please check your V0 API key in Settings. Error: " + error_msg
+                        )
+                    raise
+            else:
+                # Fallback to legacy V0Agent
+                prompt = await v0_agent.generate_v0_prompt(
+                    product_context=product_context
+                )
         elif request.provider == "lovable":
             # Use Agno Lovable agent for prompt generation
-            from backend.agents.agno_lovable_agent import AgnoLovableAgent
             agno_lovable_agent = AgnoLovableAgent()
             prompt = await agno_lovable_agent.generate_lovable_prompt(
                 product_context=product_context
