@@ -218,51 +218,86 @@ export function PhaseFormModal({
       return;
     }
 
-    const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
-    const v0Prompt = promptsObj['v0_prompt'] || '';
-    const lovablePrompt = promptsObj['lovable_prompt'] || '';
-
-      if (!v0Prompt.trim() && !lovablePrompt.trim()) {
-      alert('Please generate at least one prompt (V0 or Lovable) before saving to chat');
-      return;
-    }
-
-    // Get the highest score (or prompt user to score if not scored)
-    const maxScore = Math.max(
-      promptScores.v0 || 0,
-      promptScores.lovable || 0
-    );
-
-    if (maxScore === 0 && !promptScores.v0 && !promptScores.lovable) {
-      const shouldScore = confirm('You haven\'t scored the prompts yet. Would you like to score them now? (Click Cancel to save without scoring)');
-      if (shouldScore) {
-        // Show scoring UI - we'll add this
-        return;
-      }
-    }
-
     setIsSubmitting(true);
 
     try {
-      // Build the message to save to chatbot
-      let chatbotMessage = `## Design Phase Prompts\n\n`;
+      // Build the message to save to chatbot - format all form data nicely
+      let chatbotMessage = `## ${phase.phase_name} Phase Content\n\n`;
       
-      if (v0Prompt.trim()) {
-        chatbotMessage += `### V0 Vercel Prompt\n${v0Prompt}\n\n`;
-        if (promptScores.v0 !== null) {
-          chatbotMessage += `**Score: ${promptScores.v0}/5**\n\n`;
+      // Check if this is Design phase with prompts
+      const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
+      if (isDesignPhase) {
+        const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts'] || '{}') : {};
+        const v0Prompt = promptsObj['v0_prompt'] || '';
+        const lovablePrompt = promptsObj['lovable_prompt'] || '';
+
+        if (!v0Prompt.trim() && !lovablePrompt.trim()) {
+          alert('Please generate at least one prompt (V0 or Lovable) before saving to chat');
+          setIsSubmitting(false);
+          return;
         }
-      }
-      
-      if (lovablePrompt.trim()) {
-        chatbotMessage += `### Lovable.dev Prompt\n${lovablePrompt}\n\n`;
-        if (promptScores.lovable !== null) {
-          chatbotMessage += `**Score: ${promptScores.lovable}/5**\n\n`;
+
+        // Get the highest score (or prompt user to score if not scored)
+        const maxScore = Math.max(
+          promptScores.v0 || 0,
+          promptScores.lovable || 0
+        );
+
+        if (maxScore === 0 && !promptScores.v0 && !promptScores.lovable) {
+          const shouldScore = confirm('You haven\'t scored the prompts yet. Would you like to score them now? (Click Cancel to save without scoring)');
+          if (shouldScore) {
+            // Show scoring UI - we'll add this
+            setIsSubmitting(false);
+            return;
+          }
         }
+        
+        if (v0Prompt.trim()) {
+          chatbotMessage += `### V0 Vercel Prompt\n${v0Prompt}\n\n`;
+          if (promptScores.v0 !== null) {
+            chatbotMessage += `**Score: ${promptScores.v0}/5**\n\n`;
+          }
+        }
+        
+        if (lovablePrompt.trim()) {
+          chatbotMessage += `### Lovable.dev Prompt\n${lovablePrompt}\n\n`;
+          if (promptScores.lovable !== null) {
+            chatbotMessage += `**Score: ${promptScores.lovable}/5**\n\n`;
+          }
+        }
+
+        if (maxScore > 0) {
+          chatbotMessage += `**Design Phase Score: ${maxScore}/5**\n\n`;
+        }
+      } else {
+        // For all other phases, format all form fields nicely
+        phase.required_fields.forEach((field, index) => {
+          const fieldValue = formData[field] || '';
+          if (fieldValue.trim()) {
+            const prompt = phase.template_prompts?.[index] || field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            chatbotMessage += `### ${prompt}\n${fieldValue}\n\n`;
+          }
+        });
       }
 
-      if (maxScore > 0) {
-        chatbotMessage += `**Design Phase Score: ${maxScore}/5**\n`;
+      // Build interaction metadata
+      const interactionMetadata: any = {
+        phase_name: phase.phase_name,
+      };
+      
+      if (isDesignPhase) {
+        const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts'] || '{}') : {};
+        const maxScore = Math.max(
+          promptScores.v0 || 0,
+          promptScores.lovable || 0
+        );
+        interactionMetadata.v0_prompt = promptsObj['v0_prompt'] || '';
+        interactionMetadata.lovable_prompt = promptsObj['lovable_prompt'] || '';
+        interactionMetadata.v0_score = promptScores.v0;
+        interactionMetadata.lovable_score = promptScores.lovable;
+        if (maxScore > 0) {
+          interactionMetadata.design_phase_score = maxScore;
+        }
       }
 
       // Save to conversation history
@@ -277,18 +312,11 @@ export function PhaseFormModal({
           product_id: productId,
           phase_id: phase.id,
           message_type: 'agent',
-          agent_name: 'Design Phase',
-          agent_role: 'design',
+          agent_name: `${phase.phase_name} Phase`,
+          agent_role: phase.phase_name.toLowerCase().replace(/\s+/g, '_'),
           content: chatbotMessage,
           formatted_content: chatbotMessage,
-          interaction_metadata: {
-            phase_name: phase.phase_name,
-            v0_prompt: v0Prompt,
-            lovable_prompt: lovablePrompt,
-            v0_score: promptScores.v0,
-            lovable_score: promptScores.lovable,
-            design_phase_score: maxScore,
-          },
+          interaction_metadata: interactionMetadata,
         }),
       });
 
@@ -305,19 +333,31 @@ export function PhaseFormModal({
         }
       }));
 
-      // Update phase submission with score
-      if (maxScore > 0 && productId) {
+      // Update phase submission metadata
+      if (productId) {
         try {
           const submission = await lifecycleService.getPhaseSubmission(productId, phase.id);
           if (submission) {
-            const metadata = {
+            const metadata: any = {
               ...(submission.metadata || {}),
-              design_phase_score: maxScore,
-              v0_score: promptScores.v0,
-              lovable_score: promptScores.lovable,
-              prompts_saved_to_chatbot: true,
+              saved_to_chatbot: true,
               saved_at: new Date().toISOString(),
             };
+            
+            // Add design phase specific scores if available
+            if (isDesignPhase) {
+              const maxScore = Math.max(
+                promptScores.v0 || 0,
+                promptScores.lovable || 0
+              );
+              if (maxScore > 0) {
+                metadata.design_phase_score = maxScore;
+                metadata.v0_score = promptScores.v0;
+                metadata.lovable_score = promptScores.lovable;
+                metadata.prompts_saved_to_chatbot = true;
+              }
+            }
+            
             await lifecycleService.updatePhaseContent(
               submission.id,
               submission.generated_content || '',
@@ -326,19 +366,14 @@ export function PhaseFormModal({
             );
           }
         } catch (error) {
-          console.error('Error updating phase submission with score:', error);
+          console.error('Error updating phase submission:', error);
           // Don't fail the whole operation if this fails
         }
       }
 
-      // Close modal first to prevent UI distortion
-      onClose();
-      setShowSaveToChatbot(false);
-      
-      // Show success message after a brief delay to ensure modal is closed
-      setTimeout(() => {
-        alert('Prompts saved to chat successfully!');
-      }, 100);
+      // Don't close modal automatically - let user continue editing if needed
+      // Just show success message
+      alert(`${phase.phase_name} phase content saved to chat successfully!`);
     } catch (error) {
       console.error('Error saving to chat:', error);
       alert(`Failed to save to chat: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -1671,16 +1706,28 @@ export function PhaseFormModal({
                     })()
                   : !isCurrentFieldFilled();
                 
+                // "Save To Chat" button - saves form content to chat WITHOUT triggering multi-agent processing
                 return (
                   <button
-                    type="submit"
+                    type="button"
+                    onClick={async () => {
+                      // First save the form data
+                      try {
+                        await handleSubmit(new Event('submit') as any);
+                        // Then save to chat
+                        await handleSaveToChatbot();
+                      } catch (error) {
+                        console.error('Error saving form and chat:', error);
+                        alert(`Failed to save: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                      }
+                    }}
                     disabled={isButtonDisabled || isSubmitting}
-                    className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
+                    className="px-6 py-2 text-sm font-medium text-white bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg hover:from-green-700 hover:to-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg flex items-center gap-2"
                   >
                     {isSubmitting ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        Processing...
+                        Saving to Chat...
                       </>
                     ) : (
                       <>

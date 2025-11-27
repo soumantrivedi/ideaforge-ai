@@ -261,34 +261,29 @@ export function MainApp() {
       // First, save the form data
       await lifecycleService.submitPhaseData(productId, currentPhase.id, formData, user.id);
       
+      // For ALL phases, when called from "Save To Chat", skip multi-agent generation
+      // The "Save To Chat" button will handle saving to chat separately
+      // This prevents multi-agent processing when user just wants to save content to chat
+      
       // For Design phase, skip multi-agent generation - just save prompts
       // User will save prompts to chatbot separately with scoring
       if (isDesignPhase) {
         // Get submission to store prompts
         const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
         
-        // Close the form modal - prompts are saved, user can now save to chatbot
-        setIsFormModalOpen(false);
-        
-        // Reload submissions to update UI
+        // Don't close modal yet - user might want to save to chat
+        // Just reload submissions to update UI
         await loadSubmissions();
-        
-        // Reset any corrupted UI state after design phase completion
-        // This prevents UI distortion issues
-        setTimeout(() => {
-          // Force a UI refresh by resetting current phase state
-          const currentPhaseId = currentPhase.id;
-          setCurrentPhase(null);
-          setTimeout(() => {
-            const phase = phases.find(p => p.id === currentPhaseId);
-            if (phase) {
-              setCurrentPhase(phase);
-            }
-          }, 100);
-        }, 500);
         
         return; // Don't proceed with multi-agent generation
       }
+      
+      // For non-Design phases, if this is called from "Save To Chat", 
+      // we should also skip multi-agent processing
+      // The handleSaveToChatbot in PhaseFormModal will be called separately
+      // So we just save the data and return - no multi-agent processing
+      await loadSubmissions();
+      return; // Don't proceed with multi-agent generation when saving to chat
       
       // Build a focused query - context will be passed separately for better structure
       // The backend will optimize this using system/user prompt separation
