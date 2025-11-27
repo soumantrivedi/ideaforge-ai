@@ -56,9 +56,10 @@ spec:
         - name: PGDATA
           value: /var/lib/postgresql/data/pgdata
         # PostgreSQL configuration for 200+ concurrent users
-        # Configuration will be applied via postgresql.conf or command-line args
+        # Use POSTGRES_INITDB_ARGS only for initdb, not runtime config
         - name: POSTGRES_INITDB_ARGS
           value: "--encoding=UTF8 --locale=C"
+        # Runtime configuration via postgresql.conf will be handled by init scripts
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
@@ -72,32 +73,6 @@ spec:
           limits:
             memory: "2Gi"
             cpu: "1000m"
-        command:
-          - postgres
-          - -c
-          - max_connections=500
-          - -c
-          - shared_buffers=512MB
-          - -c
-          - effective_cache_size=1536MB
-          - -c
-          - maintenance_work_mem=128MB
-          - -c
-          - checkpoint_completion_target=0.9
-          - -c
-          - wal_buffers=16MB
-          - -c
-          - default_statistics_target=100
-          - -c
-          - random_page_cost=1.1
-          - -c
-          - effective_io_concurrency=200
-          - -c
-          - work_mem=4MB
-          - -c
-          - min_wal_size=1GB
-          - -c
-          - max_wal_size=4GB
         livenessProbe:
           exec:
             command:
