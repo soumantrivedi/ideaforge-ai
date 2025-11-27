@@ -4,6 +4,7 @@ import { ExportPRDModal } from './ExportPRDModal';
 import type { MultiAgentMessage, CoordinationMode } from '../agents/multi-agent-system';
 import { useAuth } from '../contexts/AuthContext';
 import { saveChatSession, loadChatSession, clearProductSession } from '../lib/session-storage';
+import { ContentFormatter } from '../lib/content-formatter';
 
 import { getValidatedApiUrl } from '../lib/runtime-config';
 const API_URL = getValidatedApiUrl();
