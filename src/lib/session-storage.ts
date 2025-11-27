@@ -215,3 +215,16 @@ export function clearAppState(): void {
   }
 }
 
+// Expose utility functions to window for debugging
+if (typeof window !== 'undefined') {
+  (window as any).ideaforgeDebug = {
+    resetProductState,
+    clearAppState,
+    clearProductSession,
+    clearAllSessionStorage,
+    getProductsWithSessionData,
+    loadAppState,
+  };
+  console.log('IdeaForge debug utilities available at window.ideaforgeDebug');
+}
+
