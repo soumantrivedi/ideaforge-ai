@@ -82,12 +82,37 @@ export function PhaseFormModal({
               });
               
               setFormData(initialData);
+              
+              // Calculate the appropriate starting index based on filled fields
+              // Find the first unfilled field, or go to the last field if all are filled
+              const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
+              const fieldsToCheck = isDesignPhase 
+                ? phase.required_fields.filter(f => f !== 'design_mockups')
+                : phase.required_fields;
+              
+              let startingIndex = 0;
+              for (let i = 0; i < fieldsToCheck.length; i++) {
+                const field = fieldsToCheck[i];
+                const value = initialData[field];
+                if (!value || (typeof value === 'string' && value.trim().length === 0)) {
+                  startingIndex = i;
+                  break;
+                }
+                // If all fields are filled, show the last field
+                if (i === fieldsToCheck.length - 1) {
+                  startingIndex = Math.min(i, phase.required_fields.length - 1);
+                }
+              }
+              
+              setCurrentPromptIndex(startingIndex);
+              
               console.log('Form initialized with existing submission data:', {
                 phaseName: phase.phase_name,
                 totalFields: phase.required_fields.length,
                 fields: phase.required_fields,
                 initialData,
                 submissionId: submission.id,
+                startingIndex,
               });
             } else {
               // No existing submission, initialize with empty values
@@ -100,6 +125,7 @@ export function PhaseFormModal({
                 }
               });
               setFormData(initialData);
+              setCurrentPromptIndex(0);
               console.log('Form initialized with no existing data:', {
                 phaseName: phase.phase_name,
                 totalFields: phase.required_fields.length,
@@ -118,6 +144,7 @@ export function PhaseFormModal({
               }
             });
             setFormData(initialData);
+            setCurrentPromptIndex(0);
           }
         } else {
           // No productId or phase.id, use existingData prop only
@@ -130,28 +157,39 @@ export function PhaseFormModal({
             }
           });
           setFormData(initialData);
+          setCurrentPromptIndex(0);
         }
       };
       
       loadExistingData();
+    } else {
+      // When modal closes, reset state to prevent stale data
+      setFormData({});
       setCurrentPromptIndex(0);
+      setIsGeneratingAIHelp(false);
+      setIsSubmitting(false);
+      setShowSaveToChatbot(false);
     }
-  }, [isOpen, phase, existingData, productId, token]);
+  }, [isOpen, phase?.id, existingData, productId, token]);
 
   // Fix index bounds - must be in useEffect to avoid hooks order issues
+  // Removed currentPromptIndex from dependencies to prevent infinite loops
   useEffect(() => {
     if (isOpen && phase.required_fields && phase.template_prompts) {
       const maxIndex = Math.min(phase.required_fields.length, phase.template_prompts.length) - 1;
-      if (currentPromptIndex > maxIndex) {
-        console.warn('currentPromptIndex was out of bounds, correcting:', {
-          old: currentPromptIndex,
-          new: maxIndex,
-          max: maxIndex
-        });
-        setCurrentPromptIndex(Math.max(0, maxIndex));
-      }
+      setCurrentPromptIndex((prevIndex) => {
+        if (prevIndex > maxIndex) {
+          console.warn('currentPromptIndex was out of bounds, correcting:', {
+            old: prevIndex,
+            new: maxIndex,
+            max: maxIndex
+          });
+          return Math.max(0, maxIndex);
+        }
+        return prevIndex;
+      });
     }
-  }, [isOpen, phase.required_fields, phase.template_prompts, currentPromptIndex]);
+  }, [isOpen, phase.required_fields, phase.template_prompts]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -374,6 +412,20 @@ export function PhaseFormModal({
       // Don't close modal automatically - let user continue editing if needed
       // Just show success message
       alert(`${phase.phase_name} phase content saved to chat successfully!`);
+      
+      // Reload submissions to update progress in parent component
+      // But don't reset the form state or currentPromptIndex
+      if (productId && phase.id && token) {
+        try {
+          const { lifecycleService } = await import('../lib/product-lifecycle-service');
+          lifecycleService.setToken(token);
+          // Trigger a refresh in parent by calling onSubmit with current data
+          // This will update the submission status without resetting the form
+          await lifecycleService.getPhaseSubmission(productId, phase.id);
+        } catch (error) {
+          console.error('Error refreshing submission after save to chat:', error);
+        }
+      }
     } catch (error) {
       console.error('Error saving to chat:', error);
       alert(`Failed to save to chat: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -1054,7 +1106,25 @@ export function PhaseFormModal({
 
   const currentField = phase.required_fields[safeIndex];
   const currentPrompt = phase.template_prompts[safeIndex];
-  const progress = ((safeIndex + 1) / Math.max(phase.required_fields.length, phase.template_prompts.length)) * 100;
+  
+  // Calculate progress based on filled fields, not just current index
+  // This ensures progress doesn't reset when reopening a completed phase
+  const filledFieldsCount = phase.required_fields.filter((field) => {
+    const value = formData[field];
+    if (!value) return false;
+    if (field === 'v0_lovable_prompts') {
+      try {
+        const parsed = JSON.parse(value);
+        return (parsed.v0_prompt?.trim() || parsed.lovable_prompt?.trim()) ? true : false;
+      } catch {
+        return false;
+      }
+    }
+    return value.trim().length > 0;
+  }).length;
+  
+  const totalFields = phase.required_fields.length;
+  const progress = totalFields > 0 ? (filledFieldsCount / totalFields) * 100 : 0;
   
   // Compute design phase section flags (must be after currentField is defined)
   const isDesignPhase = phase.phase_name.toLowerCase() === 'design';

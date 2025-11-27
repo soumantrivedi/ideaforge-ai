@@ -960,9 +960,17 @@ export function MainApp() {
       {/* Phase Form Modal */}
       {currentPhase && (
         <PhaseFormModal
+          key={`${productId}-${currentPhase.id}`}
           phase={currentPhase}
           isOpen={isFormModalOpen}
-          onClose={() => setIsFormModalOpen(false)}
+          onClose={() => {
+            setIsFormModalOpen(false);
+            // Small delay to allow modal close animation before resetting phase
+            setTimeout(() => {
+              // Don't reset currentPhase here - let user keep it selected
+              // setCurrentPhase(null);
+            }, 100);
+          }}
           onSubmit={handleFormSubmit}
           existingData={submissions.find(s => s.phase_id === currentPhase.id)?.form_data}
           productId={productId}
