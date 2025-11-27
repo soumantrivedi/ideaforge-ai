@@ -25,7 +25,7 @@ data:
   AGENT_MODEL_PRIMARY: "gpt-5.1"  # GPT-5.1: Best for product requirements, ideation, reasoning, discovery (or gpt-5 as fallback)
   AGENT_MODEL_SECONDARY: "claude-sonnet-4-20250522"  # Claude 4 Sonnet: Advanced reasoning and ideation
   AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
-  AGENT_RESPONSE_TIMEOUT: "45.0"  # Timeout in seconds (45s to avoid Cloudflare 60s timeout, leaving 15s buffer for network/processing overhead)
+  AGENT_RESPONSE_TIMEOUT: "1800.0"  # Timeout in seconds (30 minutes - jobs run in background, no Cloudflare timeout concern)
   
   # Async Job Processing Configuration
   JOB_POLL_INTERVAL_MS: "10000"  # Polling interval in milliseconds (10 seconds for 400+ concurrent users)

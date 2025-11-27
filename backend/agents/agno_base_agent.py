@@ -294,30 +294,38 @@ class AgnoBaseAgent(ABC):
             # Convert messages to query string
             query = self._format_messages_to_query(messages, context)
             
-            # Run Agno agent with timeout to avoid Cloudflare timeout (60s limit)
-            # Use configurable timeout (default 50s) to leave buffer for network/processing overhead
-            from backend.config import settings
+            # Run Agno agent asynchronously
+            # Since we're using async job processing, we don't need to worry about Cloudflare timeout
+            # The job runs in background and can take as long as needed
             import asyncio
             try:
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(self.agno_agent.run, query),
-                    timeout=settings.agent_response_timeout
-                )
+                # Check if Agno agent has async run method
+                if hasattr(self.agno_agent, 'arun'):
+                    # Use async run if available (fully async, no timeout needed)
+                    response = await self.agno_agent.arun(query)
+                elif hasattr(self.agno_agent, 'run_async'):
+                    # Alternative async method name
+                    response = await self.agno_agent.run_async(query)
+                else:
+                    # Fallback to thread pool for sync run (non-blocking)
+                    # Use a very high timeout since job runs in background
+                    # Set timeout to 30 minutes (1800s) for background jobs
+                    # This allows complex multi-agent operations to complete
+                    from backend.config import settings
+                    # Use configurable timeout, default to 30 minutes for background jobs
+                    timeout_seconds = float(settings.agent_response_timeout) if hasattr(settings, 'agent_response_timeout') else 1800.0
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(self.agno_agent.run, query),
+                        timeout=timeout_seconds
+                    )
             except asyncio.TimeoutError:
-                timeout_sec = settings.agent_response_timeout
-                self.logger.warning("agno_agent_timeout", agent=self.name, timeout=timeout_sec)
-                # Return a truncated response indicating timeout
-                return AgentResponse(
-                    agent_type=self.role,
-                    response=f"⚠️ Response generation timed out after {int(timeout_sec)} seconds. The request was too complex or the AI provider took too long. Please try:\n1. Breaking your request into smaller parts\n2. Using a simpler query\n3. Retrying the request",
-                    metadata={
-                        "has_context": context is not None,
-                        "message_count": len(messages),
-                        "timeout": True,
-                        "timeout_seconds": timeout_sec
-                    },
-                    timestamp=datetime.utcnow()
-                )
+                # Log timeout but raise exception so job can be marked as failed
+                timeout_seconds = float(settings.agent_response_timeout) if hasattr(settings, 'agent_response_timeout') else 1800.0
+                self.logger.error("agno_agent_timeout", agent=self.name, timeout=timeout_seconds)
+                raise Exception(f"Agent {self.name} timed out after {int(timeout_seconds)} seconds. The request may be too complex.")
+            except Exception as e:
+                self.logger.error("agno_agent_error", agent=self.name, error=str(e))
+                raise
             
             # Extract response content
             response_content = response.content if hasattr(response, 'content') else str(response)
