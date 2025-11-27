@@ -203,6 +203,8 @@ async def get_conversation_history(
             for row in rows
         ]
         return {"messages": messages}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("error_getting_conversation_history", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
@@ -529,6 +531,8 @@ async def get_phase_submissions(
             for row in rows
         ]
         return {"submissions": submissions}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("error_getting_phase_submissions", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))

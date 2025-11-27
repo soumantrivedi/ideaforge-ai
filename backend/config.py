@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     agent_model_primary: str = os.getenv("AGENT_MODEL_PRIMARY", "gpt-5.1")  # GPT-5.1 for best reasoning (or gpt-5 as fallback)
     agent_model_secondary: str = os.getenv("AGENT_MODEL_SECONDARY", "claude-sonnet-4-20250522")
     agent_model_tertiary: str = os.getenv("AGENT_MODEL_TERTIARY", "gemini-3.0-pro")  # Gemini 3.0 Pro
+    
+    # AI Response Timeout (seconds) - Set to 50s to avoid Cloudflare 60s timeout
+    agent_response_timeout: float = float(os.getenv("AGENT_RESPONSE_TIMEOUT", "50.0"))
 
     # MCP Server Configuration
     mcp_github_url: str = os.getenv("MCP_GITHUB_URL", "http://mcp-github:8001")
