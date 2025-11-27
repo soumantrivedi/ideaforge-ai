@@ -293,99 +293,59 @@ export function MainApp() {
         supportingAgents = ['rag', 'analysis'];
       }
       
-      // Trigger agent processing
-      const response = await fetch(`${API_URL}/api/multi-agent/process`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          user_id: user.id,
-          product_id: productId,
-          query: query,
-          coordination_mode: 'enhanced_collaborative',
-          primary_agent: primaryAgent,
-          supporting_agents: supportingAgents,
-          context: {
-            product_id: productId,
-            phase_id: currentPhase.id,
-            phase_name: currentPhase.phase_name,
-            form_data: formData,
-          },
-        }),
-      });
+      // Use async job processing to avoid Cloudflare timeout
+      const { processAsyncJob } = await import('../utils/asyncJobProcessor');
       
-      if (!response.ok) {
-        let errorMessage = `Failed to generate content: ${response.status}`;
-        let errorDetails: any = null;
-        
-        try {
-          const errorText = await response.text();
-          try {
-            errorDetails = JSON.parse(errorText);
-            if (errorDetails.detail) {
-              // Handle Pydantic validation errors
-              if (typeof errorDetails.detail === 'object' && Array.isArray(errorDetails.detail)) {
-                const validationErrors = errorDetails.detail.map((err: any) => {
-                  const field = err.loc ? err.loc.join('.') : 'unknown';
-                  const msg = err.msg || 'validation error';
-                  return `${field}: ${msg}`;
-                }).join(', ');
-                errorMessage = `Validation error: ${validationErrors}`;
-              } else if (typeof errorDetails.detail === 'string') {
-                errorMessage = errorDetails.detail;
-              } else {
-                errorMessage = JSON.stringify(errorDetails.detail);
-              }
-            } else if (errorDetails.message) {
-              errorMessage = errorDetails.message;
-            }
-          } catch {
-            errorMessage = errorText || errorMessage;
-          }
-        } catch (e) {
-          console.error('Error parsing error response:', e);
-        }
-        
-        console.error('Multi-agent API error:', {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorMessage,
-          details: errorDetails
+      const requestData = {
+        user_id: user.id,
+        product_id: productId,
+        query: query,
+        coordination_mode: 'enhanced_collaborative',
+        primary_agent: primaryAgent,
+        supporting_agents: supportingAgents,
+        context: {
+          product_id: productId,
+          phase_id: currentPhase.id,
+          phase_name: currentPhase.phase_name,
+          form_data: formData,
+        },
+      };
+
+      // Show loading indicator
+      setLoading(true);
+      let progressMessage = 'Submitting request...';
+
+      try {
+        const data = await processAsyncJob(requestData, {
+          apiUrl: API_URL,
+          token,
+          onProgress: (status) => {
+            progressMessage = status.message || `Processing... ${Math.round((status.progress || 0) * 100)}%`;
+            console.log('Job progress:', status);
+            // You could update UI here with progress
+          },
+          pollInterval: 2000, // Poll every 2 seconds
+          maxPollAttempts: 150, // 5 minutes max
+          timeout: 300000, // 5 minutes timeout
+        });
+        console.log('Multi-agent response received:', {
+          hasResponse: !!data.response,
+          responseLength: data.response?.length || 0,
+          primaryAgent: data.primary_agent,
+          metadata: data.metadata
         });
         
-        // Check if error is about missing AI provider
-        if (errorMessage.includes('No AI provider') || errorMessage.includes('configure at least one AI provider')) {
-          const shouldGoToSettings = confirm(
-            `${errorMessage}\n\nWould you like to go to Settings to configure an AI provider now?`
-          );
-          if (shouldGoToSettings) {
-            setView('settings');
-          }
-          return; // Don't throw error, user chose to go to Settings or dismissed
+        const generatedContent = data.response || '';
+        const agentInteractions = data.agent_interactions || [];
+      
+        if (!generatedContent) {
+          console.warn('Generated content is empty');
+          alert('AI generated an empty response. Please try again or check your AI provider configuration.');
+          setLoading(false);
+          return;
         }
         
-        throw new Error(errorMessage);
-      }
-      
-      const data = await response.json();
-      console.log('Multi-agent response received:', {
-        hasResponse: !!data.response,
-        responseLength: data.response?.length || 0,
-        primaryAgent: data.primary_agent,
-        metadata: data.metadata
-      });
-      
-      const generatedContent = data.response || '';
-      const agentInteractions = data.agent_interactions || [];
-      
-      if (!generatedContent) {
-        console.warn('Generated content is empty');
-        alert('AI generated an empty response. Please try again or check your AI provider configuration.');
-        return;
-      }
+        // Continue with existing logic...
       
       // Extract previous questions and answers from form data
       const previousQuestions: Array<{ question: string; answer: string }> = [];
@@ -415,8 +375,10 @@ export function MainApp() {
         submissionId: submission?.id,
       });
       setValidationModalOpen(true);
+      setLoading(false);
     } catch (error) {
       console.error('Error submitting form:', error);
+      setLoading(false);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
       // Check if error is about missing AI provider

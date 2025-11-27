@@ -169,3 +169,41 @@ class AgentCapability(BaseModel):
     capabilities: List[str]
     confidence_scores: Dict[str, float] = {}
     description: str
+
+
+# Async Job Schemas for long-running multi-agent requests
+
+
+class JobSubmitRequest(BaseModel):
+    """Request to submit an async multi-agent job"""
+    request: MultiAgentRequest  # The original multi-agent request
+
+
+class JobSubmitResponse(BaseModel):
+    """Response when submitting a job"""
+    job_id: str
+    status: str = "pending"
+    message: str = "Job submitted successfully"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    estimated_completion_seconds: Optional[int] = 300  # Default 5 minutes
+
+
+class JobStatusResponse(BaseModel):
+    """Response for job status check"""
+    job_id: str
+    status: Literal["pending", "processing", "completed", "failed"]
+    progress: Optional[float] = None  # 0.0 to 1.0
+    message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    estimated_remaining_seconds: Optional[int] = None
+
+
+class JobResultResponse(BaseModel):
+    """Response containing job result"""
+    job_id: str
+    status: Literal["completed", "failed"]
+    result: Optional[MultiAgentResponse] = None
+    error: Optional[str] = None
+    created_at: datetime
+    completed_at: Optional[datetime] = None

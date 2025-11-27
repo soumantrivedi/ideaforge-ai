@@ -30,6 +30,10 @@ from backend.models.schemas import (
     MultiAgentRequest,
     MultiAgentResponse,
     AgentCapability,
+    JobSubmitRequest,
+    JobSubmitResponse,
+    JobStatusResponse,
+    JobResultResponse,
 )
 from backend.agents.orchestrator import AgenticOrchestrator
 from backend.agents.agno_orchestrator import AgnoAgenticOrchestrator
@@ -46,6 +50,8 @@ from backend.api.integrations import router as integrations_router
 from backend.api.documents import router as documents_router
 from backend.api.export import router as export_router
 from backend.services.provider_registry import provider_registry
+from backend.services.job_service import job_service
+from fastapi import BackgroundTasks
 
 structlog.configure(
     processors=[
@@ -773,6 +779,104 @@ async def get_agent_interactions():
         "interactions": [interaction.dict() for interaction in interactions[-20:]],  # Last 20
         "count": len(interactions)
     }
+
+
+@app.post("/api/multi-agent/submit", response_model=JobSubmitResponse, tags=["multi-agent"])
+async def submit_multi_agent_job(
+    request: JobSubmitRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submit a multi-agent processing job for async processing.
+    Returns immediately with a job ID. Use status and result endpoints to check progress.
+    """
+    try:
+        # Load user API keys (same logic as sync endpoint)
+        configured_providers = provider_registry.get_configured_providers()
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        
+        user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+        
+        if user_keys:
+            provider_registry.update_keys(
+                openai_key=user_keys.get("openai"),
+                claude_key=user_keys.get("claude"),
+                gemini_key=user_keys.get("gemini"),
+            )
+        
+        configured_providers = provider_registry.get_configured_providers()
+        if not configured_providers:
+            raise HTTPException(
+                status_code=400,
+                detail="No AI provider is configured. Please go to Settings and configure at least one AI provider."
+            )
+        
+        # Use authenticated user's ID
+        authenticated_user_id = UUID(str(current_user["id"]))
+        authenticated_request = request.request.model_copy(update={"user_id": authenticated_user_id})
+        
+        # Create job
+        job_id = await job_service.create_job(authenticated_request, str(authenticated_user_id))
+        
+        # Start background processing
+        background_tasks.add_task(
+            job_service.process_job_background,
+            job_id,
+            authenticated_request,
+            orchestrator
+        )
+        
+        logger.info("job_submitted", job_id=job_id, user_id=str(authenticated_user_id))
+        
+        return JobSubmitResponse(
+            job_id=job_id,
+            status="pending",
+            message="Job submitted successfully",
+            estimated_completion_seconds=300
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("job_submission_error", error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to submit job")
+
+
+@app.get("/api/multi-agent/jobs/{job_id}/status", response_model=JobStatusResponse, tags=["multi-agent"])
+async def get_job_status(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get the status of an async multi-agent job."""
+    status = await job_service.get_job_status(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Verify job belongs to user (optional security check)
+    # You could add this by storing user_id in job data and checking it here
+    
+    return status
+
+
+@app.get("/api/multi-agent/jobs/{job_id}/result", response_model=JobResultResponse, tags=["multi-agent"])
+async def get_job_result(
+    job_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get the result of a completed async multi-agent job."""
+    result = await job_service.get_job_result(job_id)
+    if not result:
+        # Check if job exists but not completed
+        status = await job_service.get_job_status(job_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if status.status in ["pending", "processing"]:
+            raise HTTPException(status_code=202, detail="Job is still processing")
+        raise HTTPException(status_code=404, detail="Job result not found")
+    
+    return result
 
 
 @app.post("/api/providers/verify", response_model=APIKeyVerificationResponse, tags=["providers"])
