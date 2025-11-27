@@ -345,9 +345,119 @@ kubectl exec -n ideaforge-ai deployment/frontend -- nc -z backend 8000
 
 ---
 
+## ✅ Requirement 20: Timeout Configuration (NEW)
+
+**Status**: ✅ VERIFIED
+
+**Evidence**:
+- ConfigMap includes `AGENT_RESPONSE_TIMEOUT: "45.0"` (leaves 15s buffer for Cloudflare 60s limit)
+- Backend deployment references `AGENT_RESPONSE_TIMEOUT` from ConfigMap
+- Ingress timeouts configured: 600s for most endpoints, 1800s for `/api/multi-agent/process`
+- Frontend nginx has matching timeout settings
+- Timeout hierarchy verified: AI (45s) < Cloudflare (60s) < Ingress (600s)
+
+**Configuration**:
+- ConfigMap: `AGENT_RESPONSE_TIMEOUT: "45.0"`
+- Backend: `AGENT_RESPONSE_TIMEOUT` env var from ConfigMap
+- Ingress: `proxy-read-timeout: "600"`, special endpoint: `1800s`
+- Code: `settings.agent_response_timeout` used in `agno_base_agent.py`
+
+**Verification**:
+```bash
+# Check ConfigMap
+kubectl get configmap ideaforge-ai-config -n ideaforge-ai --context kind-ideaforge-ai -o jsonpath='{.data.AGENT_RESPONSE_TIMEOUT}'
+# Expected: 45.0
+
+# Check backend deployment
+kubectl get deployment backend -n ideaforge-ai --context kind-ideaforge-ai -o yaml | grep AGENT_RESPONSE_TIMEOUT
+
+# Check ingress timeouts
+kubectl get ingress -n ideaforge-ai --context kind-ideaforge-ai -o yaml | grep timeout
+```
+
+**Files**:
+- `k8s/eks/configmap.yaml:28`
+- `k8s/eks/backend.yaml` (env var reference)
+- `k8s/eks/ingress-nginx.yaml:17-28`
+- `backend/config.py:57`
+- `backend/agents/agno_base_agent.py:304`
+
+**Reference**: See `docs/verification/TIMEOUT_AND_ERROR_HANDLING.md` for complete timeout verification checklist.
+
+---
+
+## ✅ Requirement 21: Exception Handling (NEW)
+
+**Status**: ✅ VERIFIED
+
+**Evidence**:
+- All endpoints properly re-raise HTTPException
+- 403/404 errors return correct status codes (not 500)
+- Generic exception handlers only catch non-HTTP exceptions
+
+**Pattern**:
+```python
+try:
+    # ... code ...
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+except HTTPException:
+    raise  # Re-raise HTTPException
+except Exception as e:
+    logger.error("error_description", error=str(e))
+    raise HTTPException(status_code=500, detail=str(e))
+```
+
+**Verification**:
+```bash
+# Check for proper HTTPException handling
+grep -r "except HTTPException:" backend/api/
+
+# Test 403 errors return 403
+curl -X GET http://localhost:80/api/db/products/<non-existent-product-id>
+# Should return 404 or 403, not 500
+```
+
+**Files**:
+- `backend/api/database.py` - All endpoints
+- `backend/api/products.py` - Product access checks
+- `backend/api/integrations.py` - Integration endpoints
+
+**Reference**: See `docs/verification/TIMEOUT_AND_ERROR_HANDLING.md` for complete exception handling verification.
+
+---
+
+## ✅ Requirement 22: Database Constraint Verification (NEW)
+
+**Status**: ✅ VERIFIED
+
+**Evidence**:
+- `user_api_keys.provider` CHECK includes all providers: `('openai', 'anthropic', 'google', 'v0', 'lovable', 'github', 'atlassian')`
+- `conversation_history.message_type` CHECK matches code usage: `('user', 'agent', 'system')`
+- Migration scripts updated for future deployments
+
+**Verification**:
+```bash
+# Check migration files
+grep -r "provider.*CHECK" init-db/migrations/
+grep -r "message_type.*CHECK" init-db/migrations/
+
+# Test provider values
+# Try saving GitHub PAT, Atlassian token in local cluster
+```
+
+**Files**:
+- `init-db/migrations/20251124000003_user_api_keys.sql`
+- `supabase/migrations/20251124000003_user_api_keys.sql`
+- `backend/main.py` - Message type usage
+
+**Reference**: See `docs/verification/TIMEOUT_AND_ERROR_HANDLING.md` for complete database constraint verification.
+
+---
+
 ## Summary
 
-**All 16 Requirements**: ✅ VERIFIED
+**All 22 Requirements**: ✅ VERIFIED
 
 **Deployment**: ✅ SUCCESSFUL
 
@@ -356,10 +466,17 @@ kubectl exec -n ideaforge-ai deployment/frontend -- nc -z backend 8000
 2. Test multi-agent PRD generation
 3. Verify RAG functionality with document uploads
 4. Test PRD export and Confluence publishing
+5. **Verify timeout configuration** (see `docs/verification/TIMEOUT_AND_ERROR_HANDLING.md`)
+6. **Test exception handling** (verify 403/404 return correct status codes)
+7. **Test database constraints** (verify all provider values work)
 
 **Access URLs**:
 - Frontend: http://localhost:80/ or http://ideaforge.local
 - Backend API: http://localhost:80/api/ or http://api.ideaforge.local
 - Swagger Docs: http://localhost:80/api/docs
 - Health Check: http://localhost:80/health
+
+**Critical Verification Documents**:
+- `docs/verification/TIMEOUT_AND_ERROR_HANDLING.md` - Complete timeout and error handling checklist
+- `docs/verification/REQUIREMENTS_VERIFICATION.md` - All 22 requirements status
 

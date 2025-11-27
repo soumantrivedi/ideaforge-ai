@@ -25,7 +25,7 @@ data:
   AGENT_MODEL_PRIMARY: "gpt-5.1"  # GPT-5.1: Best for product requirements, ideation, reasoning, discovery (or gpt-5 as fallback)
   AGENT_MODEL_SECONDARY: "claude-sonnet-4-20250522"  # Claude 4 Sonnet: Advanced reasoning and ideation
   AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
-  AGENT_RESPONSE_TIMEOUT: "50.0"  # Timeout in seconds (50s to avoid Cloudflare 60s timeout)
+  AGENT_RESPONSE_TIMEOUT: "45.0"  # Timeout in seconds (45s to avoid Cloudflare 60s timeout, leaving 15s buffer for network/processing overhead)
   
   # Frontend Configuration
   # Use relative path /api so frontend nginx proxies to backend service internally

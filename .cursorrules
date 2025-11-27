@@ -59,11 +59,15 @@ timeout=30; elapsed=0; while ! docker info > /dev/null 2>&1 && [ $elapsed -lt $t
 3. **Check for old replicasets**: `kubectl get replicasets -n ideaforge-ai --context kind-ideaforge-ai | grep "0.*0.*0"` (delete any with 0 desired/current)
 4. **Verify image tags**: `kubectl get deployments -n ideaforge-ai --context kind-ideaforge-ai -o jsonpath='{.items[*].spec.template.spec.containers[*].image}'` (must match current git SHA)
 5. **Check dockerconfig secrets**: `kubectl get secrets -n ideaforge-ai --context kind-ideaforge-ai | grep dockerconfig` (must exist if using private registry)
-6. All 19 requirements verified
-7. Documentation updated (if needed)
-8. Mermaid diagrams updated (if architecture changed)
-9. Agent list documented (if agents added/modified)
-10. Integration examples provided (if new integrations)
+6. **Verify timeout configuration**: Check ConfigMap has `AGENT_RESPONSE_TIMEOUT`, backend.yaml references it
+7. **Verify exception handling**: All endpoints properly re-raise HTTPException
+8. **Verify database constraints**: CHECK constraints match code usage (provider values, message types)
+9. **Verify product access checks**: Access control logic matches database schema
+10. All 19 requirements verified
+11. Documentation updated (if needed)
+12. Mermaid diagrams updated (if architecture changed)
+13. Agent list documented (if agents added/modified)
+14. Integration examples provided (if new integrations)
 
 ## Key Requirements Summary
 
@@ -116,6 +120,77 @@ timeout=30; elapsed=0; while ! docker info > /dev/null 2>&1 && [ $elapsed -lt $t
 3. Update API documentation
 4. Update verification checklist if new requirement
 
+## Exception Handling Rules
+
+**CRITICAL:** Always properly handle HTTPException to avoid 500 errors for legitimate 403/404 responses.
+
+### Pattern to Follow:
+```python
+try:
+    # ... code that may raise HTTPException ...
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Access denied")
+except HTTPException:
+    # Re-raise HTTPException - don't convert to 500
+    raise
+except Exception as e:
+    # Only catch non-HTTP exceptions for 500 errors
+    logger.error("error_description", error=str(e))
+    raise HTTPException(status_code=500, detail=str(e))
+```
+
+### Common Mistakes to Avoid:
+1. ❌ Catching HTTPException and converting to 500
+2. ❌ Using generic `except Exception` that catches HTTPException
+3. ❌ Not re-raising HTTPException before generic exception handler
+
+### Files to Check:
+- `backend/api/database.py` - All database endpoints
+- `backend/api/products.py` - Product access checks
+- `backend/api/integrations.py` - Integration endpoints
+- Any endpoint with access control logic
+
+## Database Constraint Rules
+
+**CRITICAL:** Database CHECK constraints must match code usage.
+
+### Common Issues:
+1. **Provider constraints**: `user_api_keys.provider` CHECK must include all providers used in code
+   - Current: `('openai', 'anthropic', 'google', 'v0', 'lovable', 'github', 'atlassian')`
+   - Verify: Code uses same provider values
+2. **Message type constraints**: `conversation_history.message_type` CHECK must match code
+   - Current: `('user', 'agent', 'system')` (or include 'assistant' if needed)
+   - Verify: Code uses 'agent' not 'assistant' for agent messages
+3. **Migration scripts**: All migrations must update constraints for future deployments
+
+### Verification:
+1. Check migration files: `init-db/migrations/*.sql`
+2. Check Supabase migrations: `supabase/migrations/*.sql`
+3. Verify code uses constraint values exactly as defined
+4. Test in local kind cluster before EKS deployment
+
+## Product Access Rules
+
+**CRITICAL:** Product access checks must be consistent across endpoints.
+
+### Access Check Pattern:
+1. Verify product exists
+2. Verify user is owner OR product is shared with user
+3. Verify tenant matches (for multi-tenant)
+4. Raise 403 with clear message if access denied
+
+### Common Issues:
+1. **Inconsistent checks**: GET allows 'view' permission, POST requires 'edit' permission
+2. **Missing tenant check**: Cross-tenant access not prevented
+3. **Product sharing**: Product not shared but user can view (inconsistent)
+
+### Verification:
+1. Test with product owner
+2. Test with shared user (view permission)
+3. Test with shared user (edit permission)
+4. Test with non-shared user (should get 403)
+5. Test cross-tenant access (should get 403)
+
 ## Testing Rules
 
 ### After Agent Changes:
@@ -124,6 +199,13 @@ timeout=30; elapsed=0; while ! docker info > /dev/null 2>&1 && [ $elapsed -lt $t
 3. Test all coordination modes
 4. Test automatic agent selection
 5. Verify RAG support if applicable
+
+### After Code Changes:
+1. **Test exception handling**: Verify 403/404 return correct status codes
+2. **Test database constraints**: Verify all provider values work
+3. **Test product access**: Verify access control works correctly
+4. **Test timeout behavior**: Verify AI timeout < Cloudflare timeout
+5. **Test ConfigMap changes**: Verify config changes work without rebuild
 
 ### After Deployment:
 1. **Complete refresh verification** (for major changes):
@@ -148,6 +230,45 @@ timeout=30; elapsed=0; while ! docker info > /dev/null 2>&1 && [ $elapsed -lt $t
 3. **Service names** - All inter-service communication via K8s DNS
 4. **Runtime config** - VITE_API_URL injected at runtime
 5. **Error handling** - Proper error messages with guidance
+6. **Exception handling** - Always re-raise HTTPException, don't convert to 500
+7. **Database constraints** - Verify CHECK constraints match code usage
+8. **Product access** - Verify product sharing/permissions before operations
+
+## Timeout Configuration Rules
+
+**CRITICAL:** All timeouts must be configured via ConfigMap to avoid rebuilds.
+
+### AI Provider Timeout:
+1. **ConfigMap-driven**: `AGENT_RESPONSE_TIMEOUT` must be in ConfigMap
+2. **Backend deployment**: Must reference `AGENT_RESPONSE_TIMEOUT` from ConfigMap
+3. **Default value**: 45 seconds (leaves 15s buffer for Cloudflare 60s limit)
+4. **Cloudflare consideration**: AI timeout must be < 60s to avoid Cloudflare 504 errors
+5. **Verification**: Check `kubectl get configmap ideaforge-ai-config -o yaml | grep AGENT_RESPONSE_TIMEOUT`
+
+### Ingress/NGINX Timeouts:
+1. **Proxy timeouts**: Must be > AI timeout + network overhead
+2. **Cloudflare timeout**: 60 seconds (hard limit, cannot be changed without admin)
+3. **Ingress annotations**: 
+   - `proxy-read-timeout`: 600s (for long operations)
+   - `proxy-send-timeout`: 600s
+   - Special endpoint `/api/multi-agent/process`: 1800s
+4. **Frontend nginx**: Must match ingress timeouts for `/api` location
+5. **Verification**: Check `k8s/eks/ingress-nginx.yaml` and `nginx.conf`
+
+### Timeout Hierarchy (must be enforced):
+```
+Cloudflare: 60s (hard limit)
+  └─ AI Provider: 45s (ConfigMap: AGENT_RESPONSE_TIMEOUT)
+      └─ Ingress: 600s (for most endpoints)
+          └─ Special endpoint: 1800s (for /api/multi-agent/process)
+```
+
+### Before Deployment:
+1. ✅ Verify `AGENT_RESPONSE_TIMEOUT` in ConfigMap
+2. ✅ Verify backend.yaml references ConfigMap timeout
+3. ✅ Verify ingress timeouts > AI timeout
+4. ✅ Verify Cloudflare timeout awareness (60s limit)
+5. ✅ Test timeout behavior in local kind cluster
 
 ## Multi-Agent Coordination Rules
 
@@ -170,6 +291,7 @@ timeout=30; elapsed=0; while ! docker info > /dev/null 2>&1 && [ $elapsed -lt $t
 **Reference Files:**
 - `.cursor/VERIFICATION_CHECKLIST.md` - Complete verification checklist
 - `docs/verification/REQUIREMENTS_VERIFICATION.md` - Requirements status
+- `docs/verification/TIMEOUT_AND_ERROR_HANDLING.md` - **CRITICAL: Timeout and error handling checklist**
 - `docs/architecture/04-multi-agent-orchestration.md` - Orchestration details
 - `docs/verification/ATLASSIAN_AGENT_INTEGRATION.md` - Atlassian integration
 

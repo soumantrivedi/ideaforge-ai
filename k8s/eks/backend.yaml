@@ -109,6 +109,11 @@ spec:
             configMapKeyRef:
               name: ideaforge-ai-config
               key: AGENT_MODEL_TERTIARY
+        - name: AGENT_RESPONSE_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AGENT_RESPONSE_TIMEOUT
         # Okta Configuration
         - name: OKTA_CLIENT_ID
           valueFrom:
