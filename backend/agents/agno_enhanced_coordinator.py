@@ -161,34 +161,48 @@ class AgnoEnhancedCoordinator:
             enhanced_query = self._enhance_query_with_context(query, context)
             
             # Process with enhanced coordination using agent consultation
-            # Start with RAG agent for context
+            # Start with RAG agent for context (must be first as others depend on it)
             rag_response = await self.rag_agent.process(
                 [AgentMessage(role="user", content=enhanced_query, timestamp=datetime.utcnow())],
                 context
             )
             
-            # Then research agent
-            research_query = f"{enhanced_query}\n\nKnowledge Base Context:\n{rag_response.response}"
-            research_response = await self.research_agent.process(
-                [AgentMessage(role="user", content=research_query, timestamp=datetime.utcnow())],
+            # Run research, analysis, and ideation agents in parallel after RAG
+            # They can work concurrently since they all use RAG context
+            import asyncio
+            research_task = self.research_agent.process(
+                [AgentMessage(role="user", content=f"{enhanced_query}\n\nKnowledge Base Context:\n{rag_response.response}", timestamp=datetime.utcnow())],
+                context
+            )
+            analysis_task = self.analysis_agent.process(
+                [AgentMessage(role="user", content=f"{enhanced_query}\n\nKnowledge Base Context:\n{rag_response.response}", timestamp=datetime.utcnow())],
+                context
+            )
+            ideation_task = self.ideation_agent.process(
+                [AgentMessage(role="user", content=f"{enhanced_query}\n\nKnowledge Base Context:\n{rag_response.response}", timestamp=datetime.utcnow())],
                 context
             )
             
-            # Then analysis agent
-            analysis_query = f"{enhanced_query}\n\nResearch Context:\n{research_response.response}"
-            analysis_response = await self.analysis_agent.process(
-                [AgentMessage(role="user", content=analysis_query, timestamp=datetime.utcnow())],
-                context
+            # Wait for all parallel agents to complete
+            research_response, analysis_response, ideation_response = await asyncio.gather(
+                research_task,
+                analysis_task,
+                ideation_task,
+                return_exceptions=True
             )
             
-            # Then ideation agent
-            ideation_query = f"{enhanced_query}\n\nAnalysis Context:\n{analysis_response.response}"
-            ideation_response = await self.ideation_agent.process(
-                [AgentMessage(role="user", content=ideation_query, timestamp=datetime.utcnow())],
-                context
-            )
+            # Handle exceptions from parallel execution
+            if isinstance(research_response, Exception):
+                self.logger.error("research_agent_failed", error=str(research_response))
+                research_response = AgentResponse(agent_type="research", response="Research agent failed", timestamp=datetime.utcnow())
+            if isinstance(analysis_response, Exception):
+                self.logger.error("analysis_agent_failed", error=str(analysis_response))
+                analysis_response = AgentResponse(agent_type="analysis", response="Analysis agent failed", timestamp=datetime.utcnow())
+            if isinstance(ideation_response, Exception):
+                self.logger.error("ideation_agent_failed", error=str(ideation_response))
+                ideation_response = AgentResponse(agent_type="ideation", response="Ideation agent failed", timestamp=datetime.utcnow())
             
-            # Finally PRD agent with all context
+            # Finally PRD agent with all context (runs after parallel agents complete)
             prd_query = f"{enhanced_query}\n\nFull Context:\nKnowledge: {rag_response.response}\nResearch: {research_response.response}\nAnalysis: {analysis_response.response}\nIdeation: {ideation_response.response}"
             prd_response = await self.prd_agent.process(
                 [AgentMessage(role="user", content=prd_query, timestamp=datetime.utcnow())],
