@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, ConfigDict
 from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from uuid import UUID
@@ -190,6 +190,8 @@ class JobSubmitResponse(BaseModel):
 
 class JobStatusResponse(BaseModel):
     """Response for job status check"""
+    model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat() if v else None})
+    
     job_id: str
     status: Literal["pending", "processing", "completed", "failed"]
     progress: Optional[float] = None  # 0.0 to 1.0
@@ -201,11 +203,15 @@ class JobStatusResponse(BaseModel):
     @field_serializer('created_at', 'updated_at')
     def serialize_datetime(self, value: datetime, _info):
         """Serialize datetime to ISO format string"""
-        return value.isoformat() if value else None
+        if value is None:
+            return None
+        return value.isoformat()
 
 
 class JobResultResponse(BaseModel):
     """Response containing job result"""
+    model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat() if v else None})
+    
     job_id: str
     status: Literal["completed", "failed"]
     result: Optional[MultiAgentResponse] = None
@@ -216,4 +222,6 @@ class JobResultResponse(BaseModel):
     @field_serializer('created_at', 'completed_at')
     def serialize_datetime(self, value: datetime, _info):
         """Serialize datetime to ISO format string"""
-        return value.isoformat() if value else None
+        if value is None:
+            return None
+        return value.isoformat()

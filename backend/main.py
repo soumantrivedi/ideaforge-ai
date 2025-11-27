@@ -1,4 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -8,6 +10,7 @@ from datetime import datetime
 from typing import Literal, Optional
 from uuid import UUID
 import structlog
+import json
 
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -857,7 +860,8 @@ async def get_job_status(
     # Verify job belongs to user (optional security check)
     # You could add this by storing user_id in job data and checking it here
     
-    return status
+    # Use model_dump with mode='json' to ensure proper datetime serialization
+    return JSONResponse(content=status.model_dump(mode='json'))
 
 
 @app.get("/api/multi-agent/jobs/{job_id}/result", response_model=JobResultResponse, tags=["multi-agent"])
@@ -876,7 +880,8 @@ async def get_job_result(
             raise HTTPException(status_code=202, detail="Job is still processing")
         raise HTTPException(status_code=404, detail="Job result not found")
     
-    return result
+    # Use model_dump with mode='json' to ensure proper datetime serialization
+    return JSONResponse(content=result.model_dump(mode='json'))
 
 
 @app.post("/api/providers/verify", response_model=APIKeyVerificationResponse, tags=["providers"])
