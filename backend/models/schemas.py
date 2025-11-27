@@ -134,12 +134,21 @@ class HealthCheckResponse(BaseModel):
 
 class AgentInteraction(BaseModel):
     """Represents interaction between agents"""
+    model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat() if v else None})
+    
     from_agent: str
     to_agent: str
     query: str
     response: str
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     metadata: Optional[Dict[str, Any]] = None
+    
+    @field_serializer('timestamp')
+    def serialize_timestamp(self, value: datetime, _info):
+        """Serialize timestamp to ISO format string"""
+        if value is None:
+            return None
+        return value.isoformat()
 
 
 class MultiAgentRequest(BaseModel):
@@ -155,12 +164,21 @@ class MultiAgentRequest(BaseModel):
 
 class MultiAgentResponse(BaseModel):
     """Response from multi-agent coordination"""
+    model_config = ConfigDict(json_encoders={datetime: lambda v: v.isoformat() if v else None})
+    
     primary_agent: str
     response: str
     agent_interactions: List[AgentInteraction] = []
     coordination_mode: str
     metadata: Optional[Dict[str, Any]] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
+    
+    @field_serializer('timestamp')
+    def serialize_timestamp(self, value: datetime, _info):
+        """Serialize timestamp to ISO format string"""
+        if value is None:
+            return None
+        return value.isoformat()
 
 
 class AgentCapability(BaseModel):

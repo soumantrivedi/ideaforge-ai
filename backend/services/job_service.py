@@ -210,10 +210,31 @@ class JobService:
         
         status = "completed" if result else "failed"
         
+        # Serialize result with mode='json' to ensure datetime objects are converted to strings
+        result_dict = None
+        if result:
+            try:
+                # Use model_dump with mode='json' to serialize datetime objects properly
+                result_dict = result.model_dump(mode='json')
+            except Exception as e:
+                # Fallback: convert to dict and manually serialize datetime objects
+                logger.warning("job_result_serialization_fallback", job_id=job_id, error=str(e))
+                result_dict = result.model_dump()
+                # Recursively convert datetime objects to ISO strings
+                def serialize_datetime(obj):
+                    if isinstance(obj, datetime):
+                        return obj.isoformat()
+                    elif isinstance(obj, dict):
+                        return {k: serialize_datetime(v) for k, v in obj.items()}
+                    elif isinstance(obj, list):
+                        return [serialize_datetime(item) for item in obj]
+                    return obj
+                result_dict = serialize_datetime(result_dict)
+        
         result_data = {
             "job_id": job_id,
             "status": status,
-            "result": result.model_dump() if result else None,
+            "result": result_dict,
             "error": error,
             "created_at": created_at,
             "completed_at": datetime.utcnow().isoformat()
