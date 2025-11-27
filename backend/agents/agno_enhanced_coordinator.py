@@ -376,75 +376,94 @@ class AgnoEnhancedCoordinator:
         
         return context
     
-    def _enhance_query_with_context(self, query: str, context: Dict[str, Any]) -> str:
-        """Enhance query with comprehensive context including conversation history."""
+    def _build_system_content(self, context: Dict[str, Any]) -> str:
+        """Build system content from context - separate from user prompt for better structure."""
         import json
         
-        enhanced = f"""User Query: {query}
-
-COMPREHENSIVE CONTEXT:
-"""
+        system_parts = []
         
+        # Product context
         if context.get("product_id"):
-            enhanced += f"\nProduct ID: {context['product_id']}\n"
+            system_parts.append(f"Product ID: {context['product_id']}")
+        
+        if context.get("phase_id"):
+            system_parts.append(f"Phase ID: {context['phase_id']}")
+        
+        if context.get("phase_name"):
+            system_parts.append(f"Phase: {context['phase_name']}")
         
         if context.get("session_ids"):
-            enhanced += f"\nRelevant Sessions: {', '.join(context['session_ids'])}\n"
-            enhanced += "Note: Include insights from these sessions in your response.\n"
+            system_parts.append(f"Relevant Sessions: {', '.join(context['session_ids'])}")
         
-        # Include conversation history and ideation from chatbot
+        # Conversation history - structured for system context
         if context.get("conversation_history"):
-            enhanced += "\n=== CONVERSATION HISTORY (Multi-Agent Memory) ===\n"
-            enhanced += "All previous chatbot interactions for this product:\n"
-            for msg in context["conversation_history"][-20:]:  # Last 20 messages
+            system_parts.append("\n=== CONVERSATION HISTORY ===")
+            for msg in context["conversation_history"][-15:]:  # Last 15 messages (reduced from 20)
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
                 agent_name = msg.get("agent_name", "")
                 if content:
                     agent_label = f" ({agent_name})" if agent_name else ""
-                    enhanced += f"\n{role.upper()}{agent_label}: {content[:500]}\n"
-            enhanced += "\n"
+                    system_parts.append(f"{role.upper()}{agent_label}: {content[:400]}")  # Reduced from 500
         
+        # Ideation from chat
         if context.get("ideation_from_chat"):
-            enhanced += "\n=== IDEATION FROM CHATBOT ===\n"
-            enhanced += "Relevant ideation and product concepts from previous conversations:\n"
-            enhanced += context["ideation_from_chat"][:2000] + "\n\n"
+            system_parts.append("\n=== IDEATION FROM CHATBOT ===")
+            system_parts.append(context["ideation_from_chat"][:1500])  # Reduced from 2000
         
-        if context.get("user_inputs"):
-            enhanced += "\n=== USER INPUTS SUMMARY ===\n"
-            enhanced += f"Total user inputs: {len(context['user_inputs'])}\n"
-            enhanced += "Recent user inputs:\n"
-            for user_input in context["user_inputs"][-5:]:  # Last 5 user inputs
-                enhanced += f"- {user_input[:200]}\n"
-            enhanced += "\n"
+        # Form data context
+        if context.get("form_data"):
+            system_parts.append("\n=== FORM DATA ===")
+            form_summary = "\n".join([f"{k.replace('_', ' ').title()}: {v[:200]}" for k, v in context["form_data"].items()])
+            system_parts.append(form_summary)
         
+        # Knowledge base
         if context.get("knowledge_base"):
-            enhanced += "\n=== RELEVANT KNOWLEDGE FROM KNOWLEDGE BASE ===\n"
-            for kb_item in context["knowledge_base"][:5]:  # Top 5
-                enhanced += f"- {kb_item.get('content', '')[:200]}...\n"
+            system_parts.append("\n=== KNOWLEDGE BASE ===")
+            for kb_item in context["knowledge_base"][:5]:
+                kb_content = kb_item.get('content', '')[:300]  # Reduced from 200
+                system_parts.append(f"- {kb_content}")
         
+        # Shared context
         if context.get("shared_context"):
             shared = context["shared_context"]
             if shared.get("last_query") or shared.get("last_response"):
-                enhanced += "\n=== PREVIOUS INTERACTIONS ===\n"
+                system_parts.append("\n=== PREVIOUS INTERACTIONS ===")
                 if shared.get("last_query"):
-                    enhanced += f"Last Query: {shared['last_query'][:200]}\n"
+                    system_parts.append(f"Last Query: {shared['last_query'][:150]}")
                 if shared.get("last_response"):
-                    enhanced += f"Last Response: {shared['last_response'][:200]}\n"
+                    system_parts.append(f"Last Response: {shared['last_response'][:150]}")
         
-        if context.get("user_context"):
-            enhanced += "\n=== ADDITIONAL USER CONTEXT ===\n"
-            enhanced += json.dumps(context["user_context"], indent=2) + "\n"
+        return "\n".join(system_parts)
+    
+    def _enhance_query_with_context(self, query: str, context: Dict[str, Any]) -> str:
+        """Enhance query with context - optimized structure using system/user prompt separation.
         
-        enhanced += """
+        Instead of putting everything in user prompt, we structure it as:
+        - System Content: Context, history, knowledge base
+        - User Prompt: Clean, focused query
+        
+        This allows the AI to better understand context vs. the actual request.
+        """
+        # Build system content separately
+        system_content = self._build_system_content(context)
+        
+        # Clean user query - just the actual request
+        user_query = query.strip()
+        
+        # Structure the enhanced query with clear separation
+        enhanced = f"""SYSTEM CONTEXT:
+{system_content}
+
+USER REQUEST:
+{user_query}
+
 INSTRUCTIONS:
-- Use ALL provided context in your response, especially conversation history and ideation
-- Reference specific information from chatbot conversations
-- Synthesize ideation from previous conversations with current query
-- Show how different pieces of information were synthesized
-- Provide a comprehensive, heavily contextualized answer
-- Coordinate with other agents to ensure complete coverage
-- If user provided ideation externally via chatbot, incorporate it into your response
+- Use the SYSTEM CONTEXT above to inform your response
+- Focus on the USER REQUEST as the primary task
+- Synthesize information from conversation history and knowledge base
+- Reference specific context when relevant
+- Provide a comprehensive, well-structured answer
 """
         
         return enhanced

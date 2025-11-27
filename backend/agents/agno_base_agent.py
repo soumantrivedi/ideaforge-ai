@@ -345,25 +345,53 @@ class AgnoBaseAgent(ABC):
             raise
     
     def _format_messages_to_query(self, messages: List[AgentMessage], context: Optional[Dict[str, Any]]) -> str:
-        """Convert AgentMessage list to query string for Agno."""
-        query_parts = []
+        """Convert AgentMessage list to query string for Agno.
         
-        # Add conversation history
-        for msg in messages:
-            role_prefix = "User" if msg.role == "user" else "Assistant"
-            query_parts.append(f"{role_prefix}: {msg.content}")
+        Optimized to separate system content from user prompt for better AI understanding.
+        """
+        # Extract user messages (the actual query)
+        user_messages = [msg.content for msg in messages if msg.role == "user"]
+        user_query = "\n".join(user_messages) if user_messages else ""
         
-        # Add context if provided
+        # Build system content from context
         if context:
-            context_str = "\n\n## Additional Context:\n"
-            for key, value in context.items():
-                if isinstance(value, (dict, list)):
-                    import json
-                    value = json.dumps(value, indent=2)
-                context_str += f"- {key}: {value}\n"
-            query_parts.append(context_str)
+            system_parts = []
+            
+            # Extract key context items
+            if context.get("form_data"):
+                form_summary = "\n".join([f"{k.replace('_', ' ').title()}: {v[:200]}" for k, v in context["form_data"].items()])
+                system_parts.append(f"Form Data:\n{form_summary}")
+            
+            if context.get("phase_name"):
+                system_parts.append(f"Phase: {context['phase_name']}")
+            
+            if context.get("product_id"):
+                system_parts.append(f"Product ID: {context['product_id']}")
+            
+            # Add other context items (excluding form_data, phase_name, product_id to avoid duplication)
+            other_context = {k: v for k, v in context.items() 
+                           if k not in ["form_data", "phase_name", "product_id", "phase_id"]}
+            
+            if other_context:
+                import json
+                for key, value in other_context.items():
+                    if isinstance(value, (dict, list)):
+                        value_str = json.dumps(value, indent=2)[:500]  # Limit size
+                    else:
+                        value_str = str(value)[:500]
+                    system_parts.append(f"{key}: {value_str}")
+            
+            if system_parts:
+                system_content = "\n".join(system_parts)
+                # Structure with clear separation
+                return f"""SYSTEM CONTEXT:
+{system_content}
+
+USER REQUEST:
+{user_query}"""
         
-        return "\n".join(query_parts)
+        # If no context, just return user query
+        return user_query
     
     async def consult_agent(
         self,

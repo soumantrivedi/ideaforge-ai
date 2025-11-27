@@ -24,7 +24,7 @@ export function getJobPollInterval(): number {
 
 /**
  * Get max polling attempts from runtime config or use default
- * Default: 120 attempts (10 minutes at 5s intervals)
+ * Default: 60 attempts (5 minutes at 5s intervals)
  */
 export function getJobMaxPollAttempts(): number {
   if (typeof window !== 'undefined' && '__JOB_MAX_POLL_ATTEMPTS__' in window) {
@@ -34,13 +34,13 @@ export function getJobMaxPollAttempts(): number {
     }
   }
   
-  // Default: 120 attempts (10 minutes at 5s intervals)
-  return 120;
+  // Default: 60 attempts (5 minutes at 5s intervals)
+  return 60;
 }
 
 /**
  * Get job timeout from runtime config or use default
- * Default: 600000ms (10 minutes)
+ * Default: 300000ms (5 minutes)
  */
 export function getJobTimeout(): number {
   if (typeof window !== 'undefined' && '__JOB_TIMEOUT_MS__' in window) {
@@ -50,7 +50,7 @@ export function getJobTimeout(): number {
     }
   }
   
-  // Default: 10 minutes (600000ms)
-  return 600000;
+  // Default: 5 minutes (300000ms)
+  return 300000;
 }
 

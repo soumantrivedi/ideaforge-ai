@@ -271,12 +271,9 @@ export function MainApp() {
         return; // Don't proceed with multi-agent generation
       }
       
-      // Build a comprehensive query for agent processing
-      const formDataSummary = Object.entries(formData)
-        .map(([key, value]) => `${key.replace(/_/g, ' ')}: ${value}`)
-        .join('\n');
-      
-      const query = `Generate comprehensive content for the ${currentPhase.phase_name} phase based on the following information:\n\n${formDataSummary}\n\nPlease provide a detailed, well-structured response that synthesizes this information and adds valuable insights using knowledge from the RAG knowledge base, research findings, and analysis from relevant agents.`;
+      // Build a focused query - context will be passed separately for better structure
+      // The backend will optimize this using system/user prompt separation
+      const query = `Generate comprehensive content for the ${currentPhase.phase_name} phase. Synthesize the provided form data with insights from the knowledge base, research findings, and analysis from relevant agents.`;
       
       // Determine appropriate agents based on phase
       let primaryAgent = 'ideation';
