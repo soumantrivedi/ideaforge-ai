@@ -346,53 +346,57 @@ export function MainApp() {
         }
         
         // Continue with existing logic...
-      
-      // Extract previous questions and answers from form data
-      const previousQuestions: Array<{ question: string; answer: string }> = [];
-      if (currentPhase.required_fields && currentPhase.template_prompts) {
-        currentPhase.required_fields.forEach((field, idx) => {
-          const prompt = currentPhase.template_prompts?.[idx] || field;
-          const answer = formData[field] || '';
-          if (answer) {
-            previousQuestions.push({
-              question: prompt,
-              answer: answer,
-            });
-          }
-        });
-      }
-      
-      // Get submission ID for updating later
-      const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
-      
-      // Show validation modal
-      setValidationData({
-        generatedContent,
-        phaseName: currentPhase.phase_name,
-        formData,
-        previousQuestions,
-        agentInteractions,
-        submissionId: submission?.id,
-      });
-      setValidationModalOpen(true);
-      setLoading(false);
-    } catch (error) {
-      console.error('Error submitting form:', error);
-      setLoading(false);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
-      // Check if error is about missing AI provider
-      if (errorMessage.includes('No AI provider') || errorMessage.includes('configure at least one AI provider')) {
-        const shouldGoToSettings = confirm(
-          `${errorMessage}\n\nWould you like to go to Settings to configure an AI provider now?`
-        );
-        if (shouldGoToSettings) {
-          setView('settings');
+        // Extract previous questions and answers from form data
+        const previousQuestions: Array<{ question: string; answer: string }> = [];
+        if (currentPhase.required_fields && currentPhase.template_prompts) {
+          currentPhase.required_fields.forEach((field, idx) => {
+            const prompt = currentPhase.template_prompts?.[idx] || field;
+            const answer = formData[field] || '';
+            if (answer) {
+              previousQuestions.push({
+                question: prompt,
+                answer: answer,
+              });
+            }
+          });
         }
-        return; // Don't show alert, user chose to go to Settings or dismissed
+        
+        // Get submission ID for updating later
+        const submission = await lifecycleService.getPhaseSubmission(productId, currentPhase.id);
+        
+        // Show validation modal
+        setValidationData({
+          generatedContent,
+          phaseName: currentPhase.phase_name,
+          formData,
+          previousQuestions,
+          agentInteractions,
+          submissionId: submission?.id,
+        });
+        setValidationModalOpen(true);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error submitting form:', error);
+        setLoading(false);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        
+        // Check if error is about missing AI provider
+        if (errorMessage.includes('No AI provider') || errorMessage.includes('configure at least one AI provider')) {
+          const shouldGoToSettings = confirm(
+            `${errorMessage}\n\nWould you like to go to Settings to configure an AI provider now?`
+          );
+          if (shouldGoToSettings) {
+            setView('settings');
+          }
+          return; // Don't show alert, user chose to go to Settings or dismissed
+        }
+        
+        alert(`Failed to process form: ${errorMessage}`);
       }
-      
-      alert(`Failed to process form: ${errorMessage}`);
+    } catch (error) {
+      console.error('Error in handleFormSubmit:', error);
+      setLoading(false);
+      alert(`Failed to submit form: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
