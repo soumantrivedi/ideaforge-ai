@@ -46,13 +46,24 @@ spec:
         volumeMounts:
         - name: redis-storage
           mountPath: /data
+        # Redis configuration for 200+ concurrent users
+        command:
+        - redis-server
+        - --appendonly
+        - "yes"
+        - --appendfsync
+        - everysec
+        - --maxmemory
+        - "1gb"  # Increased from default for token storage
+        - --maxmemory-policy
+        - allkeys-lru  # Evict least recently used keys when memory limit reached
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "100m"
+            memory: "512Mi"  # Increased for token storage
+            cpu: "200m"
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "2Gi"  # Increased limit for peak load
+            cpu: "1000m"
         livenessProbe:
           exec:
             command:

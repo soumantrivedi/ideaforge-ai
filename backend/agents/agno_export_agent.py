@@ -1,6 +1,7 @@
 """
 Export Agent using Agno Framework
 Generates comprehensive PRD documents using all available context
+Includes review and missing content detection
 """
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -25,6 +26,8 @@ Your responsibilities:
    - Previous phase outputs
 3. Create well-structured, industry-standard PRD documents
 4. Ensure completeness and alignment with all collected information
+5. Review content before export and identify missing critical sections
+6. Highlight sections that need to be defined if user chooses to override
 
 ICAgile PRD Structure (Industry Standard):
 
@@ -129,9 +132,108 @@ Your output should:
                 "icagile prd",
                 "synthesis",
                 "comprehensive documentation",
-                "industry standards"
+                "industry standards",
+                "content review",
+                "missing content detection"
             ]
         )
+
+    async def review_content_before_export(
+        self,
+        product_id: str,
+        phase_data: List[Dict[str, Any]],
+        conversation_history: List[Dict[str, Any]],
+        knowledge_base: List[Dict[str, Any]],
+        context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Review content before export and identify missing critical sections.
+        
+        Returns:
+            Dict with:
+            - is_complete: bool
+            - missing_sections: List[str]
+            - recommendations: List[str]
+            - warnings: List[str]
+        """
+        review_prompt = f"""Review the following product content for completeness before PRD export.
+
+**Phase Submissions:**
+{self._format_phase_submissions(phase_data)}
+
+**Conversation History:**
+{self._format_conversation_history(conversation_history[:20])}  # Last 20 messages
+
+**Knowledge Base:**
+{self._format_knowledge_articles(knowledge_base[:10])}  # Top 10 articles
+
+**Review Criteria:**
+1. Check if market research is present (Market Research phase or research in conversation/knowledge base)
+2. Check if user personas are defined
+3. Check if functional requirements are clear
+4. Check if technical architecture is outlined
+5. Check if success metrics are defined
+6. Check if go-to-market strategy is present
+
+**Required Sections for Complete PRD:**
+- Market Research / Competitive Analysis
+- User Personas
+- Functional Requirements
+- Technical Architecture
+- Success Metrics
+- Go-to-Market Strategy
+
+Respond in JSON format:
+{{
+    "is_complete": true/false,
+    "missing_sections": ["section1", "section2"],
+    "recommendations": ["recommendation1", "recommendation2"],
+    "warnings": ["warning1", "warning2"]
+}}"""
+
+        messages = [
+            AgentMessage(
+                role="user",
+                content=review_prompt,
+                timestamp=datetime.utcnow()
+            )
+        ]
+
+        enhanced_context = {
+            **(context or {}),
+            "task": "content_review",
+            "product_id": product_id
+        }
+
+        response = await self.process(messages, enhanced_context)
+        
+        # Try to parse JSON from response
+        import json
+        import re
+        try:
+            # Extract JSON from response
+            json_match = re.search(r'\{.*\}', response.response, re.DOTALL)
+            if json_match:
+                review_result = json.loads(json_match.group())
+                return review_result
+        except:
+            pass
+        
+        # Fallback: analyze response text
+        missing_sections = []
+        if "market research" not in response.response.lower() and "competitive analysis" not in response.response.lower():
+            missing_sections.append("Market Research")
+        if "user persona" not in response.response.lower():
+            missing_sections.append("User Personas")
+        if "functional requirement" not in response.response.lower():
+            missing_sections.append("Functional Requirements")
+        
+        return {
+            "is_complete": len(missing_sections) == 0,
+            "missing_sections": missing_sections,
+            "recommendations": [f"Consider adding {section}" for section in missing_sections],
+            "warnings": []
+        }
 
     async def generate_comprehensive_prd(
         self,
@@ -140,7 +242,8 @@ Your output should:
         phase_data: List[Dict[str, Any]],
         conversation_history: List[Dict[str, Any]],
         knowledge_base: List[Dict[str, Any]],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        override_missing: bool = False
     ) -> str:
         """
         Generate comprehensive PRD and return as string (markdown).
@@ -152,16 +255,29 @@ Your output should:
             conversation_history: Chatbot conversation history
             knowledge_base: Knowledge base articles
             context: Additional context
+            override_missing: If True, mark missing sections as "To Be Defined"
             
         Returns:
             PRD content as markdown string
         """
+        # Review content first if not overriding
+        if not override_missing:
+            review_result = await self.review_content_before_export(
+                product_id=product_id,
+                phase_data=phase_data,
+                conversation_history=conversation_history,
+                knowledge_base=knowledge_base,
+                context=context
+            )
+            context = context or {}
+            context["review_result"] = review_result
+        
         response = await self.export_prd(
             product_id=product_id,
             phase_submissions=phase_data,
             conversation_history=conversation_history,
             knowledge_articles=knowledge_base,
-            context={**(context or {}), "product_info": product_info}
+            context={**(context or {}), "product_info": product_info, "override_missing": override_missing}
         )
         return response.response
 
@@ -181,8 +297,11 @@ Your output should:
             phase_submissions: All phase submissions with form data
             conversation_history: Chatbot conversation history
             knowledge_articles: Knowledge base articles
-            context: Additional context
+            context: Additional context (may include review_result and override_missing)
         """
+        override_missing = context.get("override_missing", False) if context else False
+        review_result = context.get("review_result") if context else None
+        
         export_prompt = f"""Generate a comprehensive ICAgile-style PRD for Product ID: {product_id}
 
 **Phase Submissions (All Lifecycle Phases):**
@@ -200,9 +319,26 @@ Your output should:
 3. Ensure every section is comprehensive and detailed
 4. Reference specific information from phases, conversations, and knowledge base
 5. Make it actionable for engineering teams
-6. Follow ICAgile standards strictly
+6. Follow ICAgile standards strictly"""
 
-Generate the complete PRD document now."""
+        if override_missing and review_result:
+            missing_sections = review_result.get("missing_sections", [])
+            if missing_sections:
+                export_prompt += f"""
+
+**IMPORTANT - Missing Content Override:**
+The following sections are missing but user has chosen to export anyway.
+For each missing section listed below, include a placeholder section marked as "TO BE DEFINED":
+{', '.join(missing_sections)}
+
+For each missing section, create a section header and include:
+## [Section Name] - TO BE DEFINED
+
+**Status:** This section requires additional input from the user.
+**Next Steps:** [Provide guidance on what information is needed]
+**Related Phases:** [Suggest which lifecycle phases could help fill this section]"""
+
+        export_prompt += "\n\nGenerate the complete PRD document now."
 
         messages = [
             AgentMessage(
@@ -234,6 +370,7 @@ Generate the complete PRD document now."""
         for sub in submissions:
             phase_name = sub.get('phase_name', 'Unknown Phase')
             form_data = sub.get('form_data', {})
+            generated_content = sub.get('generated_content', '')
             status = sub.get('status', 'unknown')
             formatted.append(f"\n### {phase_name} (Status: {status})")
             if form_data:
@@ -241,6 +378,8 @@ Generate the complete PRD document now."""
                     if value and str(value).strip():
                         field_name = key.replace('_', ' ').title()
                         formatted.append(f"- **{field_name}**: {value}")
+            if generated_content:
+                formatted.append(f"\n**Generated Content:**\n{generated_content[:500]}")
         return '\n'.join(formatted)
 
     def _format_conversation_history(self, history: List[Dict[str, Any]]) -> str:
@@ -249,11 +388,13 @@ Generate the complete PRD document now."""
             return "No conversation history available."
         
         formatted = []
-        for msg in history[-50:]:  # Last 50 messages
-            role = msg.get('message_type', 'unknown')
+        for msg in history[-100:]:  # Last 100 messages
+            role = msg.get('message_type', msg.get('role', 'unknown'))
             content = msg.get('content', '')
+            agent_name = msg.get('agent_name', '')
             if content:
-                formatted.append(f"**{role}**: {content[:500]}...")
+                agent_label = f" ({agent_name})" if agent_name else ""
+                formatted.append(f"**{role}{agent_label}**: {content[:1000]}")
         return '\n'.join(formatted)
 
     def _format_knowledge_articles(self, articles: List[Dict[str, Any]]) -> str:
@@ -265,7 +406,7 @@ Generate the complete PRD document now."""
         for article in articles:
             title = article.get('title', 'Untitled')
             content = article.get('content', '')
+            source_type = article.get('source_type', '')
             if content:
-                formatted.append(f"### {title}\n{content[:500]}...")
+                formatted.append(f"### {title} ({source_type})\n{content[:1000]}")
         return '\n'.join(formatted)
-

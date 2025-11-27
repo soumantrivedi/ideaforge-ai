@@ -124,14 +124,66 @@ async def save_api_key(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Save or update an API key for a provider."""
+    """Save or update an API key for a provider. Reinitializes Agno framework if AI provider key is updated."""
     try:
-        return await _save_api_key_internal(
+        result = await _save_api_key_internal(
             request.provider,
             request.api_key,
             current_user["id"],
             db
         )
+        
+        # If this is an AI provider key (openai, anthropic, google), reinitialize Agno framework
+        ai_providers = ['openai', 'anthropic', 'google']
+        if request.provider in ai_providers:
+            try:
+                from backend.services.api_key_loader import load_user_api_keys_from_db
+                from backend.services.provider_registry import provider_registry
+                from backend.main import reinitialize_orchestrator
+                
+                # Load user's API keys and update provider registry
+                user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+                
+                # Map provider names (database uses 'anthropic' and 'google', registry uses 'claude' and 'gemini')
+                provider_mapping = {
+                    'openai': 'openai',
+                    'anthropic': 'claude',
+                    'google': 'gemini'
+                }
+                
+                # Update provider registry with user's keys (user keys override .env keys)
+                # Only update the key that was just saved, others remain unchanged
+                update_params = {}
+                if request.provider == 'openai':
+                    update_params['openai_key'] = user_keys.get("openai")
+                elif request.provider == 'anthropic':
+                    update_params['claude_key'] = user_keys.get("claude")
+                elif request.provider == 'google':
+                    update_params['gemini_key'] = user_keys.get("gemini")
+                
+                provider_registry.update_keys(**update_params)
+                
+                # Reinitialize orchestrator with new keys
+                reinitialize_orchestrator()
+                
+                logger.info(
+                    "agno_reinitialized_after_api_key_update",
+                    provider=request.provider,
+                    user_id=str(current_user["id"]),
+                    has_openai=provider_registry.has_openai_key(),
+                    has_claude=provider_registry.has_claude_key(),
+                    has_gemini=provider_registry.has_gemini_key(),
+                    configured_providers=provider_registry.get_configured_providers()
+                )
+            except Exception as e:
+                logger.warning(
+                    "agno_reinitialization_failed_after_api_key_update",
+                    provider=request.provider,
+                    error=str(e)
+                )
+                # Don't fail the API key save if reinitialization fails
+        
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -146,7 +198,7 @@ async def delete_api_key(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete an API key for a provider."""
+    """Delete an API key for a provider. Reinitializes Agno framework if AI provider key is deleted."""
     try:
         valid_providers = ['openai', 'anthropic', 'google', 'v0', 'lovable']
         if provider not in valid_providers:
@@ -169,6 +221,43 @@ async def delete_api_key(
         
         if not result.fetchone():
             raise HTTPException(status_code=404, detail="API key not found")
+        
+        # If this is an AI provider key, reinitialize Agno framework (will fall back to .env keys)
+        ai_providers = ['openai', 'anthropic', 'google']
+        if provider in ai_providers:
+            try:
+                from backend.services.api_key_loader import load_user_api_keys_from_db
+                from backend.services.provider_registry import provider_registry
+                from backend.main import reinitialize_orchestrator
+                
+                # Load remaining user's API keys
+                user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+                
+                # Update provider registry (deleted key will fall back to .env)
+                provider_registry.update_keys(
+                    openai_key=user_keys.get("openai"),
+                    claude_key=user_keys.get("claude"),
+                    gemini_key=user_keys.get("gemini"),
+                )
+                
+                # Reinitialize orchestrator
+                reinitialize_orchestrator()
+                
+                logger.info(
+                    "agno_reinitialized_after_api_key_deletion",
+                    provider=provider,
+                    user_id=str(current_user["id"]),
+                    has_openai=provider_registry.has_openai_key(),
+                    has_claude=provider_registry.has_claude_key(),
+                    has_gemini=provider_registry.has_gemini_key(),
+                    configured_providers=provider_registry.get_configured_providers()
+                )
+            except Exception as e:
+                logger.warning(
+                    "agno_reinitialization_failed_after_api_key_deletion",
+                    provider=provider,
+                    error=str(e)
+                )
         
         return {"message": "API key deleted successfully"}
     except HTTPException:

@@ -58,8 +58,8 @@ class RegisterRequest(BaseModel):
     tenant_id: Optional[str] = None
 
 
-# Simple token storage (in production, use Redis or JWT)
-active_tokens: dict[str, dict] = {}
+# Token storage using Redis for distributed access across multiple backend pods
+from backend.services.token_storage import get_token_storage
 
 
 def hash_password(password: str) -> str:
@@ -69,12 +69,25 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash."""
+    if not hashed_password:
+        return False
+    
     try:
+        # Convert hashed_password to bytes if it's a string
+        if isinstance(hashed_password, str):
+            hashed_bytes = hashed_password.encode('utf-8')
+        else:
+            hashed_bytes = hashed_password
+        
         # Use bcrypt directly to avoid passlib issues
-        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-    except Exception:
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_bytes)
+    except Exception as e:
         # Fallback to passlib if bcrypt fails
-        return pwd_context.verify(plain_password, hashed_password)
+        try:
+            return pwd_context.verify(plain_password, hashed_password)
+        except Exception:
+            logger.warning("password_verification_failed", error=str(e))
+            return False
 
 
 def generate_token() -> str:
@@ -97,13 +110,15 @@ async def get_current_user(
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
-    # Check token in active_tokens
-    if token not in active_tokens:
+    # Check token in Redis or fallback storage
+    token_storage = await get_token_storage()
+    token_data = await token_storage.get_token(token)
+    
+    if not token_data:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     
-    token_data = active_tokens[token]
     if datetime.utcnow() > datetime.fromisoformat(token_data["expires_at"]):
-        del active_tokens[token]
+        await token_storage.delete_token(token)
         raise HTTPException(status_code=401, detail="Token expired")
     
     # Verify user still exists and is active
@@ -117,7 +132,7 @@ async def get_current_user(
     row = result.fetchone()
     
     if not row:
-        del active_tokens[token]
+        await token_storage.delete_token(token)
         raise HTTPException(status_code=401, detail="User not found or inactive")
     
     return {
@@ -141,9 +156,9 @@ async def login(
         # Get user from database
         query = text("""
             SELECT up.id, up.email, up.full_name, up.password_hash, up.tenant_id, 
-                   up.is_active, t.name as tenant_name
+                   up.is_active, COALESCE(t.name, 'Default') as tenant_name
             FROM user_profiles up
-            JOIN tenants t ON up.tenant_id = t.id
+            LEFT JOIN tenants t ON up.tenant_id = t.id
             WHERE up.email = :email
         """)
         
@@ -166,13 +181,16 @@ async def login(
         token = generate_token()
         expires_at = datetime.utcnow() + timedelta(days=7)
         
-        # Store token
-        active_tokens[token] = {
+        # Store token in Redis or fallback storage
+        token_storage = await get_token_storage()
+        token_data = {
             "user_id": str(user_id),
             "email": email,
             "tenant_id": str(tenant_id),
             "expires_at": expires_at.isoformat(),
         }
+        expires_in_seconds = int((expires_at - datetime.utcnow()).total_seconds())
+        await token_storage.store_token(token, token_data, expires_in_seconds)
         
         # Update last login
         update_query = text("""
@@ -206,8 +224,8 @@ async def login(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("login_error", error=str(e))
-        raise HTTPException(status_code=500, detail="Login failed")
+        logger.error("login_error", error=str(e), error_type=type(e).__name__, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
 
 
 @router.post("/logout")
@@ -223,8 +241,9 @@ async def logout(
     elif session_token:
         token = session_token
     
-    if token and token in active_tokens:
-        del active_tokens[token]
+    if token:
+        token_storage = await get_token_storage()
+        await token_storage.delete_token(token)
     
     response.delete_cookie(key="session_token")
     return {"message": "Logged out successfully"}
@@ -237,13 +256,19 @@ async def get_current_user_info(
 ):
     """Get current user information."""
     try:
-        # Get tenant name
-        query = text("""
-            SELECT name FROM tenants WHERE id = :tenant_id
-        """)
-        result = await db.execute(query, {"tenant_id": current_user["tenant_id"]})
-        row = result.fetchone()
-        tenant_name = row[0] if row else "Unknown"
+        # Get tenant name (handle case where tenant might not exist)
+        tenant_name = "Default Tenant"
+        try:
+            query = text("""
+                SELECT name FROM tenants WHERE id = :tenant_id
+            """)
+            result = await db.execute(query, {"tenant_id": current_user["tenant_id"]})
+            row = result.fetchone()
+            if row:
+                tenant_name = row[0]
+        except Exception:
+            # If tenant table doesn't exist or query fails, use default
+            pass
         
         return UserInfo(
             id=current_user["id"],
@@ -254,6 +279,9 @@ async def get_current_user_info(
             persona=current_user["persona"],
             avatar_url=current_user.get("avatar_url"),
         )
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 401) as-is
+        raise
     except Exception as e:
         logger.error("get_user_info_error", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to get user info")

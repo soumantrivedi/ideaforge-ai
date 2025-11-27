@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, Maximize2, Minimize2, Sparkles } from 'lucide-react';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+
+const API_URL = getValidatedApiUrl();
 
 interface DesignMockup {
   id: string;
@@ -38,7 +41,6 @@ export function DesignMockupGallery({
 
     try {
       setLoading(true);
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
       const providerParam = selectedProvider !== 'all' ? `?provider=${selectedProvider}` : '';
       const response = await fetch(`${API_URL}/api/design/mockups/${productId}${providerParam}`);
       
@@ -84,7 +86,6 @@ export function DesignMockupGallery({
     }
 
     try {
-      const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
       const response = await fetch(`${API_URL}/api/design/mockups/${mockupId}`, {
         method: 'DELETE',
       });

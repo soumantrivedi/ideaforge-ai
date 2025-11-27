@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { Building2, Users, Package, TrendingUp, Filter } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+const API_URL = getValidatedApiUrl();
 
 interface PortfolioItem {
   id: string;

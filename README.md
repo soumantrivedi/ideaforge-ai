@@ -1,166 +1,268 @@
-# IdeaForge AI
+# IdeaForge AI
 
-Multi-agent platform for full-stack product management. Specialized agents collaborate across ideation, research, analysis, validation, PRD authoring, and Jira execution while sharing a unified context, structured workflows, and a modern React/Vite interface.  
+Multi-agent platform for full-stack product management. Specialized agents collaborate across ideation, research, analysis, validation, PRD authoring, and Jira execution while sharing a unified context, structured workflows, and a modern React/Vite interface.
 
 ![Version](https://img.shields.io/badge/version-1.0.0-blue) ![Status](https://img.shields.io/badge/status-active-green)
 
 ---
 
-## Core Capabilities
+## 🚀 Quick Start
 
-- **Multi-agent collaboration** with collaborative/parallel/sequential/debate modes
-- **Agent consultation graph** orchestrated by FastAPI + CoordinatorAgent
-- **Local, persistent Postgres + pgvector** (Supabase dependency removed)
-- **Provider Registry** service for OpenAI, Anthropic Claude, and Google Gemini credentials
-- **In-app key verification** (frontend + `/api/providers/verify`) before saving
-- **RAG knowledge base** (vector search, knowledge articles, lifecycle submissions)
-- **Product-lifecycle workspace** (phases, submissions, conversation history, Jira export)
-- **Model Context Protocol (MCP)** servers for GitHub/Jira/Confluence integrations
-
-For deeper diagrams, see:
-- `docs/01-high-level-architecture.md`
-- `docs/02-detailed-design-architecture.md`
-
----
-
-## Quick Start
-
-### Local Development (Docker Compose)
+### Local Development (Kind Cluster - Preferred)
 
 ```bash
-git clone <repo> ideaforge-ai
-cd ideaforge-ai
+# 1. Setup environment
+cp env.example .env
+cp env.kind.example env.kind
+# Edit env.kind with your configuration
 
-# 1. Prepare env and images
-cp .env.example .env
+# 2. Build and deploy to Kind
+make build-apps
+make kind-deploy
+
+# 3. Check status
+make kind-status
+
+# 4. Access application
+# Frontend: http://localhost:80
+# Backend API: http://localhost:80/api
+```
+
+### Docker Compose (Fallback)
+
+```bash
+# 1. Setup environment
+cp env.example .env
+cp env.docker-compose.example .env
+# Edit .env with your configuration
+
+# 2. Build and start
 make build
-
-# 2. Launch stack (frontend+backend+DB)
 make up
 
-# 3. Watch health
-make health
-
-# 4. Open UI
-open http://localhost:3001
+# 3. Access application
+# Frontend: http://localhost:3001
+# Backend: http://localhost:8000
 ```
 
-### Kubernetes Deployment (EKS)
+### Production (EKS)
 
 ```bash
-# 1. Create namespace (REQUIRED - deployment will NOT create it)
-kubectl create namespace 20890-ideaforge-ai-dev-58a50
+# 1. Setup environment
+cp env.example .env
+cp env.eks.example env.eks
+# Edit env.eks with production configuration
 
-# 2. Configure kubectl for EKS
+# 2. Configure kubectl
 aws eks update-kubeconfig --name ideaforge-ai --region us-east-1
 
-# 3. Deploy with specific image tags
+# 3. Deploy
 make eks-deploy-full \
   EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 \
-  BACKEND_IMAGE_TAG=fab20a2 \
-  FRONTEND_IMAGE_TAG=e1dc1da
+  BACKEND_IMAGE_TAG=<tag> \
+  FRONTEND_IMAGE_TAG=<tag>
 ```
-
-Full walkthrough: `docs/guides/quick-start.md`  
-EKS Deployment Guide: `k8s/EKS_DEPLOYMENT_GUIDE.md`  
-Image Tag Configuration: `k8s/EKS_IMAGE_TAGS.md`
 
 ---
 
-## Provider Configuration & Verification
+## 📚 Documentation
 
-1. Navigate to **Settings** in the UI.
-2. Enter one or more API keys (OpenAI, Claude, Gemini).
-3. Click **Verify Key** per provider — the frontend calls `/api/providers/verify`.
-4. When verified, click **Save Configuration**.  
-   - The frontend stores keys locally for the browser SDKs.  
-   - The backend’s Provider Registry is updated via `/api/providers/configure`, so orchestrator agents pick up the new clients immediately.
+### Architecture
+- [High-Level Architecture](docs/architecture/01-high-level-architecture.md)
+- [Detailed Design Architecture](docs/architecture/02-detailed-design-architecture.md)
+- [Complete Application Guide](docs/architecture/03-complete-application-guide.md)
 
-The backend health endpoint now reports which providers are active:
+### Deployment
+- [Docker Compose Deployment](docs/deployment/DEPLOYMENT_GUIDE.md)
+- [Kind Cluster Deployment](docs/deployment/kind-access.md)
+- [EKS Production Deployment](docs/deployment/eks.md)
+- [EKS Ingress Setup](docs/deployment/eks-ingress.md)
+- [Database Backups](docs/deployment/backups.md)
+
+### Configuration
+- [Environment Variables](docs/configuration/environment-variables.md)
+- [Platform-Specific Configuration](docs/configuration/PLATFORM_ENV_GUIDE.md)
+- [API Keys Setup](docs/configuration/API_KEYS_SETUP.md)
+- [Agno Framework Initialization](docs/configuration/AGNO_INITIALIZATION.md)
+- [AI Model Configuration](docs/AI_MODEL_UPGRADE.md)
+
+### Guides
+- [Quick Start Guide](docs/guides/quick-start.md)
+- [Quick Deploy](docs/guides/quick-deploy.md)
+- [Make Targets Reference](docs/guides/make-targets.md)
+- [Multi-Agent System](docs/guides/multi-agent-system.md)
+- [Multi-Agent Memory](docs/guides/multi-agent-memory.md)
+- [Product Lifecycle](docs/guides/product-lifecycle.md)
+- [Flexible Lifecycle and Export](docs/guides/flexible-lifecycle-and-export.md)
+- [Agno Framework Migration](docs/guides/agno-migration.md)
+
+### Troubleshooting
+- [Common Issues](docs/troubleshooting/common-issues.md)
+- [Cloud-Native API Fix](docs/troubleshooting/CLOUD_NATIVE_API_FIX.md)
+- [Frontend API URL Fix](docs/troubleshooting/FRONTEND_API_URL_FIX.md)
+
+---
+
+## 🛠️ Make Targets
+
+### Build & Development
+
+| Target | Description |
+|--------|-------------|
+| `make build` | Build Docker images with current git SHA |
+| `make build-apps` | Build only backend and frontend images |
+| `make build-no-cache` | Build Docker images without cache |
+| `make up` | Start all services (docker-compose) |
+| `make down` | Stop all services (preserves data) |
+| `make restart` | Restart all services |
+| `make logs SERVICE=backend` | View logs for a service |
+| `make health` | Check health of all services |
+
+### Database
+
+| Target | Description |
+|--------|-------------|
+| `make db-migrate` | Run database migrations |
+| `make db-seed` | Seed database with sample data |
+| `make db-setup` | Run migrations and seed database |
+| `make db-backup` | Backup database to backups/ directory |
+| `make db-restore BACKUP=file.sql` | Restore database from backup |
+| `make db-list-backups` | List available database backups |
+| `make db-shell` | Open PostgreSQL shell |
+
+### Kind Cluster (Local Development)
+
+| Target | Description |
+|--------|-------------|
+| `make kind-create` | Create a local kind cluster |
+| `make kind-delete` | Delete the kind cluster |
+| `make kind-setup-ingress` | Install NGINX ingress controller |
+| `make kind-load-images` | Load Docker images into kind |
+| `make kind-update-images` | Update image references in manifests |
+| `make kind-deploy` | Full deployment to kind (creates cluster, installs ingress, loads images, deploys) |
+| `make kind-status` | Show status of kind cluster deployment |
+| `make kind-test` | Test service-to-service interactions |
+| `make kind-logs` | Show logs from kind cluster |
+| `make kind-port-forward` | Port forward services for local access |
+| `make kind-cleanup` | Clean up deployment (keeps cluster) |
+| `make kind-agno-init` | Initialize Agno framework in kind |
+| `make kind-load-secrets` | Load secrets from .env file |
+
+### EKS Cluster (Production)
+
+| Target | Description |
+|--------|-------------|
+| `make eks-deploy-full` | Full EKS deployment with GHCR setup |
+| `make eks-deploy` | Deploy to EKS cluster |
+| `make eks-status` | Show status of EKS deployment |
+| `make eks-test` | Test service-to-service interactions |
+| `make eks-port-forward` | Port-forward to EKS services |
+| `make eks-setup-ghcr-secret` | Setup GitHub Container Registry secret |
+| `make eks-load-secrets` | Load secrets from .env file |
+| `make eks-agno-init` | Initialize Agno framework in EKS |
+| `make eks-update-db-configmaps` | Update database ConfigMaps |
+| `make eks-add-demo-accounts` | Add demo accounts to database |
+
+### Utilities
+
+| Target | Description |
+|--------|-------------|
+| `make help` | Show all available make targets |
+| `make version` | Show current version information |
+| `make check-errors` | Check for errors in all service logs |
+| `make check-logs` | Show recent logs from all services |
+| `make shell-backend` | Open shell in backend container |
+| `make shell-frontend` | Open shell in frontend container |
+| `make clean-all` | Complete cleanup (backup DB first) |
+| `make rebuild-safe` | Safe rebuild: backup DB, rebuild images, restore if needed |
+
+---
+
+## 🏗️ Project Structure
+
+```
+.
+├── backend/              # FastAPI backend application
+│   ├── agents/          # AI agent implementations
+│   ├── api/             # API endpoints
+│   ├── services/        # Business logic services
+│   └── main.py          # FastAPI app entry point
+├── src/                 # React frontend application
+│   ├── components/      # React components
+│   ├── lib/             # Utility libraries
+│   └── App.tsx          # Main SPA component
+├── k8s/                 # Kubernetes manifests
+│   ├── base/            # Base Kustomize resources
+│   ├── overlays/        # Platform-specific overlays
+│   │   ├── kind/        # Kind cluster overlay
+│   │   └── eks/         # EKS cluster overlay
+│   └── scripts/         # Deployment scripts
+├── docs/                # Documentation
+│   ├── architecture/    # Architecture documentation
+│   ├── deployment/      # Deployment guides
+│   ├── configuration/   # Configuration guides
+│   ├── guides/          # User guides
+│   └── troubleshooting/ # Troubleshooting guides
+├── env.example          # Common environment variables
+├── env.kind.example     # Kind-specific variables
+├── env.eks.example      # EKS-specific variables
+└── env.docker-compose.example  # Docker Compose variables
+```
+
+---
+
+## 🔑 Provider Configuration
+
+1. Navigate to **Settings** in the UI
+2. Enter one or more API keys (OpenAI, Claude, Gemini)
+3. Click **Verify Key** per provider
+4. When verified, click **Save Configuration**
+
+The backend health endpoint reports which providers are active:
 
 ```bash
 curl http://localhost:8000/health | jq '.services'
-# { "api": true, "database": true, "openai": true, "anthropic": false, "google": false, ... }
 ```
 
 ---
 
-## Project Layout
+## 🎯 Core Capabilities
 
-```
-docs/
-├── 01-high-level-architecture.md
-├── 02-detailed-design-architecture.md
-└── guides/
-    ├── quick-start.md
-    ├── quick-deploy.md
-    ├── deployment-guide.md
-    ├── database-migration.md
-    ├── multi-agent-system.md
-    ├── multi-agent-backend.md
-    ├── implementation-guide.md
-    └── product-lifecycle.md
-backend/
-├── main.py                 # FastAPI app + provider endpoints
-├── services/provider_registry.py
-├── agents/*                # Research, Analysis, Validation, Strategy, Ideation, PRD, Jira
-└── api/database.py         # Postgres access layer (async SQLAlchemy)
-frontend/src/
-├── App.tsx                 # Main SPA
-├── components/ProviderConfig.tsx
-├── components/EnhancedChatInterface.tsx
-├── lib/ai-providers.ts     # Browser-side manager for OpenAI/Claude/Gemini
-└── lib/rag-system.ts
-```
+- **Multi-agent collaboration** with collaborative/parallel/sequential/debate modes
+- **Agent consultation graph** orchestrated by FastAPI + CoordinatorAgent
+- **Local, persistent Postgres + pgvector** for vector search
+- **Provider Registry** service for OpenAI, Anthropic Claude, and Google Gemini
+- **In-app key verification** before saving
+- **RAG knowledge base** with vector search
+- **Product-lifecycle workspace** with phases, submissions, and Jira export
+- **Model Context Protocol (MCP)** servers for GitHub/Jira/Confluence integrations
 
 ---
 
-## Make Targets
+## 🐛 Troubleshooting
 
-| Command           | Description                                |
-|-------------------|--------------------------------------------|
-| `make build`      | Build all Docker images                    |
-| `make up`         | Start stack in the background              |
-| `make down`       | Stop and remove containers                 |
-| `make restart`    | Restart every service                      |
-| `make logs SERVICE=backend` | Stream logs for a service         |
-| `make health`     | Hit backend health + show `docker-compose ps` |
-| `make start`      | Start stopped services                     |
-| `make stop`       | Stop running services                      |
-| `make rebuild`    | Rebuild images without cache & restart     |
+| Symptom | Solution |
+|---------|----------|
+| Multi-agent call hangs | Check backend logs: `make logs SERVICE=backend` |
+| Provider marked invalid | Use Settings → **Verify Key** again; check network access |
+| Database errors | Ensure Postgres is running: `make ps` |
+| Port conflict | Update `docker-compose.yml` or stop conflicting service |
+| Kind cluster issues | Check cluster status: `make kind-status` |
+| EKS deployment fails | Verify namespace exists and kubectl is configured |
 
-*(Updated port info: frontend runs on **3001**, backend on **8000**, Postgres on **5433**, Redis on **6379**.)*
+See [Troubleshooting Guide](docs/troubleshooting/common-issues.md) for more details.
 
 ---
 
-## Documentation Highlights
+## 🤝 Contributing
 
-- **Quick Start:** `docs/guides/quick-start.md`
-- **Production Deployment:** `docs/guides/deployment-guide.md`
-- **Database Migration (Supabase → Postgres):** `docs/guides/database-migration.md`
-- **Multi-Agent Internals:** `docs/guides/multi-agent-system.md`
-- **Product Lifecycle Workflows:** `docs/guides/product-lifecycle.md`
-
----
-
-## Troubleshooting
-
-| Symptom | Check |
-|---------|-------|
-| Multi-agent call hangs | `docker-compose logs backend` (look for provider connection errors) |
-| Provider still marked invalid | Use Settings → **Verify Key** again; confirm outbound network access from backend container |
-| Database errors | Ensure Postgres container is up (`docker-compose ps postgres`); volume `postgres-data` is mounted |
-| Port conflict | Update `docker-compose.yml` or stop conflicting local service |
+1. Fork & clone the repository
+2. Create a feature branch
+3. Run `make build && make up` locally
+4. Submit a PR with updated docs/tests where applicable
 
 ---
 
-## Contributing
+## 📝 License
 
-1. Fork & clone.
-2. Create a feature branch.
-3. Run `make build && make up` locally.
-4. Submit a PR with updated docs/tests where applicable.
-
----
-
-Built with ❤️ using React, FastAPI, Docker, and a swarm of cooperative AI agents.
+Built with ❤️ using React, FastAPI, Docker, Kubernetes, and a swarm of cooperative AI agents.

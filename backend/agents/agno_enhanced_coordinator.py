@@ -28,6 +28,7 @@ from backend.agents.agno_validation_agent import AgnoValidationAgent
 from backend.agents.agno_export_agent import AgnoExportAgent
 from backend.agents.agno_v0_agent import AgnoV0Agent
 from backend.agents.agno_lovable_agent import AgnoLovableAgent
+from backend.agents.agno_atlassian_agent import AgnoAtlassianAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.models.schemas import AgentMessage, AgentResponse, AgentInteraction, AgentCapability
 from backend.services.provider_registry import provider_registry
@@ -58,6 +59,7 @@ class AgnoEnhancedCoordinator:
         self.export_agent = AgnoExportAgent(enable_rag=enable_rag)
         self.v0_agent = AgnoV0Agent(enable_rag=enable_rag)
         self.lovable_agent = AgnoLovableAgent(enable_rag=enable_rag)
+        self.atlassian_agent = AgnoAtlassianAgent(enable_rag=enable_rag)
         self.rag_agent = RAGAgent()
         
         # Register all agents
@@ -72,6 +74,7 @@ class AgnoEnhancedCoordinator:
             "export": self.export_agent,
             "v0": self.v0_agent,
             "lovable": self.lovable_agent,
+            "atlassian_mcp": self.atlassian_agent,
             "rag": self.rag_agent,
         }
         
@@ -84,18 +87,35 @@ class AgnoEnhancedCoordinator:
         
         self.logger = logger.bind(component="enhanced_coordinator")
         self.interaction_history: List[AgentInteraction] = []
-        self.shared_context: Dict[str, Any] = {}
+        self.shared_context: Dict[str, Any] = {
+            "conversation_history": [],  # All chatbot messages
+            "ideation_content": [],  # Extracted ideation from conversations
+            "product_context": {},  # Product-specific context
+            "phase_context": {},  # Lifecycle phase context
+            "user_inputs": []  # All user inputs from chatbot
+        }
     
     def _get_agno_model(self):
-        """Get appropriate Agno model."""
+        """Get appropriate Agno model.
+        Priority: GPT-5.1 (primary) > Gemini 3.0 Pro (tertiary) > Claude 4 Sonnet (secondary)
+        Prefers GPT-5.1 for best reasoning, falls back to Gemini 3.0 Pro if OpenAI not available.
+        """
+        # Prefer GPT-5.1 for best reasoning capabilities
         if provider_registry.has_openai_key():
-            return OpenAIChat(id=settings.agent_model_primary)
-        elif provider_registry.has_claude_key():
-            return Claude(id=settings.agent_model_secondary)
+            api_key = provider_registry.get_openai_key()
+            if api_key:
+                return OpenAIChat(id=settings.agent_model_primary, api_key=api_key)  # gpt-5.1 or gpt-5
+        # Fall back to Gemini 3.0 Pro if OpenAI not available
         elif provider_registry.has_gemini_key():
-            return Gemini(id=settings.agent_model_tertiary)
-        else:
-            raise ValueError("No AI provider configured")
+            api_key = provider_registry.get_gemini_key()
+            if api_key:
+                return Gemini(id=settings.agent_model_tertiary, api_key=api_key)  # gemini-3.0-pro
+        # Last resort: Claude 4 Sonnet
+        elif provider_registry.has_claude_key():
+            api_key = provider_registry.get_claude_key()
+            if api_key:
+                return Claude(id=settings.agent_model_secondary, api_key=api_key)
+        raise ValueError("No AI provider configured")
     
     def _create_enhanced_teams(self):
         """Create enhanced coordination logic.
@@ -113,10 +133,12 @@ class AgnoEnhancedCoordinator:
         product_id: Optional[str] = None,
         session_ids: Optional[List[str]] = None,
         user_context: Optional[Dict[str, Any]] = None,
-        coordination_mode: str = "enhanced_collaborative"
+        coordination_mode: str = "enhanced_collaborative",
+        db: Optional[Any] = None
     ) -> AgentResponse:
         """
         Process query with heavy contextualization from multiple sources.
+        Automatically loads conversation history into shared context.
         
         Args:
             query: User query
@@ -124,13 +146,15 @@ class AgnoEnhancedCoordinator:
             session_ids: List of session IDs to include in context
             user_context: Additional user context
             coordination_mode: Coordination mode to use
+            db: Database session for loading conversation history
         """
         try:
-            # Build comprehensive context
+            # Build comprehensive context (includes loading conversation history)
             context = await self._build_comprehensive_context(
                 product_id=product_id,
                 session_ids=session_ids,
-                user_context=user_context
+                user_context=user_context,
+                db=db
             )
             
             # Enhance query with context
@@ -174,12 +198,34 @@ class AgnoEnhancedCoordinator:
             # Use PRD response as final response (most comprehensive)
             final_response = prd_response.response
             
-            # Update shared context
+            # Update shared context with latest interaction
             self.shared_context.update({
                 "last_query": query,
                 "last_response": final_response,
                 "timestamp": datetime.utcnow().isoformat()
             })
+            
+            # Add current query/response to conversation history in shared context
+            if "conversation_history" not in self.shared_context:
+                self.shared_context["conversation_history"] = []
+            
+            self.shared_context["conversation_history"].append({
+                "role": "user",
+                "content": query,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            self.shared_context["conversation_history"].append({
+                "role": "assistant",
+                "content": final_response,
+                "agent_name": "multi_agent_enhanced",
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            
+            # Update ideation content if query contains ideation
+            if any(keyword in query.lower() for keyword in ["idea", "ideation", "concept", "feature", "requirement"]):
+                if "ideation_content" not in self.shared_context:
+                    self.shared_context["ideation_content"] = []
+                self.shared_context["ideation_content"].append(query)
             
             return AgentResponse(
                 agent_type="multi_agent_enhanced",
@@ -198,13 +244,108 @@ class AgnoEnhancedCoordinator:
             self.logger.error("enhanced_processing_error", error=str(e))
             raise
     
+    async def load_conversation_history(
+        self,
+        product_id: Optional[str] = None,
+        session_ids: Optional[List[str]] = None,
+        db: Optional[Any] = None
+    ):
+        """Load conversation history from database and store in shared context."""
+        if not db or not product_id:
+            return
+        
+        try:
+            from sqlalchemy import text
+            
+            # Load conversation history for the product
+            conv_query = text("""
+                SELECT ch.message_type, ch.content, ch.agent_name, ch.agent_role, ch.created_at
+                FROM conversation_history ch
+                WHERE ch.product_id = :product_id
+                ORDER BY ch.created_at ASC
+            """)
+            conv_result = await db.execute(conv_query, {"product_id": str(product_id)})
+            conv_rows = conv_result.fetchall()
+            
+            conversation_history = [
+                {
+                    "role": row[0],
+                    "content": row[1],
+                    "agent_name": row[2],
+                    "agent_role": row[3],
+                    "timestamp": row[4].isoformat() if row[4] else None
+                }
+                for row in conv_rows
+            ]
+            
+            # Store in shared context
+            self.shared_context["conversation_history"] = conversation_history
+            
+            # Extract ideation and relevant content
+            ideation_content = self._extract_ideation_from_history(conversation_history)
+            self.shared_context["ideation_content"] = ideation_content
+            
+            # Extract user inputs
+            user_inputs = [
+                msg["content"] for msg in conversation_history
+                if msg.get("role") in ["user", "human"]
+            ]
+            self.shared_context["user_inputs"] = user_inputs
+            
+            # Store product context
+            self.shared_context["product_context"]["product_id"] = product_id
+            self.shared_context["product_context"]["conversation_count"] = len(conversation_history)
+            
+            self.logger.info(
+                "conversation_history_loaded_to_shared_context",
+                product_id=str(product_id),
+                message_count=len(conversation_history),
+                ideation_snippets=len(ideation_content)
+            )
+            
+        except Exception as e:
+            self.logger.warning("failed_to_load_conversation_history", error=str(e))
+    
+    def _extract_ideation_from_history(self, conversation_history: List[Dict[str, Any]]) -> List[str]:
+        """Extract ideation and relevant content from conversation history."""
+        ideation_keywords = [
+            "idea", "ideation", "concept", "product vision", "feature", "requirement",
+            "user need", "problem", "solution", "goal", "objective", "purpose",
+            "market", "research", "analysis", "strategy", "design", "architecture"
+        ]
+        
+        ideation_messages = []
+        for msg in conversation_history:
+            content = msg.get("content", "").lower()
+            role = msg.get("role", "")
+            
+            # Extract user messages that contain ideation keywords
+            if role in ["user", "human"] and any(keyword in content for keyword in ideation_keywords):
+                ideation_messages.append(msg.get("content", ""))
+            
+            # Also extract agent responses that might contain synthesized ideation
+            elif role in ["assistant", "agent"] and any(keyword in content for keyword in ideation_keywords):
+                # Only include if it's a synthesis or summary
+                if any(word in content.lower() for word in ["based on", "considering", "synthesizing", "summary"]):
+                    ideation_messages.append(msg.get("content", ""))
+        
+        return ideation_messages
+    
     async def _build_comprehensive_context(
         self,
         product_id: Optional[str] = None,
         session_ids: Optional[List[str]] = None,
-        user_context: Optional[Dict[str, Any]] = None
+        user_context: Optional[Dict[str, Any]] = None,
+        db: Optional[Any] = None
     ) -> Dict[str, Any]:
         """Build comprehensive context from multiple sources."""
+        # Load conversation history if product_id is available and not already loaded
+        if product_id and db:
+            # Check if we need to reload (product_id changed or no history loaded)
+            current_product_id = self.shared_context.get("product_context", {}).get("product_id")
+            if current_product_id != str(product_id) or not self.shared_context.get("conversation_history"):
+                await self.load_conversation_history(product_id=product_id, session_ids=session_ids, db=db)
+        
         context = {
             "shared_context": self.shared_context.copy(),
             "user_context": user_context or {}
@@ -213,13 +354,16 @@ class AgnoEnhancedCoordinator:
         # Add product context if available
         if product_id:
             context["product_id"] = product_id
-            # TODO: Fetch product details from database
         
         # Add session context if available
         if session_ids:
             context["session_ids"] = session_ids
-            # TODO: Fetch session messages and summaries
-            # For now, we'll add this in the query enhancement
+        
+        # Include conversation history and ideation in context
+        if self.shared_context.get("conversation_history"):
+            context["conversation_history"] = self.shared_context["conversation_history"]
+            context["ideation_from_chat"] = "\n\n".join(self.shared_context.get("ideation_content", []))
+            context["user_inputs"] = self.shared_context.get("user_inputs", [])
         
         # Retrieve knowledge from RAG
         if session_ids or product_id:
@@ -233,7 +377,7 @@ class AgnoEnhancedCoordinator:
         return context
     
     def _enhance_query_with_context(self, query: str, context: Dict[str, Any]) -> str:
-        """Enhance query with comprehensive context."""
+        """Enhance query with comprehensive context including conversation history."""
         import json
         
         enhanced = f"""User Query: {query}
@@ -248,26 +392,59 @@ COMPREHENSIVE CONTEXT:
             enhanced += f"\nRelevant Sessions: {', '.join(context['session_ids'])}\n"
             enhanced += "Note: Include insights from these sessions in your response.\n"
         
+        # Include conversation history and ideation from chatbot
+        if context.get("conversation_history"):
+            enhanced += "\n=== CONVERSATION HISTORY (Multi-Agent Memory) ===\n"
+            enhanced += "All previous chatbot interactions for this product:\n"
+            for msg in context["conversation_history"][-20:]:  # Last 20 messages
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                agent_name = msg.get("agent_name", "")
+                if content:
+                    agent_label = f" ({agent_name})" if agent_name else ""
+                    enhanced += f"\n{role.upper()}{agent_label}: {content[:500]}\n"
+            enhanced += "\n"
+        
+        if context.get("ideation_from_chat"):
+            enhanced += "\n=== IDEATION FROM CHATBOT ===\n"
+            enhanced += "Relevant ideation and product concepts from previous conversations:\n"
+            enhanced += context["ideation_from_chat"][:2000] + "\n\n"
+        
+        if context.get("user_inputs"):
+            enhanced += "\n=== USER INPUTS SUMMARY ===\n"
+            enhanced += f"Total user inputs: {len(context['user_inputs'])}\n"
+            enhanced += "Recent user inputs:\n"
+            for user_input in context["user_inputs"][-5:]:  # Last 5 user inputs
+                enhanced += f"- {user_input[:200]}\n"
+            enhanced += "\n"
+        
         if context.get("knowledge_base"):
-            enhanced += "\nRelevant Knowledge from Knowledge Base:\n"
+            enhanced += "\n=== RELEVANT KNOWLEDGE FROM KNOWLEDGE BASE ===\n"
             for kb_item in context["knowledge_base"][:5]:  # Top 5
                 enhanced += f"- {kb_item.get('content', '')[:200]}...\n"
         
         if context.get("shared_context"):
-            enhanced += "\nPrevious Context:\n"
-            enhanced += json.dumps(context["shared_context"], indent=2) + "\n"
+            shared = context["shared_context"]
+            if shared.get("last_query") or shared.get("last_response"):
+                enhanced += "\n=== PREVIOUS INTERACTIONS ===\n"
+                if shared.get("last_query"):
+                    enhanced += f"Last Query: {shared['last_query'][:200]}\n"
+                if shared.get("last_response"):
+                    enhanced += f"Last Response: {shared['last_response'][:200]}\n"
         
         if context.get("user_context"):
-            enhanced += "\nUser Context:\n"
+            enhanced += "\n=== ADDITIONAL USER CONTEXT ===\n"
             enhanced += json.dumps(context["user_context"], indent=2) + "\n"
         
         enhanced += """
 INSTRUCTIONS:
-- Use ALL provided context in your response
-- Reference specific context sources
+- Use ALL provided context in your response, especially conversation history and ideation
+- Reference specific information from chatbot conversations
+- Synthesize ideation from previous conversations with current query
 - Show how different pieces of information were synthesized
 - Provide a comprehensive, heavily contextualized answer
 - Coordinate with other agents to ensure complete coverage
+- If user provided ideation externally via chatbot, incorporate it into your response
 """
         
         return enhanced
@@ -362,6 +539,7 @@ INSTRUCTIONS:
     
     def determine_supporting_agents(self, query: str, primary_agent: str) -> List[str]:
         """Determine which supporting agents should be consulted.
+        Automatically includes RAG, Atlassian (for Confluence/Jira), and Export (for PRD generation) when relevant.
         ALWAYS includes RAG agent for knowledge base context.
         """
         query_lower = query.lower()
@@ -380,7 +558,15 @@ INSTRUCTIONS:
             if primary_agent != "analysis":
                 supporting.append("analysis")
         
-        # RAG is already added above, so we don't need to add it again here
+        # Include Atlassian agent for Confluence/Jira operations
+        if any(kw in query_lower for kw in ["confluence", "jira", "atlassian", "publish", "page", "space", "documentation"]):
+            if primary_agent != "atlassian_mcp":
+                supporting.append("atlassian_mcp")
+        
+        # Include Export agent for PRD/document generation
+        if any(kw in query_lower for kw in ["export", "prd", "document", "generate document", "publish document"]):
+            if primary_agent != "export":
+                supporting.append("export")
         
         return supporting
     
@@ -390,7 +576,8 @@ INSTRUCTIONS:
         coordination_mode: str = "enhanced_collaborative",
         primary_agent: Optional[str] = None,
         supporting_agents: Optional[List[str]] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        db: Optional[Any] = None
     ) -> AgentResponse:
         """
         Route query to appropriate team or agent.
@@ -408,7 +595,8 @@ INSTRUCTIONS:
                     product_id=product_id,
                     session_ids=session_ids,
                     user_context=user_context,
-                    coordination_mode=coordination_mode
+                    coordination_mode=coordination_mode,
+                    db=db
                 )
             elif coordination_mode == "collaborative":
                 # Handle collaborative mode similar to AgnoCoordinatorAgent
@@ -512,7 +700,8 @@ INSTRUCTIONS:
                     product_id=product_id,
                     session_ids=session_ids,
                     user_context=user_context,
-                    coordination_mode="enhanced_collaborative"
+                    coordination_mode="enhanced_collaborative",
+                    db=db
                 )
         except Exception as e:
             self.logger.error("route_query_error", error=str(e), coordination_mode=coordination_mode)

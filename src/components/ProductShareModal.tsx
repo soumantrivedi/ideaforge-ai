@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { X, Users, Share2, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+const API_URL = getValidatedApiUrl();
 
 interface ProductShareModalProps {
   productId: string;

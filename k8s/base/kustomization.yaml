@@ -14,9 +14,11 @@ resources:
   - db-setup-job.yaml  # Database setup job (migrations + seeding) - runs automatically
 
 # Common labels (commonLabels is deprecated but still works; modern alternative would be labels transformer)
+# Note: Service selectors are explicitly set in service definitions to match pod labels
+# This prevents kustomize from overriding service selectors with commonLabels
 commonLabels:
-  app: ideaforge-ai
   managed-by: kustomize
+  # app label is NOT set here to avoid overriding service selectors
 
 # Image replacements (update these with your actual image tags)
 images:

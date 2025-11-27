@@ -7,7 +7,7 @@ metadata:
     app: backend
     component: api
 spec:
-  replicas: 2  # Adjust based on load
+  replicas: 3  # Start with 3 replicas for better load distribution (HPA will scale as needed)
   selector:
     matchLabels:
       app: backend
@@ -219,14 +219,22 @@ spec:
               name: ideaforge-ai-secrets
               key: API_KEY_ENCRYPTION_KEY
         - name: FRONTEND_URL
-          value: "https://ideaforge.ai"  # Update with your frontend domain
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: FRONTEND_URL
+        - name: CORS_ORIGINS
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: CORS_ORIGINS
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "500m"
+            memory: "512Mi"  # Lower requests for better pod density and scaling
+            cpu: "250m"  # Lower CPU requests to allow more pods per node
           limits:
-            memory: "2Gi"
-            cpu: "2000m"
+            memory: "2Gi"  # Higher limits for peak load handling
+            cpu: "2000m"  # Higher CPU limits for AI processing
         livenessProbe:
           httpGet:
             path: /health

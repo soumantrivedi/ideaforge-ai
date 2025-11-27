@@ -1,0 +1,20 @@
+# Patch to fix service selectors - prevents kustomize commonLabels from overriding
+# Service selectors must match pod labels (app: frontend/backend, not app: ideaforge-ai)
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  selector:
+    app: frontend
+    component: web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    app: backend
+    component: api
+

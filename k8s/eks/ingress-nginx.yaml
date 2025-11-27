@@ -1,0 +1,77 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ideaforge-ai-ingress-nginx
+  namespace: 20890-ideaforge-ai-dev-58a50
+  annotations:
+    # NGINX Ingress Controller (matches pattern used by other apps in cluster)
+    kubernetes.io/ingress.class: nginx
+    # External DNS for automatic DNS record creation
+    # external-dns will create DNS records for all hosts in spec.rules
+    external-dns.alpha.kubernetes.io/hostname: ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud,api-ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud
+    external-dns.alpha.kubernetes.io/ttl: "60"
+    # NGINX specific annotations
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "600"
+    nginx.ingress.kubernetes.io/upstream-keepalive-connections: "50"
+    nginx.ingress.kubernetes.io/upstream-keepalive-timeout: "60"
+    # Specific timeout for multi-agent endpoint (longer processing time)
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      location ~ ^/api/multi-agent/process$ {
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 1800s;
+      }
+    # SPA support - serve index.html for all routes (handled by frontend's internal nginx)
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    # CORS headers (if needed)
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud
+    http:
+      paths:
+      # Multi-agent endpoint with longer timeout (must come before /api)
+      - path: /api/multi-agent/process
+        pathType: Exact
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8000
+      # All other API requests go to backend
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8000
+      # Frontend routes (catch-all)
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 3000
+  # Keep API subdomain for direct backend access if needed
+  - host: api-ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8000
+

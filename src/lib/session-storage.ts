@@ -181,3 +181,50 @@ export function getProductsWithSessionData(): string[] {
   }
 }
 
+/**
+ * Reset app state for a specific product (useful when UI gets corrupted)
+ */
+export function resetProductState(productId: string): void {
+  try {
+    console.log('Resetting product state for:', productId);
+    // Clear all session data for this product
+    clearProductSession(productId);
+    
+    // Clear app state if it references this product
+    const appState = loadAppState();
+    if (appState?.productId === productId) {
+      saveAppState({
+        view: appState.view || 'dashboard',
+        // Clear productId and currentPhaseId to force fresh load
+      });
+    }
+  } catch (error) {
+    console.error('Error resetting product state:', error);
+  }
+}
+
+/**
+ * Clear app state completely (useful for fixing corrupted state)
+ */
+export function clearAppState(): void {
+  try {
+    sessionStorage.removeItem(SESSION_KEYS.APP_STATE);
+    console.log('App state cleared');
+  } catch (error) {
+    console.error('Error clearing app state:', error);
+  }
+}
+
+// Expose utility functions to window for debugging
+if (typeof window !== 'undefined') {
+  (window as any).ideaforgeDebug = {
+    resetProductState,
+    clearAppState,
+    clearProductSession,
+    clearAllSessionStorage,
+    getProductsWithSessionData,
+    loadAppState,
+  };
+  console.log('IdeaForge debug utilities available at window.ideaforgeDebug');
+}
+

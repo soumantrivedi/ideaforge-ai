@@ -39,16 +39,15 @@ export function ProductLifecycleSidebar({
   }, [submissions]);
 
   const getPhaseStatus = (phase: LifecyclePhase, index: number) => {
+    // All phases are now available - no sequential locking
     if (completedPhases.has(phase.id)) {
       return 'completed';
     }
     if (inProgressPhases.has(phase.id)) {
       return 'in_progress';
     }
-    if (index === 0 || completedPhases.has(phases[index - 1]?.id)) {
-      return 'available';
-    }
-    return 'locked';
+    // All phases are available regardless of previous phase completion
+    return 'available';
   };
 
   const getStatusIcon = (status: string, isActive: boolean) => {
@@ -93,7 +92,7 @@ export function ProductLifecycleSidebar({
       <div className="p-6 border-b border-gray-200">
         <h2 className="text-lg font-bold text-gray-900 mb-2">Product Lifecycle</h2>
         <p className="text-sm text-gray-600 mb-4">
-          Step through each phase to build your product
+          Access any phase to build your product. Phases are not locked - work in any order.
         </p>
 
         <div className="space-y-2">
@@ -126,8 +125,7 @@ export function ProductLifecycleSidebar({
           return (
             <button
               key={phase.id}
-              onClick={() => !isLocked && onPhaseSelect(phase)}
-              disabled={isLocked}
+              onClick={() => onPhaseSelect(phase)}
               className={`w-full p-4 rounded-xl border-2 transition text-left ${getStatusColor(
                 status,
                 isActive
@@ -173,11 +171,6 @@ export function ProductLifecycleSidebar({
                             ⚡ In Progress
                           </div>
                         )}
-                        {status === 'locked' && (
-                          <div className="mt-2 text-xs text-gray-400 font-medium">
-                            🔒 Complete previous phases first
-                          </div>
-                        )}
                         {isActive && score !== undefined && (
                           <div className="mt-2 flex items-center gap-1">
                             <Star className="w-3 h-3 text-yellow-300 fill-yellow-300" />
@@ -189,9 +182,7 @@ export function ProductLifecycleSidebar({
                   })()}
                 </div>
 
-                {!isLocked && (
-                  <ChevronRight className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-white' : 'text-gray-400'}`} />
-                )}
+                <ChevronRight className={`w-5 h-5 flex-shrink-0 ${isActive ? 'text-white' : 'text-gray-400'}`} />
               </div>
             </button>
           );

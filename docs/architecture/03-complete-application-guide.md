@@ -205,35 +205,49 @@ graph TB
 ```mermaid
 graph LR
     subgraph "Collaborative Mode"
-        C1[Primary Agent]
-        C2[Supporting Agent 1]
-        C3[Supporting Agent 2]
+        C1[Primary Agent<br/>e.g., Export]
+        C2[Supporting Agent 1<br/>e.g., RAG]
+        C3[Supporting Agent 2<br/>e.g., Atlassian]
         C1 -->|Consult| C2
         C1 -->|Consult| C3
-        C2 -->|Response| C1
-        C3 -->|Response| C1
+        C2 -->|Knowledge Context| C1
+        C3 -->|Confluence Content| C1
+        C1 -->|Synthesized Response| User[User]
     end
     
     subgraph "Sequential Mode"
-        S1[Agent 1] -->|Output| S2[Agent 2]
-        S2 -->|Output| S3[Agent 3]
+        S1[Export Agent] -->|PRD Document| S2[Atlassian Agent]
+        S2 -->|Published Page| S3[Result]
     end
     
     subgraph "Parallel Mode"
-        P1[Agent 1]
-        P2[Agent 2]
-        P3[Agent 3]
-        P1 -->|Independent| Result[Combined Result]
-        P2 -->|Independent| Result
-        P3 -->|Independent| Result
+        P1[RAG Agent]
+        P2[Atlassian Agent]
+        P3[Export Agent]
+        P1 -->|Knowledge Base| Result[Combined PRD]
+        P2 -->|Confluence Docs| Result
+        P3 -->|PRD Generation| Result
+    end
+    
+    subgraph "Enhanced Collaborative Mode"
+        E1[Primary Agent]
+        E2[RAG Agent<br/>Always Included]
+        E3[Atlassian Agent]
+        E4[Export Agent]
+        E2 -->|Knowledge Context| E1
+        E3 -->|Confluence Context| E1
+        E4 -->|Document Context| E1
+        E1 -->|Full Context Response| User2[User]
     end
     
     style C1 fill:#c8e6c9
     style S1 fill:#fff9c4
     style P1 fill:#e1f5ff
+    style E1 fill:#f8bbd0
+    style E2 fill:#ffccbc
 ```
 
-### Agent Workflow Example
+### Agent Workflow Example (Enhanced with Atlassian Integration)
 
 ```mermaid
 sequenceDiagram
@@ -244,39 +258,50 @@ sequenceDiagram
     participant Coordinator
     participant RAG as RAG Agent
     participant Research as Research Agent
-    participant Analysis as Analysis Agent
-    participant PRD as PRD Agent
+    participant Atlassian as Atlassian Agent
+    participant Export as Export Agent
     participant Database
+    participant Confluence as Confluence API
 
-    User->>Frontend: Submit Product Query
+    User->>Frontend: Submit Product Query<br/>"Generate PRD using Confluence page 12345"
     Frontend->>Backend: POST /api/multi-agent/process
     Backend->>Orchestrator: Route Request
-    Orchestrator->>Coordinator: Initialize Multi-Agent Team
+    Orchestrator->>Coordinator: Initialize Multi-Agent Team<br/>Primary: Export, Supporting: RAG, Atlassian
+    
+    Note over Coordinator: Enhanced Collaborative Mode
     
     Coordinator->>RAG: Retrieve Knowledge Base Context
-    RAG->>Database: Vector Search
-    Database-->>RAG: Relevant Context
+    RAG->>Database: Vector Search (Product-Scoped)
+    Database-->>RAG: Relevant Knowledge
     RAG-->>Coordinator: Knowledge Context
+    
+    Coordinator->>Atlassian: Fetch Confluence Page 12345
+    Atlassian->>Confluence: Get Page Content
+    Confluence-->>Atlassian: Page Data
+    Atlassian->>Database: Store in Knowledge Base
+    Atlassian-->>Coordinator: Confluence Content
     
     Coordinator->>Research: Research Market & Competitors
     Research->>Database: Load Product Data
     Database-->>Research: Product Information
     Research-->>Coordinator: Research Results
     
-    Coordinator->>Analysis: Analyze with Research Context
-    Analysis->>Database: Load Historical Data
-    Database-->>Analysis: Historical Context
-    Analysis-->>Coordinator: Analysis Results
+    Note over Coordinator: Synthesize All Contexts
     
-    Coordinator->>PRD: Generate PRD with All Context
-    PRD->>Database: Save PRD Document
-    Database-->>PRD: Confirmation
-    PRD-->>Coordinator: PRD Document
+    Coordinator->>Export: Generate PRD with:<br/>- Knowledge Base<br/>- Confluence Content<br/>- Research Results
+    Export->>Database: Save PRD Document
+    Database-->>Export: Confirmation
+    Export-->>Coordinator: PRD Document
     
-    Coordinator-->>Orchestrator: Complete Response
+    Coordinator->>Atlassian: Publish PRD to Confluence
+    Atlassian->>Confluence: Create Page
+    Confluence-->>Atlassian: Page Created
+    Atlassian-->>Coordinator: Published Confirmation
+    
+    Coordinator-->>Orchestrator: Complete Response<br/>with Publication Link
     Orchestrator-->>Backend: Stream Response
     Backend-->>Frontend: Stream Response
-    Frontend-->>User: Display Results
+    Frontend-->>User: Display PRD + Confluence Link
 ```
 
 ## Product Lifecycle
@@ -352,6 +377,16 @@ graph TB
         E1[Export Agent]
         E2[GitHub Agent]
         E3[Atlassian Agent]
+        E4[RAG Agent]
+    end
+    
+    subgraph "Multi-Agent Coordination"
+        M1[Export Agent]
+        M2[Atlassian Agent]
+        M3[RAG Agent]
+        M1 <-->|Coordinate| M2
+        M1 <-->|Coordinate| M3
+        M2 <-->|Coordinate| M3
     end
     
     style I1 fill:#e1f5ff

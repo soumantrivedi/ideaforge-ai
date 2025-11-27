@@ -1,0 +1,181 @@
+# IdeaForge AI - Cursor AI Rules
+
+## Automatic Verification System
+
+**IMPORTANT:** Before making any changes, read `.cursor/VERIFICATION_CHECKLIST.md` and verify all requirements after changes.
+
+## Core Principles
+
+1. **Always verify requirements** after code changes using the checklist
+2. **Update documentation** when architecture changes
+3. **Update mermaid diagrams** when agent structure changes
+4. **Test multi-agent coordination** when adding new agents
+5. **Maintain backward compatibility** when possible
+
+## Docker Prerequisites
+
+**CRITICAL:** Always check and start Docker before any deployment operations.
+
+### Docker Startup Check:
+1. **Always check Docker status first**: `docker info > /dev/null 2>&1`
+2. **If Docker is not running, attempt to start it**:
+   - macOS: `open -a Docker` or check if Docker Desktop is running
+   - Linux: `sudo systemctl start docker` (if systemd) or `sudo service docker start`
+   - Windows: Check Docker Desktop status
+3. **Wait for Docker to be ready**: Poll `docker info` until it succeeds (max 30 seconds)
+4. **Never bypass Docker check** - All deployment operations require Docker
+5. **If Docker cannot be started automatically, inform user and wait for manual start**
+
+### Docker Check Commands:
+```bash
+# Check if Docker is running
+docker info > /dev/null 2>&1 && echo "✅ Docker is running" || echo "❌ Docker is not running"
+
+# Attempt to start Docker (macOS)
+open -a Docker 2>/dev/null || echo "⚠️  Could not start Docker automatically"
+
+# Wait for Docker to be ready (with timeout)
+timeout=30; elapsed=0; while ! docker info > /dev/null 2>&1 && [ $elapsed -lt $timeout ]; do sleep 2; elapsed=$((elapsed+2)); done
+```
+
+## Verification Workflow
+
+### Before Making Changes:
+1. **Check Docker is running** (see Docker Prerequisites above)
+2. Read `.cursor/VERIFICATION_CHECKLIST.md`
+3. Understand current state of all 19 requirements
+4. Identify which requirements may be affected
+
+### After Making Changes:
+1. Run verification commands from checklist
+2. Check all affected files listed in requirements
+3. Test functionality manually if needed
+4. Update `docs/verification/REQUIREMENTS_VERIFICATION.md`
+5. Update documentation and diagrams if architecture changed
+
+### Before Committing:
+1. **Run complete verification**: `make verify-kind-complete` (checks all pods, logs, replicasets, Agno initialization)
+2. **Inspect all pod logs**: `make kind-check-logs-before-commit` (must show no errors, Agno agents initialized)
+3. **Check for old replicasets**: `kubectl get replicasets -n ideaforge-ai --context kind-ideaforge-ai | grep "0.*0.*0"` (delete any with 0 desired/current)
+4. **Verify image tags**: `kubectl get deployments -n ideaforge-ai --context kind-ideaforge-ai -o jsonpath='{.items[*].spec.template.spec.containers[*].image}'` (must match current git SHA)
+5. **Check dockerconfig secrets**: `kubectl get secrets -n ideaforge-ai --context kind-ideaforge-ai | grep dockerconfig` (must exist if using private registry)
+6. All 19 requirements verified
+7. Documentation updated (if needed)
+8. Mermaid diagrams updated (if architecture changed)
+9. Agent list documented (if agents added/modified)
+10. Integration examples provided (if new integrations)
+
+## Key Requirements Summary
+
+### Must Always Verify:
+- ✅ Requirement 1: ChatGPT 5.1 as default model
+- ✅ Requirement 2: All 3 providers (ChatGPT, Gemini-3, Claude) supported
+- ✅ Requirement 3: Agno framework initializes by default
+- ✅ Requirement 17: Atlassian agent integrated in coordinators
+- ✅ Requirement 18: Documentation and mermaid diagrams complete
+- ✅ Requirement 19: Agent list and orchestration documented
+
+### Critical Files to Check:
+- `backend/agents/agno_coordinator_agent.py` - Must include all agents
+- `backend/agents/agno_enhanced_coordinator.py` - Must include all agents
+- `backend/agents/agno_orchestrator.py` - Must register all agents
+- `docs/architecture/03-complete-application-guide.md` - Agent hierarchy diagram
+- `docs/architecture/04-multi-agent-orchestration.md` - Orchestration flow
+- `.cursor/VERIFICATION_CHECKLIST.md` - Complete checklist
+
+## Agent Integration Rules
+
+### When Adding New Agents:
+1. Add to `AgnoCoordinatorAgent` agents dictionary
+2. Add to `AgnoEnhancedCoordinator` agents dictionary
+3. Add to `AgnoAgenticOrchestrator` agents dictionary
+4. Update agent hierarchy mermaid diagram
+5. Update agent list in documentation
+6. Add to automatic selection logic if needed
+7. Document capabilities and use cases
+
+### When Modifying Agent Coordination:
+1. Update coordination mode diagrams
+2. Update workflow sequence diagrams
+3. Update integration examples
+4. Verify all coordination modes still work
+5. Test agent-to-agent communication
+
+## Documentation Rules
+
+### When Architecture Changes:
+1. Update relevant architecture diagrams
+2. Update agent hierarchy diagram
+3. Update multi-agent orchestration flow
+4. Update coordination mode diagrams
+5. Update workflow sequence diagrams
+
+### When Adding Features:
+1. Document in appropriate guide
+2. Add examples if applicable
+3. Update API documentation
+4. Update verification checklist if new requirement
+
+## Testing Rules
+
+### After Agent Changes:
+1. Test agent initialization
+2. Test agent-to-agent communication
+3. Test all coordination modes
+4. Test automatic agent selection
+5. Verify RAG support if applicable
+
+### After Deployment:
+1. **Complete refresh verification** (for major changes):
+   - Kill docker-compose: `docker-compose down -v`
+   - Backup database: `kubectl exec -n ideaforge-ai --context kind-ideaforge-ai deployment/postgres -- pg_dump -U agentic_pm ideaforge_ai > /tmp/backup.sql`
+   - Delete old replicasets: `kubectl get replicasets -n ideaforge-ai --context kind-ideaforge-ai -o json | jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' | xargs -I {} kubectl delete replicaset {} -n ideaforge-ai --context kind-ideaforge-ai`
+   - Delete and recreate kind cluster: `make kind-delete && make kind-create && make kind-setup-ingress`
+   - Restore database: `kubectl exec -i -n ideaforge-ai --context kind-ideaforge-ai deployment/postgres -- psql -U agentic_pm ideaforge_ai < /tmp/backup.sql`
+   - Deploy fresh: `make build-apps && make kind-load-images && make kind-load-secrets && make kind-deploy-internal`
+   - Verify: `make verify-kind-complete`
+2. Verify all services running: `kubectl get pods -n ideaforge-ai --context kind-ideaforge-ai`
+3. Check logs for errors: `make kind-check-logs-before-commit`
+4. Test external URLs: `curl http://localhost:80/health && curl http://localhost:80/api/docs`
+5. Verify ConfigMap values: `kubectl get configmap ideaforge-ai-config -n ideaforge-ai --context kind-ideaforge-ai -o yaml`
+6. Test multi-agent coordination: Verify Agno agents initialized in logs
+7. **Verify Agno initialization**: `kubectl logs -n ideaforge-ai --context kind-ideaforge-ai deployment/backend --tail=100 | grep -E "agno.*initialized|agno_enabled.*true"`
+
+## Code Quality Rules
+
+1. **No hardcoded localhost** - Use service names
+2. **ConfigMap-driven** - No image rebuilds for config
+3. **Service names** - All inter-service communication via K8s DNS
+4. **Runtime config** - VITE_API_URL injected at runtime
+5. **Error handling** - Proper error messages with guidance
+
+## Multi-Agent Coordination Rules
+
+1. **RAG always included** - In enhanced collaborative mode
+2. **Context sharing** - All agents share context
+3. **Automatic selection** - Based on query keywords
+4. **Coordinator reference** - All agents have coordinator reference
+5. **Agent registration** - All agents registered in coordinators
+
+## Documentation Maintenance
+
+1. **Keep diagrams updated** - Reflect current architecture
+2. **Keep agent list current** - All 13 agents documented
+3. **Keep examples current** - Working code examples
+4. **Keep checklist current** - All requirements verified
+5. **Keep integration docs current** - All integrations documented
+
+---
+
+**Reference Files:**
+- `.cursor/VERIFICATION_CHECKLIST.md` - Complete verification checklist
+- `docs/verification/REQUIREMENTS_VERIFICATION.md` - Requirements status
+- `docs/architecture/04-multi-agent-orchestration.md` - Orchestration details
+- `docs/verification/ATLASSIAN_AGENT_INTEGRATION.md` - Atlassian integration
+
+**Quick Verification:**
+```bash
+# Run quick verification script from checklist
+bash .cursor/VERIFICATION_CHECKLIST.md
+```
+

@@ -22,6 +22,10 @@ from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
 from backend.agents.agno_ideation_agent import AgnoIdeationAgent
 from backend.agents.agno_research_agent import AgnoResearchAgent
 from backend.agents.agno_analysis_agent import AgnoAnalysisAgent
+from backend.agents.agno_v0_agent import AgnoV0Agent
+from backend.agents.agno_lovable_agent import AgnoLovableAgent
+from backend.agents.agno_atlassian_agent import AgnoAtlassianAgent
+from backend.agents.agno_export_agent import AgnoExportAgent
 from backend.agents.rag_agent import RAGAgent
 from backend.models.schemas import AgentMessage, AgentResponse, AgentInteraction, AgentCapability
 from backend.services.provider_registry import provider_registry
@@ -45,6 +49,8 @@ class AgnoCoordinatorAgent:
         self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=enable_rag)
         self.v0_agent = AgnoV0Agent(enable_rag=enable_rag)
         self.lovable_agent = AgnoLovableAgent(enable_rag=enable_rag)
+        self.atlassian_agent = AgnoAtlassianAgent(enable_rag=enable_rag)
+        self.export_agent = AgnoExportAgent(enable_rag=enable_rag)
         self.rag_agent = RAGAgent()  # RAG agent always has RAG enabled
         
         # Register all agents
@@ -55,6 +61,8 @@ class AgnoCoordinatorAgent:
             "prd_authoring": self.prd_agent,
             "v0": self.v0_agent,
             "lovable": self.lovable_agent,
+            "atlassian_mcp": self.atlassian_agent,
+            "export": self.export_agent,
             "rag": self.rag_agent,
         }
         
@@ -69,15 +77,26 @@ class AgnoCoordinatorAgent:
         self.interaction_history: List[AgentInteraction] = []
     
     def _get_agno_model(self):
-        """Get appropriate Agno model based on provider registry."""
+        """Get appropriate Agno model based on provider registry.
+        Priority: GPT-5.1 (primary) > Gemini 3.0 Pro (tertiary) > Claude 4 Sonnet (secondary)
+        Prefers GPT-5.1 for best reasoning, falls back to Gemini 3.0 Pro if OpenAI not available.
+        """
+        # Prefer GPT-5.1 for best reasoning capabilities
         if provider_registry.has_openai_key():
-            return OpenAIChat(id=settings.agent_model_primary)
-        elif provider_registry.has_claude_key():
-            return Claude(id=settings.agent_model_secondary)
+            api_key = provider_registry.get_openai_key()
+            if api_key:
+                return OpenAIChat(id=settings.agent_model_primary, api_key=api_key)  # gpt-5.1 or gpt-5
+        # Fall back to Gemini 3.0 Pro if OpenAI not available
         elif provider_registry.has_gemini_key():
-            return Gemini(id=settings.agent_model_tertiary)
-        else:
-            raise ValueError("No AI provider configured")
+            api_key = provider_registry.get_gemini_key()
+            if api_key:
+                return Gemini(id=settings.agent_model_tertiary, api_key=api_key)  # gemini-3.0-pro
+        # Last resort: Claude 4 Sonnet
+        elif provider_registry.has_claude_key():
+            api_key = provider_registry.get_claude_key()
+            if api_key:
+                return Claude(id=settings.agent_model_secondary, api_key=api_key)
+        raise ValueError("No AI provider configured")
     
     def _create_agno_teams(self):
         """Create coordination logic for different modes.
@@ -136,6 +155,14 @@ class AgnoCoordinatorAgent:
         if any(kw in query_lower for kw in ["knowledge", "document", "search", "retrieve"]):
             if primary_agent != "rag":
                 supporting.append("rag")
+        
+        if any(kw in query_lower for kw in ["confluence", "jira", "atlassian", "publish", "page"]):
+            if primary_agent != "atlassian_mcp":
+                supporting.append("atlassian_mcp")
+        
+        if any(kw in query_lower for kw in ["export", "prd", "document", "generate document"]):
+            if primary_agent != "export":
+                supporting.append("export")
         
         return supporting
     

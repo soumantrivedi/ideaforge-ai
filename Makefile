@@ -510,42 +510,47 @@ kind-load-images: ## Load Docker images into kind cluster
 	kind load docker-image $$FRONTEND_IMAGE --name $(KIND_CLUSTER_NAME) || exit 1; \
 	echo "✅ Images loaded successfully"
 
-kind-update-images: ## Update image references in manifests for kind
-	@echo "🔄 Updating image references for kind..."
-	@BACKEND_IMAGE=""; \
-	FRONTEND_IMAGE=""; \
-	if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^ideaforge-ai-backend:$(GIT_SHA)$$"; then \
-		BACKEND_IMAGE="ideaforge-ai-backend:$(GIT_SHA)"; \
-		echo "   Using backend image: $$BACKEND_IMAGE"; \
-	elif docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^ideaforge-ai-backend:latest$$"; then \
-		BACKEND_IMAGE="ideaforge-ai-backend:latest"; \
-		echo "   Using backend image: $$BACKEND_IMAGE"; \
+kind-update-images: ## Update image references in deployments for kind using latest git SHA
+	@echo "🔄 Updating image references for kind cluster..."
+	@echo "   Current Git SHA: $(GIT_SHA)"
+	@BACKEND_IMAGE="ideaforge-ai-backend:$(GIT_SHA)"; \
+	FRONTEND_IMAGE="ideaforge-ai-frontend:$(GIT_SHA)"; \
+	\
+	# Check if images with GIT_SHA tag exist, if not check for latest
+	if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^$${BACKEND_IMAGE}$$"; then \
+		if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^ideaforge-ai-backend:latest$$"; then \
+			BACKEND_IMAGE="ideaforge-ai-backend:latest"; \
+			echo "   ⚠️  Backend image with tag $(GIT_SHA) not found, using latest"; \
+		else \
+			echo "❌ Backend image not found. Please run 'make build-apps' first."; \
+			exit 1; \
+		fi; \
 	else \
-		echo "⚠️  Backend image not found. Please run 'make build-apps' first."; \
-		exit 1; \
+		echo "   ✅ Found backend image: $${BACKEND_IMAGE}"; \
 	fi; \
-	if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^ideaforge-ai-frontend:$(GIT_SHA)$$"; then \
-		FRONTEND_IMAGE="ideaforge-ai-frontend:$(GIT_SHA)"; \
-		echo "   Using frontend image: $$FRONTEND_IMAGE"; \
-	elif docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^ideaforge-ai-frontend:latest$$"; then \
-		FRONTEND_IMAGE="ideaforge-ai-frontend:latest"; \
-		echo "   Using frontend image: $$FRONTEND_IMAGE"; \
+	\
+	if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^$${FRONTEND_IMAGE}$$"; then \
+		if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^ideaforge-ai-frontend:latest$$"; then \
+			FRONTEND_IMAGE="ideaforge-ai-frontend:latest"; \
+			echo "   ⚠️  Frontend image with tag $(GIT_SHA) not found, using latest"; \
+		else \
+			echo "❌ Frontend image not found. Please run 'make build-apps' first."; \
+			exit 1; \
+		fi; \
 	else \
-		echo "⚠️  Frontend image not found. Please run 'make build-apps' first."; \
-		exit 1; \
+		echo "   ✅ Found frontend image: $${FRONTEND_IMAGE}"; \
 	fi; \
-	if [ "$$(uname)" = "Darwin" ]; then \
-		sed -i '' "s|image:.*ideaforge-ai-backend:.*|image: $$BACKEND_IMAGE|g" $(K8S_DIR)/backend.yaml; \
-		sed -i '' "s|imagePullPolicy:.*|imagePullPolicy: Never|g" $(K8S_DIR)/backend.yaml; \
-		sed -i '' "s|image:.*ideaforge-ai-frontend:.*|image: $$FRONTEND_IMAGE|g" $(K8S_DIR)/frontend.yaml; \
-		sed -i '' "s|imagePullPolicy:.*|imagePullPolicy: Never|g" $(K8S_DIR)/frontend.yaml; \
-	else \
-		sed -i "s|image:.*ideaforge-ai-backend:.*|image: $$BACKEND_IMAGE|g" $(K8S_DIR)/backend.yaml; \
-		sed -i "s|imagePullPolicy:.*|imagePullPolicy: Never|g" $(K8S_DIR)/backend.yaml; \
-		sed -i "s|image:.*ideaforge-ai-frontend:.*|image: $$FRONTEND_IMAGE|g" $(K8S_DIR)/frontend.yaml; \
-		sed -i "s|imagePullPolicy:.*|imagePullPolicy: Never|g" $(K8S_DIR)/frontend.yaml; \
-	fi; \
-	echo "✅ Image references updated to use local images (imagePullPolicy: Never)"
+	\
+	# Update deployments directly using kubectl (no file modification needed)
+	echo "   Updating backend deployment to use: $${BACKEND_IMAGE}"; \
+	kubectl set image deployment/backend backend=$${BACKEND_IMAGE} -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) || \
+		(echo "⚠️  Backend deployment not found, will be created on next apply" && true); \
+	\
+	echo "   Updating frontend deployment to use: $${FRONTEND_IMAGE}"; \
+	kubectl set image deployment/frontend frontend=$${FRONTEND_IMAGE} -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) || \
+		(echo "⚠️  Frontend deployment not found, will be created on next apply" && true); \
+	\
+	echo "✅ Image references updated: backend=$${BACKEND_IMAGE}, frontend=$${FRONTEND_IMAGE}"
 
 rebuild-and-deploy: build-apps ## Rebuild apps and deploy to docker-compose
 	@echo "🚀 Rebuilding and deploying to docker-compose..."
@@ -564,6 +569,47 @@ rebuild-and-deploy-kind: build-apps kind-load-images kind-update-images ## Rebui
 	fi
 	@$(MAKE) kind-deploy-internal
 	@echo "✅ Deployment to kind complete!"
+
+kind-deploy-full: ## Complete kind cluster setup: create cluster, setup ingress, build images, load secrets, deploy, seed database, verify access
+	@echo "🚀 Complete Kind Cluster Setup"
+	@echo "=============================="
+	@echo ""
+	@echo "Step 1: Checking Docker..."
+	@docker info > /dev/null 2>&1 && echo "✅ Docker is running" || (echo "⚠️  Docker not running, attempting to start..." && open -a Docker 2>/dev/null && sleep 5 && timeout=30 elapsed=0 && while ! docker info > /dev/null 2>&1 && [ $$elapsed -lt $$timeout ]; do sleep 2; elapsed=$$((elapsed+2)); done && docker info > /dev/null 2>&1 && echo "✅ Docker is now running" || (echo "❌ Docker failed to start - please start Docker Desktop manually" && exit 1))
+	@echo ""
+	@echo "Step 2: Creating kind cluster..."
+	@$(MAKE) kind-create
+	@echo ""
+	@echo "Step 3: Setting up ingress controller..."
+	@$(MAKE) kind-setup-ingress
+	@echo ""
+	@echo "Step 4: Building application images..."
+	@$(MAKE) build-apps
+	@echo ""
+	@echo "Step 5: Loading images into kind cluster..."
+	@$(MAKE) kind-load-images
+	@echo ""
+	@echo "Step 6: Loading secrets from .env file..."
+	@$(MAKE) kind-load-secrets
+	@echo ""
+	@echo "Step 7: Deploying application..."
+	@$(MAKE) kind-update-images
+	@$(MAKE) kind-deploy-internal
+	@echo ""
+	@echo "Step 8: Verifying access..."
+	@$(MAKE) kind-verify-access
+	@echo ""
+	@echo "Step 9: Verifying demo accounts..."
+	@$(MAKE) kind-verify-demo-accounts || echo "⚠️  Demo account verification failed - run 'make kind-seed-database' to seed accounts"
+	@echo ""
+	@echo "✅ Complete setup finished!"
+	@echo ""
+	@$(MAKE) kind-show-access-info
+	@echo ""
+	@echo "📝 Demo Account Credentials:"
+	@echo "   Email: admin@ideaforge.ai (or user1@ideaforge.ai, user2@ideaforge.ai, etc.)"
+	@echo "   Password: password123"
+	@echo ""
 
 kind-deploy: kind-create kind-setup-ingress kind-load-images ## Deploy to kind cluster (creates cluster, installs ingress, loads images, deploys)
 	@echo "🚀 Deploying to kind cluster..."
@@ -599,6 +645,9 @@ kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manif
 		exit 1; \
 	fi
 	@kubectl apply -f $(K8S_DIR)/kind/ --context kind-$(KIND_CLUSTER_NAME) --recursive
+	@echo "📈 Applying HorizontalPodAutoscalers for auto-scaling..."
+	@kubectl apply -f $(K8S_DIR)/kind/hpa-backend.yaml --context kind-$(KIND_CLUSTER_NAME) || echo "⚠️  HPA may not be available in kind cluster (requires metrics-server)"
+	@kubectl apply -f $(K8S_DIR)/kind/hpa-frontend.yaml --context kind-$(KIND_CLUSTER_NAME) || echo "⚠️  HPA may not be available in kind cluster (requires metrics-server)"
 	@if ! kubectl get secret ideaforge-ai-secrets -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) &>/dev/null; then \
 		echo "⚠️  secrets not found, creating default secrets..."; \
 		echo "   Run 'make kind-load-secrets' to load from .env file"; \
@@ -661,6 +710,15 @@ kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manif
 		 kubectl logs -n $(K8S_NAMESPACE) job/db-setup --context kind-$(KIND_CLUSTER_NAME) --tail=50 && \
 		 echo "   Continuing with deployment...")
 	@echo "✅ Database setup complete"
+	@echo "🌱 Running database seeding job..."
+	@kubectl delete job db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
+	@kubectl apply -f $(K8S_DIR)/kind/db-seed-job.yaml --context kind-$(KIND_CLUSTER_NAME)
+	@echo "⏳ Waiting for database seeding job to complete..."
+	@kubectl wait --for=condition=complete job/db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=120s || \
+		(echo "⚠️  Database seeding job did not complete, checking logs..." && \
+		 kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=50 && \
+		 echo "⚠️  Continuing anyway...")
+	@echo "✅ Database seeding complete"
 	@kubectl apply -f $(K8S_DIR)/backend.yaml --context kind-$(KIND_CLUSTER_NAME)
 	@kubectl apply -f $(K8S_DIR)/frontend.yaml --context kind-$(KIND_CLUSTER_NAME)
 	@echo "⏳ Waiting for application pods to be ready..."
@@ -670,35 +728,128 @@ kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manif
 	@echo "🤖 Initializing Agno framework..."
 	@$(MAKE) kind-agno-init || echo "⚠️  Agno initialization skipped"
 	@echo "🌐 Applying ingress for kind..."
-	@if [ -f $(K8S_DIR)/ingress-kind.yaml ]; then \
+	@if [ -f $(K8S_DIR)/kind/ingress.yaml ]; then \
+		kubectl apply -f $(K8S_DIR)/kind/ingress.yaml --context kind-$(KIND_CLUSTER_NAME); \
+	elif [ -f $(K8S_DIR)/ingress-kind.yaml ]; then \
 		kubectl apply -f $(K8S_DIR)/ingress-kind.yaml --context kind-$(KIND_CLUSTER_NAME); \
 	else \
 		echo "⚠️  ingress-kind.yaml not found, using default ingress"; \
 		kubectl apply -f $(K8S_DIR)/ingress.yaml --context kind-$(KIND_CLUSTER_NAME); \
 	fi
+	@echo "✅ Ingress applied"
 	@echo ""
 	@echo "✅ Deployment complete!"
 	@echo ""
-	@INGRESS_PORT=$$(docker ps --filter "name=$(KIND_CLUSTER_NAME)-control-plane" --format "{{.Ports}}" | grep -o "0.0.0.0:[0-9]*->80" | cut -d: -f2 | cut -d- -f1 || echo "80"); \
-	echo "🌐 Access the application:"; \
-	echo "   Method 1 - Direct access (port $$INGRESS_PORT):"; \
-	echo "     Frontend: http://localhost:$$INGRESS_PORT/"; \
-	echo "     Backend API: http://localhost:$$INGRESS_PORT/api/"; \
-	echo "     Backend Health: http://localhost:$$INGRESS_PORT/health"; \
-	echo ""; \
-	echo "   Method 2 - With host headers:"; \
-	echo "     Frontend: curl -H 'Host: ideaforge.local' http://localhost:$$INGRESS_PORT/"; \
-	echo "     Backend: curl -H 'Host: api.ideaforge.local' http://localhost:$$INGRESS_PORT/"; \
-	echo ""; \
-	echo "   Method 3 - Add to /etc/hosts (then use hostnames):"; \
-	echo "     sudo sh -c 'echo \"127.0.0.1 ideaforge.local api.ideaforge.local\" >> /etc/hosts'"; \
-	echo "     Frontend: http://ideaforge.local"; \
-	echo "     Backend API: http://api.ideaforge.local"; \
-	echo ""; \
-	echo "   Method 4 - Port forward (recommended for development):"; \
-	echo "     make kind-port-forward"
+	@$(MAKE) kind-show-access-info
 	@echo ""
 	@$(MAKE) kind-status
+
+kind-verify-access: ## Verify application access via ingress
+	@echo "🔍 Verifying application access..."
+	@INGRESS_PORT=$$(docker ps --filter "name=$(KIND_CLUSTER_NAME)-control-plane" --format "{{.Ports}}" | grep -o "0.0.0.0:[0-9]*->80" | cut -d: -f2 | cut -d- -f1 || echo "8080"); \
+	echo "   Testing ingress on port $$INGRESS_PORT..."; \
+	echo ""; \
+	echo "   Testing frontend..."; \
+	if curl -s -f http://localhost:$$INGRESS_PORT/ > /dev/null 2>&1; then \
+		echo "   ✅ Frontend accessible at http://localhost:$$INGRESS_PORT/"; \
+	else \
+		echo "   ❌ Frontend not accessible"; \
+	fi; \
+	echo "   Testing backend health..."; \
+	if curl -s -f http://localhost:$$INGRESS_PORT/health > /dev/null 2>&1; then \
+		echo "   ✅ Backend health accessible at http://localhost:$$INGRESS_PORT/health"; \
+	else \
+		echo "   ❌ Backend health not accessible"; \
+	fi; \
+	echo "   Testing backend API..."; \
+	if curl -s -f http://localhost:$$INGRESS_PORT/api/health > /dev/null 2>&1; then \
+		echo "   ✅ Backend API accessible at http://localhost:$$INGRESS_PORT/api/"; \
+	else \
+		echo "   ❌ Backend API not accessible"; \
+	fi; \
+	echo ""
+
+kind-verify-demo-accounts: ## Verify demo accounts exist and can login
+	@echo "👥 Verifying Demo Accounts"
+	@echo "=========================="
+	@INGRESS_PORT=$$(docker ps --filter "name=$(KIND_CLUSTER_NAME)-control-plane" --format "{{.Ports}}" | grep -o "0.0.0.0:[0-9]*->80" | cut -d: -f2 | cut -d- -f1 || echo "8080"); \
+	echo ""; \
+	echo "1️⃣  Checking demo accounts in database..."; \
+	POSTGRES_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$POSTGRES_POD" ]; then \
+		echo "   ❌ PostgreSQL pod not found"; \
+		exit 1; \
+	fi; \
+	USER_COUNT=$$(kubectl exec -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) $$POSTGRES_POD -- psql -U agentic_pm -d agentic_pm_db -t -c "SELECT COUNT(*) FROM user_profiles WHERE email LIKE '%@ideaforge.ai';" 2>/dev/null | xargs || echo "0"); \
+	if [ "$$USER_COUNT" -gt "0" ]; then \
+		echo "   ✅ Found $$USER_COUNT demo accounts"; \
+		kubectl exec -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) $$POSTGRES_POD -- psql -U agentic_pm -d agentic_pm_db -c "SELECT email, full_name, is_active FROM user_profiles WHERE email LIKE '%@ideaforge.ai' ORDER BY email LIMIT 5;" 2>/dev/null | grep -E "@ideaforge.ai|Admin|User" | head -5 || true; \
+	else \
+		echo "   ⚠️  No demo accounts found. Run 'make kind-seed-database' to seed demo accounts."; \
+	fi; \
+	echo ""; \
+	echo "2️⃣  Testing demo account login..."; \
+	LOGIN_RESPONSE=$$(curl -s -X POST http://localhost:$$INGRESS_PORT/api/auth/login -H "Content-Type: application/json" -d '{"email":"admin@ideaforge.ai","password":"password123"}' 2>/dev/null); \
+	if echo "$$LOGIN_RESPONSE" | grep -q "token"; then \
+		TOKEN=$$(echo "$$LOGIN_RESPONSE" | grep -o '"token":"[^"]*"' | cut -d'"' -f4); \
+		if [ -n "$$TOKEN" ]; then \
+			echo "   ✅ Demo account login successful (admin@ideaforge.ai)"; \
+			echo "   Testing authenticated API call..."; \
+			USER_INFO=$$(curl -s http://localhost:$$INGRESS_PORT/api/auth/me -H "Authorization: Bearer $$TOKEN" 2>/dev/null); \
+			if echo "$$USER_INFO" | grep -q "email"; then \
+				USER_EMAIL=$$(echo "$$USER_INFO" | grep -o '"email":"[^"]*"' | cut -d'"' -f4); \
+				USER_NAME=$$(echo "$$USER_INFO" | grep -o '"full_name":"[^"]*"' | cut -d'"' -f4); \
+				echo "   ✅ Authenticated API call successful"; \
+				echo "   User: $$USER_NAME ($$USER_EMAIL)"; \
+			else \
+				echo "   ⚠️  Authenticated API call failed"; \
+			fi; \
+		else \
+			echo "   ❌ Login failed - no token received"; \
+		fi; \
+	else \
+		echo "   ❌ Demo account login failed"; \
+		echo "   Response: $$LOGIN_RESPONSE" | head -3; \
+	fi; \
+	echo ""; \
+	echo "3️⃣  Testing additional demo accounts..."; \
+	for email in user1@ideaforge.ai user2@ideaforge.ai; do \
+		TEST_RESPONSE=$$(curl -s -X POST http://localhost:$$INGRESS_PORT/api/auth/login -H "Content-Type: application/json" -d "{\"email\":\"$$email\",\"password\":\"password123\"}" 2>/dev/null); \
+		if echo "$$TEST_RESPONSE" | grep -q "token"; then \
+			echo "   ✅ $$email login successful"; \
+		else \
+			echo "   ⚠️  $$email login failed"; \
+		fi; \
+	done; \
+	echo ""; \
+	echo "✅ Demo account verification complete"
+
+kind-show-access-info: ## Show all access methods for the application
+	@echo "🌐 Application Access Information"
+	@echo "================================"
+	@INGRESS_PORT=$$(docker ps --filter "name=$(KIND_CLUSTER_NAME)-control-plane" --format "{{.Ports}}" | grep -o "0.0.0.0:[0-9]*->80" | cut -d: -f2 | cut -d- -f1 || echo "8080"); \
+	echo ""; \
+	echo "📍 Primary Access Method (Ingress on port $$INGRESS_PORT):"; \
+	echo "   Frontend:     http://localhost:$$INGRESS_PORT/"; \
+	echo "   Backend API:  http://localhost:$$INGRESS_PORT/api/"; \
+	echo "   Health Check: http://localhost:$$INGRESS_PORT/health"; \
+	echo "   Swagger Docs: http://localhost:$$INGRESS_PORT/api/docs"; \
+	echo ""; \
+	echo "📍 Alternative Access Methods:"; \
+	echo "   1. With host headers:"; \
+	echo "      Frontend: curl -H 'Host: ideaforge.local' http://localhost:$$INGRESS_PORT/"; \
+	echo "      Backend:  curl -H 'Host: api.ideaforge.local' http://localhost:$$INGRESS_PORT/"; \
+	echo ""; \
+	echo "   2. Add to /etc/hosts (then use hostnames):"; \
+	echo "      sudo sh -c 'echo \"127.0.0.1 ideaforge.local api.ideaforge.local\" >> /etc/hosts'"; \
+	echo "      Frontend: http://ideaforge.local:$$INGRESS_PORT"; \
+	echo "      Backend:  http://api.ideaforge.local:$$INGRESS_PORT"; \
+	echo ""; \
+	echo "   3. Port forward (separate ports):"; \
+	echo "      make kind-port-forward"; \
+	echo "      Frontend: http://localhost:3001"; \
+	echo "      Backend:  http://localhost:8000"; \
+	echo ""
 
 kind-port-forward: ## Port forward frontend and backend services for local access
 	@echo "🔌 Setting up port forwarding..."
@@ -788,6 +939,88 @@ kind-cleanup: ## Clean up kind cluster deployment (keeps cluster)
 	@echo "🧹 Cleaning up kind cluster deployment..."
 	@kubectl delete namespace $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
 	@echo "✅ Cleanup complete (cluster still exists, use 'make kind-delete' to remove cluster)"
+
+kind-cleanup-replicasets: ## Clean up old replicasets with 0 replicas
+	@echo "🧹 Cleaning up old replicasets..."
+	@kubectl get replicasets -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -o json 2>/dev/null | \
+		jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' | \
+		while read rs; do \
+			if [ -n "$$rs" ]; then \
+				echo "   Deleting replicaset: $$rs"; \
+				kubectl delete replicaset $$rs -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true; \
+			fi; \
+		done || echo "⚠️  No replicasets to clean up or cluster not accessible"
+	@echo "✅ Replicaset cleanup complete"
+
+kind-check-logs-before-commit: ## Check all pod logs for errors and Agno initialization (run before commit)
+	@echo "🔍 Checking pod logs before commit..."
+	@echo ""
+	@echo "=== Backend Logs (Errors) ==="
+	@kubectl logs -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) --tail=200 2>/dev/null | \
+		grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | \
+		grep -v "warning" | grep -v "WARNING" | head -20 || echo "✅ No errors found"
+	@echo ""
+	@echo "=== Agno Initialization Status ==="
+	@kubectl logs -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) --tail=200 2>/dev/null | \
+		grep -E "(agno.*initialized|agno_enabled.*true|agno_orchestrator_initialized)" | tail -5 || \
+		echo "⚠️  Agno initialization not found in logs"
+	@echo ""
+	@echo "=== Frontend Logs (Errors) ==="
+	@kubectl logs -n $(K8S_NAMESPACE) -l app=frontend --context kind-$(KIND_CLUSTER_NAME) --tail=200 2>/dev/null | \
+		grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | \
+		grep -v "warning" | grep -v "WARNING" | head -20 || echo "✅ No errors found"
+	@echo ""
+	@echo "✅ Log check complete"
+
+verify-kind-complete: ## Complete verification: pods, replicasets, image tags, secrets, Agno initialization, demo accounts
+	@echo "🔍 Complete Verification for Kind Cluster"
+	@echo "=========================================="
+	@echo ""
+	@echo "1️⃣  Checking Pod Status..."
+	@kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) 2>/dev/null || (echo "❌ Cluster not accessible"; exit 1)
+	@echo ""
+	@echo "2️⃣  Checking for Old Replicasets..."
+	@OLD_RS=$$(kubectl get replicasets -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -o json 2>/dev/null | \
+		jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' | wc -l | tr -d ' '); \
+	if [ "$$OLD_RS" -gt 0 ]; then \
+		echo "⚠️  Found $$OLD_RS old replicasets. Run 'make kind-cleanup-replicasets' to clean up"; \
+	else \
+		echo "✅ No old replicasets found"; \
+	fi
+	@echo ""
+	@echo "3️⃣  Checking Image Tags..."
+	@CURRENT_SHA=$$(git rev-parse --short HEAD 2>/dev/null || echo "unknown"); \
+	BACKEND_IMAGE=$$(kubectl get deployment backend -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null); \
+	FRONTEND_IMAGE=$$(kubectl get deployment frontend -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null); \
+	echo "   Current Git SHA: $$CURRENT_SHA"; \
+	echo "   Backend Image: $$BACKEND_IMAGE"; \
+	echo "   Frontend Image: $$FRONTEND_IMAGE"; \
+	if echo "$$BACKEND_IMAGE" | grep -q "$$CURRENT_SHA" && echo "$$FRONTEND_IMAGE" | grep -q "$$CURRENT_SHA"; then \
+		echo "✅ Image tags match current git SHA"; \
+	else \
+		echo "⚠️  Image tags may not match current git SHA"; \
+	fi
+	@echo ""
+	@echo "4️⃣  Checking Docker Config Secrets..."
+	@kubectl get secrets -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) 2>/dev/null | grep dockerconfig || echo "ℹ️  No dockerconfig secrets (using public images)"
+	@echo ""
+	@echo "5️⃣  Checking Agno Initialization..."
+	@kubectl logs -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) --tail=100 2>/dev/null | \
+		grep -E "(agno.*initialized|agno_enabled.*true|agno_orchestrator_initialized)" | tail -3 || \
+		echo "⚠️  Agno initialization not found in logs"
+	@echo ""
+	@echo "6️⃣  Checking Provider Configuration..."
+	@kubectl exec -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -- \
+		python -c "from backend.services.provider_registry import provider_registry; print('Providers:', provider_registry.get_configured_providers())" 2>/dev/null | \
+		grep -v "warning\|no_embedder" | tail -1 || echo "⚠️  Could not check provider configuration"
+	@echo ""
+	@echo "7️⃣  Verifying Application Access..."
+	@$(MAKE) kind-verify-access
+	@echo ""
+	@echo "8️⃣  Verifying Demo Accounts..."
+	@$(MAKE) kind-verify-demo-accounts || echo "⚠️  Demo account verification failed"
+	@echo ""
+	@echo "✅ Verification complete"
 
 eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespace (use EKS_NAMESPACE=your-namespace). Uses GitHub PAT from .env or EKS_GITHUB_TOKEN env var.
 	@echo "🔐 Setting up GitHub Container Registry secret..."
@@ -1060,7 +1293,25 @@ kind-update-db-configmaps: ## Update database ConfigMaps in Kind with latest see
 	@K8S_NAMESPACE=$(K8S_NAMESPACE) bash $(K8S_DIR)/create-db-configmaps.sh
 	@echo "✅ ConfigMaps updated"
 
-kind-add-demo-accounts: ## Add demo accounts to existing Kind database
+kind-seed-database: ## Run database seeding job in Kind cluster (can be invoked separately)
+	@echo "🌱 Running database seeding job in Kind cluster..."
+	@if ! kubectl get namespace $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) &>/dev/null; then \
+		echo "❌ Namespace $(K8S_NAMESPACE) does not exist"; \
+		echo "   Please deploy the application first: make kind-deploy"; \
+		exit 1; \
+	fi
+	@kubectl delete job db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
+	@kubectl apply -f $(K8S_DIR)/kind/db-seed-job.yaml --context kind-$(KIND_CLUSTER_NAME)
+	@echo "⏳ Waiting for database seeding job to complete..."
+	@kubectl wait --for=condition=complete job/db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=120s || \
+		(echo "⚠️  Database seeding job did not complete, checking logs..." && \
+		 kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=50 && \
+		 exit 1)
+	@echo "✅ Database seeding complete"
+	@echo "📊 Verifying seeded data..."
+	@kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=20 | grep -E "tenants|demo_users|products" || true
+
+kind-add-demo-accounts: ## Add demo accounts to existing Kind database (legacy method, use kind-seed-database instead)
 	@echo "👥 Adding demo accounts to Kind database..."
 	@POSTGRES_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
 	if [ -z "$$POSTGRES_POD" ]; then \

@@ -29,13 +29,19 @@ elif not raw_db_url.startswith("postgresql+asyncpg://"):
 else:
     DATABASE_URL = raw_db_url
 
-# Create async engine
+# Create async engine with optimized pool settings for 200+ concurrent users
+# pool_size: Base pool size per pod (10 connections)
+# max_overflow: Additional connections allowed beyond pool_size (20 connections)
+# With 10 backend pods, this allows up to 300 concurrent DB connections (10 pods * 30 connections)
+# For 200+ concurrent users, we need: ~2-3 pods minimum, scaling to 10+ pods under load
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    pool_pre_ping=True,  # Verify connections before using
+    pool_size=15,  # Increased from 10 to 15 for better concurrency
+    max_overflow=25,  # Increased from 20 to 25 for peak load
+    pool_recycle=3600,  # Recycle connections after 1 hour
+    pool_timeout=30,  # Timeout for getting connection from pool
 )
 
 # Create session factory
