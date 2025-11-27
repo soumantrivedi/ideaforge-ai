@@ -18,7 +18,7 @@ import { getValidatedApiUrl } from '../lib/runtime-config';
 const API_URL = getValidatedApiUrl();
 import { useAuth } from '../contexts/AuthContext';
 import { lifecycleService, type LifecyclePhase, type PhaseSubmission } from '../lib/product-lifecycle-service';
-import { saveAppState, loadAppState } from '../lib/session-storage';
+import { saveAppState, loadAppState, resetProductState, clearAppState } from '../lib/session-storage';
 
 type View = 'dashboard' | 'chat' | 'settings' | 'knowledge' | 'portfolio' | 'history' | 'profile' | 'scoring';
 
@@ -106,6 +106,14 @@ export function MainApp() {
       loadSubmissions();
       // Also reload phases when product changes to ensure fresh data
       loadPhases();
+      
+      // Reset any corrupted state when switching products
+      // This ensures clean state for each product
+      const prevProductId = savedState?.productId;
+      if (prevProductId && prevProductId !== productId) {
+        console.log('MainApp: Product changed, resetting previous product state');
+        resetProductState(prevProductId);
+      }
     } else {
       console.log('MainApp: Skipping data load', { productId, hasToken: !!token });
     }
@@ -194,6 +202,34 @@ export function MainApp() {
     }
   };
 
+  // Helper function to reset state when switching products
+  const handleProductChange = (newProductId: string) => {
+    const prevProductId = productId;
+    
+    // If switching to a different product, reset previous product's state
+    if (prevProductId && prevProductId !== newProductId) {
+      console.log('MainApp: Switching products, resetting state', { from: prevProductId, to: newProductId });
+      resetProductState(prevProductId);
+    }
+    
+    // Reset UI state for new product
+    setProductId(newProductId);
+    setCurrentPhase(null);
+    setSubmissions([]);
+    setActiveAgents([]);
+    setAgentInteractions([]);
+    setValidationModalOpen(false);
+    setValidationData(null);
+    setIsFormModalOpen(false);
+    
+    // Reload data for new product
+    if (newProductId && token) {
+      lifecycleService.setToken(token);
+      loadSubmissions();
+      loadPhases();
+    }
+  };
+
   const handleFormSubmit = async (formData: Record<string, string>) => {
     if (!productId || !currentPhase || !user || !token) return;
     
@@ -214,6 +250,20 @@ export function MainApp() {
         
         // Reload submissions to update UI
         await loadSubmissions();
+        
+        // Reset any corrupted UI state after design phase completion
+        // This prevents UI distortion issues
+        setTimeout(() => {
+          // Force a UI refresh by resetting current phase state
+          const currentPhaseId = currentPhase.id;
+          setCurrentPhase(null);
+          setTimeout(() => {
+            const phase = phases.find(p => p.id === currentPhaseId);
+            if (phase) {
+              setCurrentPhase(phase);
+            }
+          }, 100);
+        }, 500);
         
         return; // Don't proceed with multi-agent generation
       }
@@ -647,7 +697,7 @@ export function MainApp() {
               onProductSelect={(id) => {
                 console.log('Dashboard: Product selected:', id);
                 if (id) {
-                  setProductId(id);
+                  handleProductChange(id);
                   setView('chat');
                 } else {
                   console.error('Dashboard: Invalid product ID received:', id);
@@ -660,7 +710,7 @@ export function MainApp() {
               onProductSelect={(id) => {
                 console.log('PortfolioView onProductSelect called with:', id);
                 if (id) {
-                  setProductId(id);
+                  handleProductChange(id);
                   setView('chat');
                 } else {
                   console.error('PortfolioView onProductSelect received invalid id:', id);
@@ -693,7 +743,7 @@ export function MainApp() {
                           onProductSelect={(id) => {
                             console.log('Chat view (left): Product selected:', id);
                             if (id) {
-                              setProductId(id);
+                              handleProductChange(id);
                             } else {
                               console.error('Chat view (left): Invalid product ID received:', id);
                             }
@@ -720,7 +770,7 @@ export function MainApp() {
                           onProductSelect={(id) => {
                             console.log('Chat view (right): Product selected:', id);
                             if (id) {
-                              setProductId(id);
+                              handleProductChange(id);
                             } else {
                               console.error('Chat view (right): Invalid product ID received:', id);
                             }
@@ -762,7 +812,7 @@ export function MainApp() {
                     onProductSelect={(id) => {
                       console.log('Knowledge Base view: Product selected:', id);
                       if (id) {
-                        setProductId(id);
+                        handleProductChange(id);
                       } else {
                         console.error('Knowledge Base view: Invalid product ID received:', id);
                       }
@@ -793,7 +843,7 @@ export function MainApp() {
                       onProductSelect={(id) => {
                         console.log('Scoring view: Product selected:', id);
                         if (id) {
-                          setProductId(id);
+                          handleProductChange(id);
                         }
                       }}
                       compact={true}
@@ -806,7 +856,7 @@ export function MainApp() {
                       <IdeaScoreDashboard
                         tenantId={user.tenant_id}
                         onProductSelect={(id) => {
-                          setProductId(id);
+                          handleProductChange(id);
                           setView('scoring');
                         }}
                       />
@@ -851,7 +901,7 @@ export function MainApp() {
                       <IdeaScoreDashboard
                         productId={productId}
                         onProductSelect={(id) => {
-                          setProductId(id);
+                          handleProductChange(id);
                         }}
                       />
                     </div>
