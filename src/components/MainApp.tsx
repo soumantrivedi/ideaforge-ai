@@ -46,6 +46,8 @@ export function MainApp() {
     agentInteractions: any[];
     submissionId?: string;
   } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState<string>('');
 
   useEffect(() => {
     if (token) {
@@ -313,6 +315,7 @@ export function MainApp() {
 
       // Show loading indicator
       setLoading(true);
+      setLoadingMessage('Submitting request...');
       let progressMessage = 'Submitting request...';
 
       try {
@@ -321,8 +324,8 @@ export function MainApp() {
           token,
           onProgress: (status) => {
             progressMessage = status.message || `Processing... ${Math.round((status.progress || 0) * 100)}%`;
+            setLoadingMessage(progressMessage);
             console.log('Job progress:', status);
-            // You could update UI here with progress
           },
           pollInterval: 2000, // Poll every 2 seconds
           maxPollAttempts: 150, // 5 minutes max
