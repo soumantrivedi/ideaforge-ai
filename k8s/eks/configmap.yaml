@@ -28,9 +28,9 @@ data:
   AGENT_RESPONSE_TIMEOUT: "45.0"  # Timeout in seconds (45s to avoid Cloudflare 60s timeout, leaving 15s buffer for network/processing overhead)
   
   # Async Job Processing Configuration
-  JOB_POLL_INTERVAL_MS: "5000"  # Polling interval in milliseconds (5 seconds default, configurable for load management)
-  JOB_MAX_POLL_ATTEMPTS: "60"  # Maximum polling attempts (5 minutes at 5s intervals)
-  JOB_TIMEOUT_MS: "300000"  # Job timeout in milliseconds (5 minutes)
+  JOB_POLL_INTERVAL_MS: "10000"  # Polling interval in milliseconds (10 seconds for 400+ concurrent users)
+  JOB_MAX_POLL_ATTEMPTS: "60"  # Maximum polling attempts (10 minutes at 10s intervals)
+  JOB_TIMEOUT_MS: "600000"  # Job timeout in milliseconds (10 minutes max, but response sent immediately when ready)
   
   # Frontend Configuration
   # Use relative path /api so frontend nginx proxies to backend service internally

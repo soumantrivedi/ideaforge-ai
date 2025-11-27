@@ -7,7 +7,7 @@
 
 /**
  * Get polling interval from runtime config or use default
- * Default: 5000ms (5 seconds) - reduced from 2000ms to lower network load
+ * Default: 10000ms (10 seconds) - optimized for 400+ concurrent users
  */
 export function getJobPollInterval(): number {
   // Check for runtime configuration (injected by entrypoint script)
@@ -18,13 +18,13 @@ export function getJobPollInterval(): number {
     }
   }
   
-  // Default: 5 seconds (5000ms) - better for 400+ concurrent users
-  return 5000;
+  // Default: 10 seconds (10000ms) - optimized for 400+ concurrent users
+  return 10000;
 }
 
 /**
  * Get max polling attempts from runtime config or use default
- * Default: 60 attempts (5 minutes at 5s intervals)
+ * Default: 60 attempts (10 minutes at 10s intervals)
  */
 export function getJobMaxPollAttempts(): number {
   if (typeof window !== 'undefined' && '__JOB_MAX_POLL_ATTEMPTS__' in window) {
@@ -34,13 +34,13 @@ export function getJobMaxPollAttempts(): number {
     }
   }
   
-  // Default: 60 attempts (5 minutes at 5s intervals)
+  // Default: 60 attempts (10 minutes at 10s intervals)
   return 60;
 }
 
 /**
  * Get job timeout from runtime config or use default
- * Default: 300000ms (5 minutes)
+ * Default: 600000ms (10 minutes) - max timeout, but response sent immediately when ready
  */
 export function getJobTimeout(): number {
   if (typeof window !== 'undefined' && '__JOB_TIMEOUT_MS__' in window) {
@@ -50,7 +50,7 @@ export function getJobTimeout(): number {
     }
   }
   
-  // Default: 5 minutes (300000ms)
-  return 300000;
+  // Default: 10 minutes (600000ms) - max timeout, but response sent immediately when ready
+  return 600000;
 }
 
