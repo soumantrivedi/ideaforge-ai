@@ -134,29 +134,9 @@ export function EnhancedChatInterface({
                 Export PRD
               </button>
             )}
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-purple-500" />
-              <span className="text-xs font-medium text-purple-600">Enhanced Mode</span>
-            </div>
           </div>
         </div>
 
-        <div className="flex gap-2 flex-wrap">
-          {(Object.keys(modeConfig) as CoordinationMode[]).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => onCoordinationModeChange(mode)}
-              className={`px-3 py-2 rounded-xl text-xs font-medium transition border ${
-                coordinationMode === mode
-                  ? modeConfig[mode].color
-                  : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
-              }`}
-            >
-              <span className="mr-1">{modeConfig[mode].icon}</span>
-              {modeConfig[mode].label}
-            </button>
-          ))}
-        </div>
         {coordinationMode && (
           <p className="text-xs text-gray-500 mt-2 pl-1">
             {modeConfig[coordinationMode].description}

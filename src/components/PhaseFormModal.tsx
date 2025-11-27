@@ -1573,7 +1573,7 @@ export function PhaseFormModal({
                     ) : (
                       <>
                         <Send className="w-4 h-4" />
-                        Generate with AI
+                        Save To Chat
                       </>
                     )}
                   </button>

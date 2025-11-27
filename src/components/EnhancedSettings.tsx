@@ -356,7 +356,7 @@ export function EnhancedSettings() {
             <label className="block text-sm font-medium text-gray-700 mb-3">
               Theme
             </label>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4">
               <button
                 onClick={() => setTheme('light')}
                 className={`p-4 rounded-xl border-2 transition ${
@@ -367,28 +367,6 @@ export function EnhancedSettings() {
               >
                 <Sun className="w-8 h-8 mx-auto mb-2 text-yellow-600" />
                 <p className="text-sm font-medium">Light</p>
-              </button>
-              <button
-                onClick={() => setTheme('dark')}
-                className={`p-4 rounded-xl border-2 transition ${
-                  theme === 'dark'
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <Moon className="w-8 h-8 mx-auto mb-2 text-gray-800" />
-                <p className="text-sm font-medium">Dark</p>
-              </button>
-              <button
-                onClick={() => setTheme('retro')}
-                className={`p-4 rounded-xl border-2 transition ${
-                  theme === 'retro'
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <Sparkles className="w-8 h-8 mx-auto mb-2 text-purple-600" />
-                <p className="text-sm font-medium">Retro</p>
               </button>
             </div>
           </div>

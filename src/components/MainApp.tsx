@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight, BarChart3, Star } from 'lucide-react';
+import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight, BarChart3, Star, Bot, Activity, Zap, CheckCircle2, Circle } from 'lucide-react';
 import { ProductChatInterface } from './ProductChatInterface';
 import { AgentStatusPanel } from './AgentStatusPanel';
 import { ProductLifecycleSidebar } from './ProductLifecycleSidebar';
@@ -722,7 +722,7 @@ export function MainApp() {
                   </div>
                 )}
               </div>
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-[2] overflow-y-auto">
                 {productId ? (
                   <ProductChatInterface
                     productId={productId}
@@ -749,12 +749,75 @@ export function MainApp() {
                   </div>
                 )}
               </div>
-              <div className="w-64">
-                <div className="sticky top-0 h-[calc(100vh-8rem)] overflow-y-auto">
-                <AgentStatusPanel 
-                  agents={activeAgents} 
-                  agentInteractions={agentInteractions}
-                />
+              <div className="w-16 flex flex-col items-center py-4 gap-2">
+                <div className="sticky top-4">
+                  {activeAgents.length > 0 ? (
+                    activeAgents.map((agent: any) => {
+                      const getAgentIcon = (role: string) => {
+                        const icons: Record<string, string> = {
+                          general: '🤖',
+                          research: '🔬',
+                          coding: '💻',
+                          creative: '✨',
+                          analysis: '📊',
+                          rag: '📚',
+                          ideation: '💡',
+                          prd_authoring: '📝',
+                          summary: '📄',
+                          scoring: '⭐',
+                          validation: '✅',
+                          export: '📤',
+                          v0: '🎨',
+                          lovable: '🎭',
+                          github_mcp: '🐙',
+                          atlassian_mcp: '🔷',
+                        };
+                        return icons[role] || '🤖';
+                      };
+                      const getAgentColor = (role: string) => {
+                        const colors: Record<string, string> = {
+                          general: 'from-blue-500 to-cyan-500',
+                          research: 'from-green-500 to-emerald-500',
+                          coding: 'from-orange-500 to-amber-500',
+                          creative: 'from-pink-500 to-rose-500',
+                          analysis: 'from-purple-500 to-violet-500',
+                          rag: 'from-teal-500 to-cyan-500',
+                          ideation: 'from-yellow-500 to-amber-500',
+                          prd_authoring: 'from-indigo-500 to-purple-500',
+                          summary: 'from-gray-500 to-slate-500',
+                          scoring: 'from-yellow-400 to-orange-500',
+                          validation: 'from-green-400 to-emerald-500',
+                          export: 'from-blue-400 to-cyan-500',
+                          v0: 'from-black to-gray-700',
+                          lovable: 'from-pink-400 to-rose-500',
+                          github_mcp: 'from-gray-700 to-gray-900',
+                          atlassian_mcp: 'from-blue-600 to-blue-800',
+                        };
+                        return colors[role] || 'from-gray-500 to-slate-500';
+                      };
+                      const agentRole = agent.role || agent.name?.toLowerCase().replace(/\s+/g, '_') || 'general';
+                      const agentName = agent.name || agent.role || 'Agent';
+                      return (
+                        <div
+                          key={agentRole}
+                          className="relative group mb-2"
+                          title={agentName}
+                        >
+                          <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${getAgentColor(agentRole)} flex items-center justify-center text-white text-xl shadow-lg cursor-pointer hover:scale-110 transition-transform`}>
+                            {getAgentIcon(agentRole)}
+                          </div>
+                          <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
+                            {agentName}
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-center text-xs text-gray-500 p-2">
+                      <Bot className="w-6 h-6 mx-auto mb-1 opacity-50" />
+                      <p>No active agents</p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
