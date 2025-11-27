@@ -69,6 +69,34 @@ timeout=30; elapsed=0; while ! docker info > /dev/null 2>&1 && [ $elapsed -lt $t
 13. Agent list documented (if agents added/modified)
 14. Integration examples provided (if new integrations)
 
+### Git Commit and Push Rules:
+
+**CRITICAL:** This repository has two remotes that must be kept in sync:
+- `origin`: `git@github.com:soumantrivedi/ideaforge-ai.git`
+- `mck-internal`: `org-62409820@github.com:McK-Internal/ideaforge-ai.git`
+
+### Before Pushing:
+1. **Fetch from both remotes**: `git fetch origin && git fetch mck-internal`
+2. **Check for diverged branches**: `git log --oneline --graph --all --decorate -10`
+3. **Merge if needed**: If remotes have diverged, merge before pushing:
+   ```bash
+   git fetch mck-internal
+   git merge mck-internal/main --no-edit
+   ```
+
+### Push Process:
+1. **Commit changes**: `git add <files> && git commit -m "message"`
+2. **Push to origin**: `git push origin main`
+3. **Push to mck-internal**: `git push mck-internal main`
+4. **Verify both remotes updated**: `git log --oneline --graph --all --decorate -5`
+
+### Alternative: Configure origin to push to both remotes:
+```bash
+git config remote.origin.pushurl 'git@github.com:soumantrivedi/ideaforge-ai.git'
+git config remote.origin.pushurl 'org-62409820@github.com:McK-Internal/ideaforge-ai.git' --add
+```
+Then `git push origin main` will push to both remotes automatically.
+
 ## Key Requirements Summary
 
 ### Must Always Verify:
