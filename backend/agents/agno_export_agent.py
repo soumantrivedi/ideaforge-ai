@@ -144,6 +144,7 @@ Your output should:
         phase_data: List[Dict[str, Any]],
         conversation_history: List[Dict[str, Any]],
         knowledge_base: List[Dict[str, Any]],
+        design_mockups: Optional[List[Dict[str, Any]]] = None,
         context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
@@ -156,6 +157,16 @@ Your output should:
             - recommendations: List[str]
             - warnings: List[str]
         """
+        # Format design mockups if available
+        design_mockups_text = ""
+        if design_mockups:
+            design_mockups_text = "\n**Design Prototypes:**\n"
+            for mockup in design_mockups:
+                provider = mockup.get('provider', 'unknown').upper()
+                status = mockup.get('project_status', 'unknown')
+                project_url = mockup.get('project_url', '')
+                design_mockups_text += f"- {provider} Prototype: Status={status}, URL={project_url}\n"
+        
         review_prompt = f"""Review the following product content for completeness before PRD export.
 
 **Phase Submissions:**
@@ -166,6 +177,7 @@ Your output should:
 
 **Knowledge Base:**
 {self._format_knowledge_articles(knowledge_base[:10])}  # Top 10 articles
+{design_mockups_text}
 
 **Review Criteria:**
 1. Check if market research is present (Market Research phase or research in conversation/knowledge base)
@@ -310,6 +322,7 @@ Respond in JSON format:
         phase_data: List[Dict[str, Any]],
         conversation_history: List[Dict[str, Any]],
         knowledge_base: List[Dict[str, Any]],
+        design_mockups: Optional[List[Dict[str, Any]]] = None,
         context: Optional[Dict[str, Any]] = None,
         override_missing: bool = False
     ) -> str:
@@ -335,6 +348,7 @@ Respond in JSON format:
                 phase_data=phase_data,
                 conversation_history=conversation_history,
                 knowledge_base=knowledge_base,
+                design_mockups=design_mockups,
                 context=context
             )
             context = context or {}
@@ -345,7 +359,7 @@ Respond in JSON format:
             phase_submissions=phase_data,
             conversation_history=conversation_history,
             knowledge_articles=knowledge_base,
-            context={**(context or {}), "product_info": product_info, "override_missing": override_missing}
+            context={**(context or {}), "product_info": product_info, "override_missing": override_missing, "design_mockups": design_mockups or []}
         )
         return response.response
 
@@ -370,6 +384,25 @@ Respond in JSON format:
         override_missing = context.get("override_missing", False) if context else False
         review_result = context.get("review_result") if context else None
         
+        # Format design mockups if available
+        design_mockups = context.get("design_mockups", []) if context else []
+        design_mockups_text = ""
+        if design_mockups:
+            design_mockups_text = "\n**Design Prototypes:**\n"
+            for mockup in design_mockups:
+                provider = mockup.get('provider', 'unknown').upper()
+                status = mockup.get('project_status', 'unknown')
+                project_url = mockup.get('project_url', '')
+                thumbnail_url = mockup.get('thumbnail_url') or mockup.get('image_url', '')
+                prompt = mockup.get('prompt', '')
+                design_mockups_text += f"""
+- **{provider} Prototype:**
+  - Status: {status}
+  - Prototype URL: {project_url}
+  - Thumbnail: {thumbnail_url if thumbnail_url else 'N/A'}
+  - Prompt Used: {prompt[:200] if prompt else 'N/A'}...
+"""
+        
         export_prompt = f"""Generate a comprehensive ICAgile-style PRD for Product ID: {product_id}
 
 **Phase Submissions (All Lifecycle Phases):**
@@ -380,14 +413,16 @@ Respond in JSON format:
 
 **Knowledge Base Articles:**
 {self._format_knowledge_articles(knowledge_articles)}
+{design_mockups_text}
 
 **Instructions:**
 1. Synthesize ALL information from the above sources
 2. Create a complete ICAgile PRD following the structure provided in your system prompt
 3. Ensure every section is comprehensive and detailed
 4. Reference specific information from phases, conversations, and knowledge base
-5. Make it actionable for engineering teams
-6. Follow ICAgile standards strictly"""
+5. Include design prototypes section with clickable links to prototypes
+6. Make it actionable for engineering teams
+7. Follow ICAgile standards strictly"""
 
         if override_missing and review_result:
             missing_sections = review_result.get("missing_sections", [])

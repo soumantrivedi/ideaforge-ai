@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle2, Circle, Lock, ChevronRight, Star, Lightbulb, Search, FileText, Palette, Settings, Rocket } from 'lucide-react';
 import type { LifecyclePhase, PhaseSubmission } from '../lib/product-lifecycle-service';
+import { getValidatedApiUrl } from '../lib/runtime-config';
+import { useAuth } from '../contexts/AuthContext';
+
+const API_URL = getValidatedApiUrl();
 
 interface ProductLifecycleSidebarProps {
   phases: LifecyclePhase[];
@@ -10,6 +14,13 @@ interface ProductLifecycleSidebarProps {
   productId?: string;
 }
 
+interface PhaseScore {
+  phase_name: string;
+  phase_id: string;
+  score: number;
+  status: 'complete' | 'incomplete' | 'missing';
+}
+
 export function ProductLifecycleSidebar({
   phases = [],
   submissions = [],
@@ -17,9 +28,11 @@ export function ProductLifecycleSidebar({
   onPhaseSelect,
   productId,
 }: ProductLifecycleSidebarProps) {
+  const { token } = useAuth();
   const [currentPhase, setCurrentPhase] = useState<string | null>(currentPhaseId || null);
   const [completedPhases, setCompletedPhases] = useState<Set<string>>(new Set());
   const [inProgressPhases, setInProgressPhases] = useState<Set<string>>(new Set());
+  const [phaseScores, setPhaseScores] = useState<Map<string, PhaseScore>>(new Map());
 
   useEffect(() => {
     const completed = new Set<string>();
@@ -38,6 +51,39 @@ export function ProductLifecycleSidebar({
     setCompletedPhases(completed);
     setInProgressPhases(inProgress);
   }, [submissions]);
+
+  // Load phase scores from progress report
+  useEffect(() => {
+    if (productId && token) {
+      loadPhaseScores();
+    }
+  }, [productId, token]);
+
+  const loadPhaseScores = async () => {
+    if (!productId || !token) return;
+    
+    try {
+      const response = await fetch(`${API_URL}/api/products/${productId}/progress-report`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.exists && data.phase_scores) {
+          const scoresMap = new Map<string, PhaseScore>();
+          data.phase_scores.forEach((score: PhaseScore) => {
+            scoresMap.set(score.phase_id, score);
+          });
+          setPhaseScores(scoresMap);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading phase scores:', error);
+    }
+  };
 
   const getPhaseStatus = (phase: LifecyclePhase, index: number) => {
     // All phases are now available - no sequential locking
@@ -162,32 +208,45 @@ export function ProductLifecycleSidebar({
 
                   {(() => {
                     const submission = submissions.find(s => s.phase_id === phase.id);
-                    const score = submission?.metadata?.validation_score;
+                    const reviewScore = phaseScores.get(phase.id);
+                    const hasCompletedOnce = status === 'completed' || status === 'reviewed';
                     
                     return (
                       <>
-                        {status === 'completed' && !isActive && (
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className="text-xs text-green-600 font-medium">
-                              ✓ Completed
-                            </span>
-                            {score !== undefined && (
-                              <div className="flex items-center gap-1 px-2 py-0.5 bg-yellow-50 rounded-full">
-                                <Star className={`w-3 h-3 ${score >= 4 ? 'text-yellow-500 fill-yellow-500' : score >= 3 ? 'text-yellow-400 fill-yellow-400' : 'text-yellow-300 fill-yellow-300'}`} />
-                                <span className="text-xs font-semibold text-yellow-700">{score}/5</span>
-                              </div>
-                            )}
+                        {hasCompletedOnce && reviewScore && (
+                          <div className="mt-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className={`text-xs font-medium ${isActive ? 'text-white/90' : 'text-gray-700'}`}>
+                                Quality Score
+                              </span>
+                              <span className={`text-xs font-bold ${
+                                reviewScore.score >= 80 ? 'text-green-600' :
+                                reviewScore.score >= 60 ? 'text-yellow-600' :
+                                'text-orange-600'
+                              }`}>
+                                {reviewScore.score}%
+                              </span>
+                            </div>
+                            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                              <div 
+                                className={`h-full rounded-full transition-all ${
+                                  reviewScore.score >= 80 ? 'bg-gradient-to-r from-green-500 to-emerald-500' :
+                                  reviewScore.score >= 60 ? 'bg-gradient-to-r from-yellow-500 to-amber-500' :
+                                  'bg-gradient-to-r from-orange-500 to-red-500'
+                                }`}
+                                style={{ width: `${reviewScore.score}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                        {status === 'completed' && !isActive && !reviewScore && (
+                          <div className="mt-2 text-xs text-green-600 font-medium">
+                            ✓ Completed
                           </div>
                         )}
                         {status === 'in_progress' && !isActive && (
                           <div className="mt-2 text-xs text-blue-600 font-medium">
                             ⚡ In Progress
-                          </div>
-                        )}
-                        {isActive && score !== undefined && (
-                          <div className="mt-2 flex items-center gap-1">
-                            <Star className="w-3 h-3 text-yellow-300 fill-yellow-300" />
-                            <span className="text-xs font-semibold text-white">Score: {score}/5</span>
                           </div>
                         )}
                       </>

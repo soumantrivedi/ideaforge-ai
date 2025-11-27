@@ -176,7 +176,80 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
         )
 
         response = await self.process([message], context={"task": "v0_prompt_generation"})
-        return response.response
+        prompt_text = response.response
+        
+        # Clean the prompt - remove headers/footers that AI might add
+        prompt_text = self._clean_v0_prompt(prompt_text)
+        
+        return prompt_text
+    
+    def _clean_v0_prompt(self, prompt: str) -> str:
+        """
+        Clean V0 prompt by removing instructional headers/footers.
+        Removes text like "Below is a V0-ready prompt..." and similar metadata.
+        """
+        if not prompt:
+            return prompt
+        
+        lines = prompt.split('\n')
+        cleaned_lines = []
+        skip_until_content = True
+        
+        # Patterns that indicate we should skip lines
+        skip_patterns = [
+            "below is a v0-ready prompt",
+            "below is a v0 prompt",
+            "v0-ready prompt",
+            "you can paste directly into",
+            "v0 api or v0 ui",
+            "written for `v0-1.5-md`",
+            "assumes react",
+            "assumes next.js",
+            "tailwind",
+            "shadcn/ui",
+            "---",
+            "===",
+        ]
+        
+        for line in lines:
+            line_lower = line.lower().strip()
+            
+            # Skip empty lines at the start
+            if skip_until_content and not line_lower:
+                continue
+            
+            # Check if this line matches a skip pattern
+            should_skip = any(pattern in line_lower for pattern in skip_patterns)
+            
+            if should_skip:
+                skip_until_content = True
+                continue
+            
+            # If we find actual content, start including lines
+            if line_lower and not should_skip:
+                skip_until_content = False
+                cleaned_lines.append(line)
+            elif not skip_until_content:
+                cleaned_lines.append(line)
+        
+        # Join and clean up
+        cleaned = '\n'.join(cleaned_lines).strip()
+        
+        # Remove any trailing metadata
+        if cleaned:
+            # Remove common trailing patterns
+            trailing_patterns = [
+                "\n\n---\n",
+                "\n\n===\n",
+                "\n\nNote:",
+                "\n\nThis prompt",
+                "\n\nYou can",
+            ]
+            for pattern in trailing_patterns:
+                if cleaned.endswith(pattern) or pattern in cleaned[-100:]:
+                    cleaned = cleaned[:cleaned.rfind(pattern)].strip()
+        
+        return cleaned if cleaned else prompt
 
     async def generate_design_mockup(
         self,
@@ -186,80 +259,27 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
     ) -> Dict[str, Any]:
         """
         Generate a design mockup using Vercel V0 API.
-        Based on official Vercel V0 API documentation: https://v0.dev/api
         
-        V0 API uses OpenAI-compatible chat completions endpoint.
+        Workflow:
+        1. Create a new V0 chat by posting the prompt
+        2. Get the prototype link from the response
+        
+        Based on official Vercel V0 API documentation: https://v0.dev/api
+        Uses /v1/chats endpoint to create a chat and get a live prototype URL.
         """
         api_key = v0_api_key or settings.v0_api_key
         
         if not api_key:
             raise ValueError("V0 API key is not configured")
         
-        # Vercel V0 API endpoint (official API)
-        # Documentation: https://v0.dev/api
-        # Uses OpenAI-compatible chat completions format
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            try:
-                # V0 API endpoint for generating UI components
-                response = await client.post(
-                    "https://api.v0.dev/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json"
-                    },
-                    json={
-                        "model": "v0-1.5-md",  # V0's specialized model for UI generation
-                        "messages": [
-                            {
-                                "role": "user",
-                                "content": v0_prompt
-                            }
-                        ],
-                        "temperature": 0.7,
-                        "max_tokens": 4000
-                    }
-                )
-                
-                if response.status_code == 401:
-                    raise ValueError("V0 API key is invalid or unauthorized")
-                elif response.status_code != 200:
-                    error_text = response.text
-                    try:
-                        error_json = response.json()
-                        error_text = error_json.get("error", {}).get("message", error_text)
-                    except:
-                        pass
-                    raise ValueError(f"V0 API error: {response.status_code} - {error_text}")
-                
-                result = response.json()
-                
-                # Extract generated code and metadata
-                generated_content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                
-                # V0 returns React/Next.js code - we need to create a project
-                # For now, return the code and prompt for manual creation
-                # In future, we can use Vercel API to create a project automatically
-                return {
-                    "code": generated_content,
-                    "prompt": v0_prompt,
-                    "model": "v0-1.5-md",
-                    "project_url": None,  # Will be set when project is created
-                    "image_url": None,  # Will be set when screenshot is captured
-                    "thumbnail_url": None,
-                    "metadata": {
-                        "api_version": "v1",
-                        "model_used": "v0-1.5-md",
-                        "tokens_used": result.get("usage", {}).get("total_tokens", 0)
-                    }
-                }
-                
-            except httpx.TimeoutException:
-                raise ValueError("V0 API request timed out. Please try again.")
-            except httpx.RequestError as e:
-                raise ValueError(f"V0 API connection error: {str(e)}")
-            except Exception as e:
-                logger.error("v0_api_error", error=str(e), api_key_length=len(api_key) if api_key else 0)
-                raise ValueError(f"V0 API error: {str(e)}")
+        # Use the same workflow as create_v0_project_with_api
+        # This ensures consistency and proper prototype link generation
+        return await self.create_v0_project_with_api(
+            v0_prompt=v0_prompt,
+            v0_api_key=api_key,
+            user_id=user_id,
+            product_id=None
+        )
     
     async def create_v0_project(
         self,
@@ -307,18 +327,36 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
     ) -> Dict[str, Any]:
         """
         Create a V0 project using the V0 Platform API.
-        Uses v0.chats.create() to create a project and get a live demo URL.
+        
+        Complete async workflow:
+        1. Create a new V0 chat by posting the prompt to /v1/chats
+        2. Extract chat_id, demo_url, web_url from response
+        3. Return prototype link for sharing
+        
+        Based on official Vercel V0 API documentation: https://v0.dev/api
+        Reference: https://v0.app/docs/api/platform/adapters/ai-tools
         """
         api_key = v0_api_key or settings.v0_api_key
         
         if not api_key:
             raise ValueError("V0 API key is not configured")
         
+        # Log the workflow start
+        logger.info("v0_project_workflow_start",
+                   user_id=user_id,
+                   product_id=product_id,
+                   prompt_length=len(v0_prompt) if v0_prompt else 0)
+        
         # Disable SSL verification for V0 API (as requested)
         async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
             try:
-                # V0 Platform API endpoint for creating projects
-                # Documentation: https://v0.dev/api
+                # Step 1: Create V0 chat and post prompt in one async call
+                # This creates a new project and generates the prototype
+                logger.info("v0_api_request",
+                           endpoint="https://api.v0.dev/v1/chats",
+                           method="POST",
+                           user_id=user_id)
+                
                 response = await client.post(
                     "https://api.v0.dev/v1/chats",
                     headers={
@@ -327,36 +365,75 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                     },
                     json={
                         "message": v0_prompt,
-                        "model": "v0-1.5-md"
+                        "model": "v0-1.5-md",
+                        "scope": "mckinsey"
                     }
                 )
                 
+                logger.info("v0_api_response",
+                           status_code=response.status_code,
+                           user_id=user_id)
+                
+                # Handle different error cases
                 if response.status_code == 401:
-                    raise ValueError("V0 API key is invalid or unauthorized")
-                elif response.status_code != 200 and response.status_code != 201:
+                    logger.error("v0_api_auth_failed",
+                               user_id=user_id,
+                               status_code=401)
+                    raise ValueError("V0 API key is invalid or unauthorized. Please check your API key in Settings.")
+                elif response.status_code == 402:
+                    # Payment required - credits exhausted
+                    error_text = response.text
+                    error_detail = ""
+                    try:
+                        error_json = response.json()
+                        error_detail = error_json.get("detail", error_json.get("error", {}).get("message", error_text))
+                        if isinstance(error_detail, dict):
+                            error_detail = error_detail.get("message", str(error_detail))
+                    except:
+                        error_detail = error_text
+                    logger.error("v0_api_credits_exhausted",
+                               user_id=user_id,
+                               status_code=402,
+                               error_detail=error_detail[:200])
+                    raise ValueError(f"V0 API credits exhausted or payment required: {error_detail}")
+                elif response.status_code not in [200, 201]:
                     error_text = response.text
                     try:
                         error_json = response.json()
                         error_text = error_json.get("error", {}).get("message", error_text)
+                        if isinstance(error_text, dict):
+                            error_text = error_text.get("message", str(error_text))
                     except:
                         pass
+                    logger.error("v0_api_error",
+                               user_id=user_id,
+                               status_code=response.status_code,
+                               error_text=error_text[:200])
                     raise ValueError(f"V0 API error: {response.status_code} - {error_text}")
                 
+                # Step 2: Extract project information from response
                 result = response.json()
                 
-                # Extract project information
                 chat_id = result.get("id") or result.get("chat_id")
                 web_url = result.get("webUrl") or result.get("web_url") or result.get("url")
                 demo_url = result.get("demo") or result.get("demoUrl") or result.get("demo_url")
                 files = result.get("files", [])
-                code = "\n\n".join([f.get("content", "") for f in files if f.get("content")])
+                code = result.get("code") or "\n\n".join([f.get("content", "") for f in files if f.get("content")])
                 
-                # Use demo URL if available, otherwise web URL
-                project_url = demo_url or web_url or f"https://v0.dev/chat/{chat_id}" if chat_id else None
+                # Step 3: Determine the prototype URL (priority: demo_url > web_url > chat_url)
+                project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                
+                logger.info("v0_project_created",
+                           user_id=user_id,
+                           chat_id=chat_id,
+                           has_demo=bool(demo_url),
+                           has_web_url=bool(web_url),
+                           project_url=project_url,
+                           num_files=len(files))
                 
                 return {
                     "chat_id": chat_id,
-                    "project_url": project_url,
+                    "project_url": project_url,  # Main prototype link to share
                     "web_url": web_url,
                     "demo_url": demo_url,
                     "code": code,
@@ -368,15 +445,27 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                         "api_version": "v1",
                         "model_used": "v0-1.5-md",
                         "num_files": len(files),
-                        "has_demo": demo_url is not None
+                        "has_demo": demo_url is not None,
+                        "has_web_url": web_url is not None,
+                        "workflow": "create_chat_and_get_prototype"
                     }
                 }
                 
             except httpx.TimeoutException:
+                logger.error("v0_api_timeout", user_id=user_id)
                 raise ValueError("V0 API request timed out. Please try again.")
             except httpx.RequestError as e:
+                logger.error("v0_api_connection_error",
+                           user_id=user_id,
+                           error=str(e))
                 raise ValueError(f"V0 API connection error: {str(e)}")
+            except ValueError:
+                # Re-raise ValueError as-is (already formatted)
+                raise
             except Exception as e:
-                logger.error("v0_project_creation_error", error=str(e), api_key_length=len(api_key) if api_key else 0)
+                logger.error("v0_project_creation_error",
+                           error=str(e),
+                           user_id=user_id,
+                           api_key_length=len(api_key) if api_key else 0)
                 raise ValueError(f"V0 API error: {str(e)}")
 

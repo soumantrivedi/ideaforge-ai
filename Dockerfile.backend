@@ -38,6 +38,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY backend ./backend
 COPY mcp-servers ./mcp-servers
 
+# Copy migrations for automatic application on startup
+COPY supabase/migrations ./migrations
+COPY init-db/migrations ./migrations-local
+
 # Expose port
 EXPOSE 8000
 

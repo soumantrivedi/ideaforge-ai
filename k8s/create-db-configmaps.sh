@@ -25,11 +25,27 @@ if ! $KUBECTL_CMD get namespace "$NAMESPACE" &>/dev/null; then
 fi
 
 # Create ConfigMap for migrations
+# Include both init-db/migrations and supabase/migrations to ensure all migrations are captured
 echo "🔄 Creating ConfigMap for database migrations..."
+# Create a temporary directory with all migrations
+TEMP_MIGRATIONS=$(mktemp -d)
+trap "rm -rf $TEMP_MIGRATIONS" EXIT
+
+# Copy all migrations from both directories
+if [ -d "$PROJECT_ROOT/init-db/migrations" ]; then
+  cp "$PROJECT_ROOT/init-db/migrations"/*.sql "$TEMP_MIGRATIONS/" 2>/dev/null || true
+fi
+if [ -d "$PROJECT_ROOT/supabase/migrations" ]; then
+  cp "$PROJECT_ROOT/supabase/migrations"/*.sql "$TEMP_MIGRATIONS/" 2>/dev/null || true
+fi
+
+# Create ConfigMap from combined migrations
 $KUBECTL_CMD create configmap db-migrations \
   --namespace="$NAMESPACE" \
-  --from-file="$PROJECT_ROOT/init-db/migrations/" \
+  --from-file="$TEMP_MIGRATIONS/" \
   --dry-run=client -o yaml | $KUBECTL_CMD apply -f -
+
+echo "   ✅ Created ConfigMap with $(ls -1 $TEMP_MIGRATIONS/*.sql 2>/dev/null | wc -l | xargs) migration files"
 
 # Create ConfigMap for seed data
 echo "🌱 Creating ConfigMap for seed data..."

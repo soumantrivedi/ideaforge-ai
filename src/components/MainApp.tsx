@@ -13,6 +13,7 @@ import { ConversationHistory } from './ConversationHistory';
 import { UserProfile } from './UserProfile';
 import { IdeaScoreDashboard } from './IdeaScoreDashboard';
 import { ProductSummaryPRDGenerator } from './ProductSummaryPRDGenerator';
+import { MyProgress } from './MyProgress';
 import { getValidatedApiUrl } from '../lib/runtime-config';
 import { getJobPollInterval, getJobMaxPollAttempts, getJobTimeout } from '../lib/job-config';
 
@@ -59,6 +60,7 @@ export function MainApp() {
 
   // Listen for agent interactions updates
   useEffect(() => {
+    // Define all event handlers first before using them
     const handleAgentInteractionsUpdate = (event: Event) => {
       const customEvent = event as CustomEvent;
       if (customEvent.detail) {
@@ -86,7 +88,24 @@ export function MainApp() {
       }
     };
 
-    window.addEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
+    // Listen for navigate to chat event (from Save to Chat)
+    const handleNavigateToChat = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail && customEvent.detail.productId === productId) {
+        setView('chat');
+        setIsFormModalOpen(false);
+        
+        // If focusChat is requested, dispatch event to focus chat input
+        if (customEvent.detail.focusChat) {
+          // Use setTimeout to ensure view has switched before focusing
+          setTimeout(() => {
+            window.dispatchEvent(new CustomEvent('focusChatInput', {
+              detail: { productId }
+            }));
+          }, 100);
+        }
+      }
+    };
     
     // Listen for phase navigation events from ExportPRDModal
     const handleNavigateToPhase = (event: Event) => {
@@ -99,17 +118,28 @@ export function MainApp() {
         }
       }
     };
+
+    // Listen for phase submission updates to refresh the sidebar
+    const handlePhaseSubmissionUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail && customEvent.detail.productId === productId) {
+        loadSubmissions();
+      }
+    };
     
+    // Now register all event listeners
+    window.addEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
+    window.addEventListener('navigateToChat', handleNavigateToChat);
     window.addEventListener('navigateToPhase', handleNavigateToPhase);
+    window.addEventListener('phaseSubmissionUpdated', handlePhaseSubmissionUpdated);
     
     return () => {
       window.removeEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
       window.removeEventListener('navigateToPhase', handleNavigateToPhase);
+      window.removeEventListener('navigateToChat', handleNavigateToChat);
+      window.removeEventListener('phaseSubmissionUpdated', handlePhaseSubmissionUpdated);
     };
-    return () => {
-      window.removeEventListener('agentInteractionsUpdated', handleAgentInteractionsUpdate);
-    };
-  }, []);
+  }, [productId, phases]);
 
   // Save app state to sessionStorage whenever it changes
   useEffect(() => {
@@ -674,17 +704,19 @@ export function MainApp() {
         {/* Main Content */}
         <main className="flex-1 p-6">
           {view === 'dashboard' && (
-            <ProductsDashboard
-              onProductSelect={(id) => {
-                console.log('Dashboard: Product selected:', id);
-                if (id) {
-                  handleProductChange(id);
-                  setView('chat');
-                } else {
-                  console.error('Dashboard: Invalid product ID received:', id);
-                }
-              }}
-            />
+            <div className="w-full h-full overflow-y-auto">
+              <ProductsDashboard
+                onProductSelect={(id) => {
+                  console.log('Dashboard: Product selected:', id);
+                  if (id) {
+                    handleProductChange(id);
+                    setView('chat');
+                  } else {
+                    console.error('Dashboard: Invalid product ID received:', id);
+                  }
+                }}
+              />
+            </div>
           )}
           {view === 'portfolio' && (
             <PortfolioView
@@ -700,20 +732,21 @@ export function MainApp() {
             />
           )}
           {view === 'chat' && (
-            <div className="flex gap-6 h-[calc(100vh-8rem)] relative">
-              <div className="flex-1">
+            <div className="flex gap-4 h-[calc(100vh-8rem)] relative">
+              {/* Left Sidebar - Product Lifecycle (1/3) */}
+              <div className="flex-[1] min-w-0 hidden lg:block">
                 {productId ? (
                   <div className="sticky top-0 h-[calc(100vh-8rem)] overflow-y-auto">
-                  <ProductLifecycleSidebar
-                    phases={phases || []}
-                    submissions={submissions || []}
-                    currentPhaseId={currentPhase?.id}
-                    onPhaseSelect={(phase) => {
-                      setCurrentPhase(phase);
-                      setIsFormModalOpen(true);
-                    }}
-                    productId={productId}
-                  />
+                    <ProductLifecycleSidebar
+                      phases={phases || []}
+                      submissions={submissions || []}
+                      currentPhaseId={currentPhase?.id}
+                      onPhaseSelect={(phase) => {
+                        setCurrentPhase(phase);
+                        setIsFormModalOpen(true);
+                      }}
+                      productId={productId}
+                    />
                   </div>
                 ) : (
                   <div className="h-full flex items-center justify-center rounded-xl border" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
@@ -736,7 +769,8 @@ export function MainApp() {
                   </div>
                 )}
               </div>
-              <div className="flex-[2] overflow-y-auto">
+              {/* Chatbot - Always 2/3 of screen */}
+              <div className="flex-[2] min-w-0 overflow-y-auto">
                 {productId ? (
                   <ProductChatInterface
                     productId={productId}
@@ -763,77 +797,101 @@ export function MainApp() {
                   </div>
                 )}
               </div>
-              <div className="w-16 flex flex-col items-center py-4 gap-2">
-                <div className="sticky top-4">
-                  {activeAgents.length > 0 ? (
-                    activeAgents.map((agent: any) => {
-                      const getAgentIcon = (role: string) => {
-                        const icons: Record<string, string> = {
-                          general: '🤖',
-                          research: '🔬',
-                          coding: '💻',
-                          creative: '✨',
-                          analysis: '📊',
-                          rag: '📚',
-                          ideation: '💡',
-                          prd_authoring: '📝',
-                          summary: '📄',
-                          scoring: '⭐',
-                          validation: '✅',
-                          export: '📤',
-                          v0: '🎨',
-                          lovable: '🎭',
-                          github_mcp: '🐙',
-                          atlassian_mcp: '🔷',
-                        };
-                        return icons[role] || '🤖';
-                      };
-                      const getAgentColor = (role: string) => {
-                        const colors: Record<string, string> = {
-                          general: 'from-blue-500 to-cyan-500',
-                          research: 'from-green-500 to-emerald-500',
-                          coding: 'from-orange-500 to-amber-500',
-                          creative: 'from-pink-500 to-rose-500',
-                          analysis: 'from-purple-500 to-violet-500',
-                          rag: 'from-teal-500 to-cyan-500',
-                          ideation: 'from-yellow-500 to-amber-500',
-                          prd_authoring: 'from-indigo-500 to-purple-500',
-                          summary: 'from-gray-500 to-slate-500',
-                          scoring: 'from-yellow-400 to-orange-500',
-                          validation: 'from-green-400 to-emerald-500',
-                          export: 'from-blue-400 to-cyan-500',
-                          v0: 'from-black to-gray-700',
-                          lovable: 'from-pink-400 to-rose-500',
-                          github_mcp: 'from-gray-700 to-gray-900',
-                          atlassian_mcp: 'from-blue-600 to-blue-800',
-                        };
-                        return colors[role] || 'from-gray-500 to-slate-500';
-                      };
-                      const agentRole = agent.role || agent.name?.toLowerCase().replace(/\s+/g, '_') || 'general';
-                      const agentName = agent.name || agent.role || 'Agent';
-                      return (
-                        <div
-                          key={agentRole}
-                          className="relative group mb-2"
-                          title={agentName}
-                        >
-                          <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${getAgentColor(agentRole)} flex items-center justify-center text-white text-xl shadow-lg cursor-pointer hover:scale-110 transition-transform`}>
-                            {getAgentIcon(agentRole)}
-                          </div>
-                          <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
-                            {agentName}
-                          </div>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="text-center text-xs text-gray-500 p-2">
-                      <Bot className="w-6 h-6 mx-auto mb-1 opacity-50" />
-                      <p>No active agents</p>
-                    </div>
-                  )}
+              {/* Right Sidebar - Agent Network & Review Progress (hidden on smaller screens) */}
+              {productId ? (
+                <div className="w-20 lg:w-80 flex flex-col gap-4 flex-shrink-0 hidden md:flex">
+                  <div className="flex-shrink-0">
+                    <AgentStatusPanel
+                      agents={activeAgents}
+                      agentInteractions={agentInteractions}
+                    />
+                  </div>
+                  <div className="flex-shrink-0 hidden lg:block">
+                    <MyProgress
+                      productId={productId}
+                      onNavigateToPhase={(phaseId) => {
+                        const phase = phases.find(p => p.id === phaseId);
+                        if (phase) {
+                          setCurrentPhase(phase);
+                          setIsFormModalOpen(true);
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="w-16 flex flex-col items-center py-4 gap-2 flex-shrink-0 hidden md:flex">
+                  <div className="sticky top-4">
+                    {activeAgents.length > 0 ? (
+                      activeAgents.map((agent: any) => {
+                        const getAgentIcon = (role: string) => {
+                          const icons: Record<string, string> = {
+                            general: '🤖',
+                            research: '🔬',
+                            coding: '💻',
+                            creative: '✨',
+                            analysis: '📊',
+                            rag: '📚',
+                            ideation: '💡',
+                            prd_authoring: '📝',
+                            summary: '📄',
+                            scoring: '⭐',
+                            validation: '✅',
+                            export: '📤',
+                            v0: '🎨',
+                            lovable: '🎭',
+                            github_mcp: '🐙',
+                            atlassian_mcp: '🔷',
+                          };
+                          return icons[role] || '🤖';
+                        };
+                        const getAgentColor = (role: string) => {
+                          const colors: Record<string, string> = {
+                            general: 'from-blue-500 to-cyan-500',
+                            research: 'from-green-500 to-emerald-500',
+                            coding: 'from-orange-500 to-amber-500',
+                            creative: 'from-pink-500 to-rose-500',
+                            analysis: 'from-purple-500 to-violet-500',
+                            rag: 'from-teal-500 to-cyan-500',
+                            ideation: 'from-yellow-500 to-amber-500',
+                            prd_authoring: 'from-indigo-500 to-purple-500',
+                            summary: 'from-gray-500 to-slate-500',
+                            scoring: 'from-yellow-400 to-orange-500',
+                            validation: 'from-green-400 to-emerald-500',
+                            export: 'from-blue-400 to-cyan-500',
+                            v0: 'from-black to-gray-700',
+                            lovable: 'from-pink-400 to-rose-500',
+                            github_mcp: 'from-gray-700 to-gray-900',
+                            atlassian_mcp: 'from-blue-600 to-blue-800',
+                          };
+                          return colors[role] || 'from-gray-500 to-slate-500';
+                        };
+                        const agentRole = agent.role || agent.name?.toLowerCase().replace(/\s+/g, '_') || 'general';
+                        const agentName = agent.name || agent.role || 'Agent';
+                        return (
+                          <div
+                            key={agentRole}
+                            className="relative group mb-2"
+                            title={agentName}
+                          >
+                            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${getAgentColor(agentRole)} flex items-center justify-center text-white text-xl shadow-lg cursor-pointer hover:scale-110 transition-transform`}>
+                              {getAgentIcon(agentRole)}
+                            </div>
+                            <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
+                              {agentName}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="text-center text-xs text-gray-500 p-2">
+                        <Bot className="w-6 h-6 mx-auto mb-1 opacity-50" />
+                        <p>No active agents</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {view === 'history' && (

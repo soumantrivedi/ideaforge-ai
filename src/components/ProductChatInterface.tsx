@@ -49,28 +49,29 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
       if (customEvent.detail && customEvent.detail.productId === productId && customEvent.detail.message) {
         console.log('ProductChatInterface: Received phaseFormGenerated event', {
           productId: customEvent.detail.productId,
-          messageLength: customEvent.detail.message?.length || 0
+          messageLength: customEvent.detail.message?.length || 0,
+          phaseName: customEvent.detail.phaseName,
+          allFieldsCompleted: customEvent.detail.allFieldsCompleted
         });
         
-        // Add the generated message to chat
-        const assistantMessage: MultiAgentMessage = {
-          role: 'assistant',
+        // Add the generated message to chat as user message (the phase content)
+        const userMessage: MultiAgentMessage = {
+          role: 'user',
           content: customEvent.detail.message,
-          agentName: 'Multi-Agent System',
           timestamp: new Date().toISOString(),
         };
         
         setMessages((prev) => {
           // Avoid duplicates by checking last message
           const lastMessage = prev[prev.length - 1];
-          if (lastMessage && lastMessage.content === assistantMessage.content) {
+          if (lastMessage && lastMessage.content === userMessage.content) {
             console.log('ProductChatInterface: Duplicate message detected, skipping');
             return prev;
           }
-          console.log('ProductChatInterface: Adding message to chat', {
+          console.log('ProductChatInterface: Adding phase content to chat', {
             totalMessages: prev.length + 1
           });
-          const updatedMessages = [...prev, assistantMessage];
+          const updatedMessages = [...prev, userMessage];
           // Save to sessionStorage
           saveChatSession(productId, {
             messages: updatedMessages,
@@ -80,6 +81,30 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
           });
           return updatedMessages;
         });
+
+        // Auto-send follow-up question asking if user wants to process the content
+        if (customEvent.detail.allFieldsCompleted && customEvent.detail.phaseName) {
+          const phaseName = customEvent.detail.phaseName;
+          // Map phase names to processing questions
+          const processingQuestions: Record<string, string> = {
+            'Ideation': 'Do you want me to create comprehensive ideation content using this information?',
+            'Market Research': 'Do you want me to analyze and process this market research data?',
+            'Requirements': 'Do you want me to process these requirements and create a requirements document?',
+            'Design': 'Do you want me to process these design prompts and create design mockups?',
+            'Development Planning': 'Do you want me to process this development planning information?',
+            'Go-to-Market': 'Do you want me to process this go-to-market strategy?',
+          };
+
+          const followUpQuestion = processingQuestions[phaseName] || `Do you want me to process this ${phaseName} phase content?`;
+          
+          // Wait a moment for the UI to update, then auto-send the follow-up question
+          // Use a ref to access the latest handleSendMessage
+          setTimeout(() => {
+            if (token && productId) {
+              handleSendMessage(followUpQuestion);
+            }
+          }, 800);
+        }
       } else {
         console.warn('ProductChatInterface: Invalid phaseFormGenerated event', {
           hasDetail: !!customEvent.detail,
@@ -93,7 +118,7 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
     return () => {
       window.removeEventListener('phaseFormGenerated', handlePhaseFormGenerated);
     };
-  }, [productId]);
+  }, [productId, agentInteractions, activeAgents, coordinationMode]);
 
   const handleSendMessage = async (content: string) => {
     if (!token || !productId) return;

@@ -48,15 +48,25 @@ spec:
             echo "   ✅ Tables already exist ($$TABLE_COUNT tables), skipping base schema"
           fi
           
-          # Run migrations
+          # Run migrations in sorted order
           echo "🔄 Running database migrations..."
           if [ -d /migrations ]; then
-            for migration in /migrations/*.sql; do
+            # Sort migrations by filename to ensure correct order
+            for migration in $$(ls -1 /migrations/*.sql 2>/dev/null | sort); do
               if [ -f "$$migration" ]; then
-                echo "   Running migration: $$(basename $$migration)"
-                psql -h postgres -U agentic_pm -d agentic_pm_db -f "$$migration" 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
+                migration_name=$$(basename $$migration)
+                echo "   Running migration: $$migration_name"
+                # Run migration and capture output
+                psql -h postgres -U agentic_pm -d agentic_pm_db -f "$$migration" 2>&1 | \
+                  grep -v "NOTICE" | \
+                  grep -v "^$" | \
+                  grep -v "already exists" | \
+                  grep -v "does not exist" || true
+                echo "   ✅ Migration $$migration_name completed"
               fi
             done
+          else
+            echo "   ⚠️  Migrations directory /migrations not found"
           fi
           echo "✅ Migrations complete"
           

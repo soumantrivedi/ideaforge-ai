@@ -159,92 +159,40 @@ export function AgentStatusPanel({
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-6">
-      <div className="flex items-center gap-3 mb-6">
+    <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-4">
+      <div className="flex items-center justify-center mb-4">
         <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl">
-          <Activity className="w-5 h-5 text-white" />
-        </div>
-        <div>
-          <h3 className="font-bold text-gray-900">Agent Network</h3>
-          <p className="text-xs text-gray-600">
-            {displayAgents.filter((a) => a.isActive).length} active
-          </p>
+          <Activity className="w-4 h-4 text-white" />
         </div>
       </div>
 
-      <div className="space-y-3">
+      <div className="flex flex-wrap gap-2 justify-center">
         {displayAgents.length === 0 ? (
-          <div className="text-center py-8 text-gray-500 text-sm">
-            <p>No active agents. Start a conversation to see agent activity.</p>
+          <div className="text-center py-4 text-gray-500 text-xs w-full">
+            <p>No active agents</p>
           </div>
         ) : (
           displayAgents.map((agent) => {
             const latestInteraction = agent.latestInteraction || getLatestInteraction(agent.role);
             return (
-              <div key={agent.role}>
+              <div key={agent.role} className="relative group">
                 <button
                   onClick={() => handleAgentClick(agent)}
-                  className={`w-full p-4 rounded-xl border-2 transition hover:shadow-md ${
-                    expandedAgent === agent.role
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-100 bg-white hover:border-gray-200'
+                  className={`w-10 h-10 rounded-xl bg-gradient-to-br ${getAgentColor(
+                    agent.role
+                  )} flex items-center justify-center text-white text-lg shadow-lg hover:scale-110 transition-transform ${
+                    expandedAgent === agent.role ? 'ring-2 ring-blue-500' : ''
                   }`}
+                  title={agent.name}
                 >
-                  <div className="flex items-start gap-3">
-                    <div
-                      className={`w-12 h-12 rounded-xl bg-gradient-to-br ${getAgentColor(
-                        agent.role
-                      )} flex items-center justify-center text-white text-xl shadow-lg flex-shrink-0`}
-                    >
-                      {getAgentIcon(agent.role)}
-                    </div>
-
-                    <div className="flex-1 text-left min-w-0">
-                      <div className="flex items-center justify-between mb-1">
-                        <h4 className="font-semibold text-sm text-gray-900 truncate">
-                          {agent.name}
-                        </h4>
-                        {agent.isActive ? (
-                          <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
-                        ) : (
-                          <Circle className="w-4 h-4 text-gray-300 flex-shrink-0" />
-                        )}
-                      </div>
-
-                      {agent.confidence !== undefined && (
-                        <div className="mb-2">
-                          <div className="flex items-center justify-between text-xs mb-1">
-                            <span className="text-gray-600">Confidence</span>
-                            <span className="font-medium text-gray-900">
-                              {(agent.confidence * 100).toFixed(0)}%
-                            </span>
-                          </div>
-                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full bg-gradient-to-r ${getAgentColor(
-                                agent.role
-                              )} transition-all`}
-                              style={{ width: `${agent.confidence * 100}%` }}
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {agent.interactions !== undefined && agent.interactions > 0 && (
-                        <div className="flex items-center gap-1 text-xs text-gray-600">
-                          <Zap className="w-3 h-3" />
-                          <span>{agent.interactions} interactions</span>
-                        </div>
-                      )}
-
-                      {agent.lastActivity && (
-                        <p className="text-xs text-gray-500 mt-1 truncate">
-                          {agent.lastActivity}
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                  {getAgentIcon(agent.role)}
+                  {agent.isActive && (
+                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
+                  )}
                 </button>
+                <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
+                  {agent.name}
+                </div>
                 <AgentDetailModal
                   isOpen={expandedAgent === agent.role}
                   onClose={() => setExpandedAgent(null)}
@@ -256,21 +204,6 @@ export function AgentStatusPanel({
             );
           })
         )}
-      </div>
-
-      <div className="mt-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl border border-blue-100">
-        <div className="flex items-start gap-3">
-          <Bot className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-          <div>
-            <h4 className="font-semibold text-sm text-blue-900 mb-1">
-              Multi-Agent System
-            </h4>
-            <p className="text-xs text-blue-700 leading-relaxed">
-              Agents collaborate in real-time, consulting each other to provide
-              comprehensive, accurate responses.
-            </p>
-          </div>
-        </div>
       </div>
     </div>
   );

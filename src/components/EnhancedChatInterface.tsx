@@ -36,6 +36,27 @@ export function EnhancedChatInterface({
     scrollToBottom();
   }, [messages]);
 
+  // Listen for focus chat input event (from Save to Chat)
+  useEffect(() => {
+    const handleFocusChatInput = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail && customEvent.detail.productId === productId) {
+        // Focus the textarea after a short delay to ensure it's rendered
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+            textareaRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }, 150);
+      }
+    };
+
+    window.addEventListener('focusChatInput', handleFocusChatInput);
+    return () => {
+      window.removeEventListener('focusChatInput', handleFocusChatInput);
+    };
+  }, [productId]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {

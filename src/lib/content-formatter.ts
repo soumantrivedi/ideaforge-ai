@@ -7,9 +7,48 @@ export interface FormattedSection {
 
 export class ContentFormatter {
   /**
+   * Detect if content is a V0 or Lovable prompt
+   */
+  static isV0OrLovablePrompt(content: string): boolean {
+    const lowerContent = content.toLowerCase();
+    // Check for V0 indicators
+    const v0Indicators = [
+      'v0 vercel prompt',
+      'v0 prompt',
+      'v0-ready',
+      'react + next.js + tailwind',
+      'shadcn/ui',
+      'v0-1.5-md',
+    ];
+    // Check for Lovable indicators
+    const lovableIndicators = [
+      'lovable.dev prompt',
+      'lovable prompt',
+      'lovable ai',
+    ];
+    
+    const hasV0 = v0Indicators.some(indicator => lowerContent.includes(indicator));
+    const hasLovable = lovableIndicators.some(indicator => lowerContent.includes(indicator));
+    
+    // Also check if content looks like a code prompt (contains React/Next.js patterns)
+    const looksLikeCodePrompt = (
+      lowerContent.includes('react') && 
+      (lowerContent.includes('next.js') || lowerContent.includes('tailwind')) &&
+      lowerContent.length > 200 // Prompts are usually longer
+    );
+    
+    return hasV0 || hasLovable || looksLikeCodePrompt;
+  }
+
+  /**
    * Convert markdown-style text to HTML
    */
   static markdownToHtml(markdown: string): string {
+    // Check if this is a V0 or Lovable prompt - if so, format as code
+    if (this.isV0OrLovablePrompt(markdown)) {
+      return `<pre class="bg-gray-900 text-gray-100 rounded-lg p-4 my-4 overflow-x-auto"><code class="text-sm font-mono whitespace-pre-wrap">${this.escapeHtml(markdown.trim())}</code></pre>`;
+    }
+    
     let html = markdown;
 
     // Headers

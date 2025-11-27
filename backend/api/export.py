@@ -12,6 +12,7 @@ from datetime import datetime
 import structlog
 import markdown
 import base64
+import json
 from pydantic import BaseModel
 
 from backend.database import get_db
@@ -49,6 +50,289 @@ class PublishToConfluenceRequest(BaseModel):
     title: str  # Will be made unique if needed
     prd_content: str  # Markdown content
     parent_page_id: Optional[str] = None
+
+
+@router.post("/{product_id}/generate-progress-report")
+async def generate_progress_report(
+    product_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate and store a progress report using the review agent.
+    Returns phase scores, recommendations, and overall progress.
+    """
+    try:
+        # Check permission
+        has_permission = await check_product_permission(db, product_id, current_user["id"], "view")
+        if not has_permission:
+            raise HTTPException(status_code=403, detail="Access denied to product")
+        
+        # Get product info
+        product_query = text("SELECT name, description, metadata FROM products WHERE id = :product_id")
+        product_result = await db.execute(product_query, {"product_id": str(product_id)})
+        product_row = product_result.fetchone()
+        
+        if not product_row:
+            raise HTTPException(status_code=404, detail="Product not found")
+        
+        # Get all phase submissions with phase IDs
+        phase_query = text("""
+            SELECT ps.form_data, ps.generated_content, plp.phase_name, plp.phase_order, plp.id as phase_id
+            FROM phase_submissions ps
+            JOIN product_lifecycle_phases plp ON ps.phase_id = plp.id
+            WHERE ps.product_id = :product_id
+            ORDER BY plp.phase_order ASC
+        """)
+        phase_result = await db.execute(phase_query, {"product_id": str(product_id)})
+        phase_rows = phase_result.fetchall()
+        
+        phase_data = []
+        for row in phase_rows:
+            phase_data.append({
+                "phase_name": row[2],
+                "phase_order": row[3],
+                "phase_id": str(row[4]),
+                "form_data": row[0] or {},
+                "generated_content": row[1] or ""
+            })
+        
+        # Get conversation history
+        conv_query = text("""
+            SELECT ch.message_type, ch.content, ch.agent_name, ch.created_at
+            FROM conversation_history ch
+            WHERE ch.product_id = :product_id
+            ORDER BY ch.created_at ASC
+        """)
+        conv_result = await db.execute(conv_query, {"product_id": str(product_id)})
+        conv_rows = conv_result.fetchall()
+        conversation_history = [
+            {
+                "role": row[0],
+                "content": row[1],
+                "agent_name": row[2],
+                "timestamp": row[3].isoformat() if row[3] else None
+            }
+            for row in conv_rows
+        ]
+        
+        # Get knowledge base articles
+        knowledge_base = []
+        try:
+            kb_query = text("""
+                SELECT title, content, source, metadata
+                FROM knowledge_articles
+                WHERE product_id = :product_id
+                ORDER BY created_at DESC
+                LIMIT 50
+            """)
+            kb_result = await db.execute(kb_query, {"product_id": str(product_id)})
+            kb_rows = kb_result.fetchall()
+            
+            knowledge_base = [
+                {
+                    "title": row[0],
+                    "content": row[1],
+                    "source_type": row[2] or "manual",
+                    "source_url": row[3].get("source_url", "") if isinstance(row[3], dict) else ""
+                }
+                for row in kb_rows
+            ]
+        except Exception as e:
+            logger.warning(f"Could not fetch knowledge articles: {str(e)}")
+            knowledge_base = []
+        
+        # Get design mockups/prototypes
+        design_mockups = []
+        try:
+            mockup_query = text("""
+                SELECT id, provider, prompt, project_url, v0_chat_id, v0_project_id,
+                       project_status, thumbnail_url, image_url, metadata, created_at
+                FROM design_mockups
+                WHERE product_id = :product_id
+                ORDER BY created_at DESC
+            """)
+            mockup_result = await db.execute(mockup_query, {"product_id": str(product_id)})
+            mockup_rows = mockup_result.fetchall()
+            
+            design_mockups = [
+                {
+                    "id": str(row[0]),
+                    "provider": row[1],
+                    "prompt": row[2],
+                    "project_url": row[3],
+                    "v0_chat_id": row[4] if len(row) > 4 else None,
+                    "v0_project_id": row[5] if len(row) > 5 else None,
+                    "project_status": row[6] if len(row) > 6 else None,
+                    "thumbnail_url": row[7] if len(row) > 7 else None,
+                    "image_url": row[8] if len(row) > 8 else None,
+                    "metadata": row[9] if len(row) > 9 and row[9] else {},
+                    "created_at": row[10].isoformat() if len(row) > 10 and row[10] else None
+                }
+                for row in mockup_rows
+            ]
+        except Exception as e:
+            logger.warning(f"Could not fetch design mockups: {str(e)}")
+            design_mockups = []
+        
+        # Generate review using export agent
+        if export_agent:
+            review_result = await export_agent.review_content_before_export(
+                product_id=str(product_id),
+                phase_data=phase_data,
+                conversation_history=conversation_history,
+                knowledge_base=knowledge_base,
+                design_mockups=design_mockups,
+                context=None
+            )
+        else:
+            # Fallback review
+            review_result = {
+                "status": "needs_attention",
+                "score": 50,
+                "missing_sections": [],
+                "phase_scores": [],
+                "summary": "Review agent not available. Please configure export agent."
+            }
+        
+        # Store report in database
+        report_data = {
+            "review_result": review_result,
+            "phase_data": phase_data,
+            "product_info": {
+                "name": product_row[0],
+                "description": product_row[1]
+            }
+        }
+        
+        # Rollback any previous failed transaction
+        try:
+            await db.rollback()
+        except:
+            pass  # Ignore if no transaction to rollback
+        
+        # Upsert report (update if exists, insert if not)
+        try:
+            upsert_query = text("""
+                INSERT INTO review_reports 
+                (product_id, user_id, overall_score, status, phase_scores, missing_sections, 
+                 recommendations, summary, report_data, updated_at)
+                VALUES (:product_id, :user_id, :overall_score, :status, 
+                        CAST(:phase_scores AS jsonb), CAST(:missing_sections AS jsonb),
+                        CAST(:recommendations AS jsonb), :summary, CAST(:report_data AS jsonb), now())
+                ON CONFLICT (product_id, user_id)
+                DO UPDATE SET
+                    overall_score = EXCLUDED.overall_score,
+                    status = EXCLUDED.status,
+                    phase_scores = EXCLUDED.phase_scores,
+                    missing_sections = EXCLUDED.missing_sections,
+                    recommendations = EXCLUDED.recommendations,
+                    summary = EXCLUDED.summary,
+                    report_data = EXCLUDED.report_data,
+                    updated_at = now()
+                RETURNING id, created_at, updated_at
+            """)
+            
+            result = await db.execute(upsert_query, {
+                "product_id": str(product_id),
+                "user_id": str(current_user["id"]),
+                "overall_score": review_result.get("score", 0),
+                "status": review_result.get("status", "needs_attention"),
+                "phase_scores": json.dumps(review_result.get("phase_scores", [])),
+                "missing_sections": json.dumps(review_result.get("missing_sections", [])),
+                "recommendations": json.dumps(review_result.get("recommendations", [])),
+                "summary": review_result.get("summary", ""),
+                "report_data": json.dumps(report_data)
+            })
+            
+            await db.commit()
+            row = result.fetchone()
+        except Exception as db_error:
+            await db.rollback()
+            logger.error("error_inserting_review_report", error=str(db_error))
+            raise HTTPException(status_code=500, detail=f"Failed to save review report: {str(db_error)}")
+        
+        return {
+            "id": str(row[0]),
+            "product_id": str(product_id),
+            "overall_score": review_result.get("score", 0),
+            "status": review_result.get("status", "needs_attention"),
+            "phase_scores": review_result.get("phase_scores", []),
+            "missing_sections": review_result.get("missing_sections", []),
+            "recommendations": review_result.get("recommendations", []),
+            "summary": review_result.get("summary", ""),
+            "created_at": row[1].isoformat() if row[1] else None,
+            "updated_at": row[2].isoformat() if row[2] else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error("error_generating_progress_report", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{product_id}/progress-report")
+async def get_progress_report(
+    product_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get the latest progress report for a product."""
+    try:
+        # Check if table exists first
+        try:
+            query = text("""
+                SELECT id, overall_score, status, phase_scores, missing_sections,
+                       recommendations, summary, report_data, created_at, updated_at
+                FROM review_reports
+                WHERE product_id = :product_id AND user_id = :user_id
+                ORDER BY updated_at DESC
+                LIMIT 1
+            """)
+            
+            result = await db.execute(query, {
+                "product_id": str(product_id),
+                "user_id": str(current_user["id"])
+            })
+            row = result.fetchone()
+            
+            if not row:
+                return {
+                    "exists": False,
+                    "message": "No progress report found. Generate one to see your progress."
+                }
+            
+            return {
+                "exists": True,
+                "id": str(row[0]),
+                "product_id": str(product_id),
+                "overall_score": row[1],
+                "status": row[2],
+                "phase_scores": row[3] if row[3] else [],
+                "missing_sections": row[4] if row[4] else [],
+                "recommendations": row[5] if row[5] else [],
+                "summary": row[6],
+                "report_data": row[7] if row[7] else {},
+                "created_at": row[8].isoformat() if row[8] else None,
+                "updated_at": row[9].isoformat() if row[9] else None
+            }
+        except Exception as table_error:
+            # If table doesn't exist, return not found
+            if "does not exist" in str(table_error) or "relation" in str(table_error).lower():
+                logger.warning("review_reports_table_not_found", error=str(table_error))
+                return {
+                    "exists": False,
+                    "message": "No progress report found. Generate one to see your progress."
+                }
+            raise
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("error_getting_progress_report", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{product_id}/review-prd")
@@ -142,12 +426,47 @@ async def review_prd_content(
             logger.warning(f"Could not fetch knowledge articles: {str(e)}")
             knowledge_base = []
         
+        # Get design mockups/prototypes
+        design_mockups = []
+        try:
+            mockup_query = text("""
+                SELECT id, provider, prompt, project_url, v0_chat_id, v0_project_id,
+                       project_status, thumbnail_url, image_url, metadata, created_at
+                FROM design_mockups
+                WHERE product_id = :product_id
+                ORDER BY created_at DESC
+            """)
+            mockup_result = await db.execute(mockup_query, {"product_id": str(product_id)})
+            mockup_rows = mockup_result.fetchall()
+            
+            design_mockups = [
+                {
+                    "id": str(row[0]),
+                    "provider": row[1],
+                    "prompt": row[2],
+                    "project_url": row[3],
+                    "v0_chat_id": row[4] if len(row) > 4 else None,
+                    "v0_project_id": row[5] if len(row) > 5 else None,
+                    "project_status": row[6] if len(row) > 6 else None,
+                    "thumbnail_url": row[7] if len(row) > 7 else None,
+                    "image_url": row[8] if len(row) > 8 else None,
+                    "metadata": row[9] if len(row) > 9 and row[9] else {},
+                    "created_at": row[10].isoformat() if len(row) > 10 and row[10] else None
+                }
+                for row in mockup_rows
+            ]
+        except Exception as e:
+            # If design_mockups table doesn't exist or query fails, continue without it
+            logger.warning(f"Could not fetch design mockups: {str(e)}")
+            design_mockups = []
+        
         # Review content using export agent
         if export_agent:
             review_result = await export_agent.review_content_before_export(
                 product_id=str(product_id),
                 phase_data=phase_data,
                 conversation_history=conversation_history,
+                design_mockups=design_mockups,
                 knowledge_base=knowledge_base
             )
             return JSONResponse(content=review_result)
@@ -281,6 +600,7 @@ async def export_prd_document(
                 phase_data=phase_data,
                 conversation_history=conversation_history,
                 knowledge_base=knowledge_base,
+                design_mockups=design_mockups,
                 override_missing=request.override_missing
             )
         else:
@@ -301,6 +621,24 @@ async def export_prd_document(
                         prd_content += f"- **{key.replace('_', ' ').title()}**: {value}\n"
                 if phase['generated_content']:
                     prd_content += f"\n{phase['generated_content']}\n"
+            
+            # Add design prototypes section
+            if design_mockups:
+                prd_content += "\n## Design Prototypes\n"
+                for mockup in design_mockups:
+                    provider = mockup.get('provider', 'unknown').upper()
+                    status = mockup.get('project_status', 'unknown')
+                    project_url = mockup.get('project_url', '')
+                    thumbnail_url = mockup.get('thumbnail_url') or mockup.get('image_url', '')
+                    
+                    prd_content += f"\n### {provider} Prototype\n"
+                    prd_content += f"- **Status**: {status}\n"
+                    if project_url:
+                        prd_content += f"- **Prototype URL**: [{project_url}]({project_url})\n"
+                    if thumbnail_url:
+                        prd_content += f"- **Thumbnail**: ![Prototype Thumbnail]({thumbnail_url})\n"
+                    if mockup.get('prompt'):
+                        prd_content += f"- **Prompt Used**: {mockup['prompt'][:200]}...\n"
             
             prd_content += "\n## Conversation History\n"
             for msg in conversation_history:

@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 from uuid import UUID
 from pydantic import BaseModel
 import structlog
+import asyncio
 
 from backend.database import get_db
 from backend.api.auth import get_current_user
@@ -32,6 +33,7 @@ class GeneratePromptRequest(BaseModel):
     phase_submission_id: Optional[str] = None
     provider: str  # "v0" or "lovable"
     context: Optional[Dict[str, Any]] = None
+    force_new: bool = False  # If True, generate new prompt even if one exists
 
 
 class GenerateDesignRequest(BaseModel):
@@ -56,6 +58,7 @@ class CreateProjectRequest(BaseModel):
     prompt: str
     use_multi_agent: bool = True  # Use multi-agent to enhance prompt
     context: Optional[Dict[str, Any]] = None
+    create_new: bool = False  # If False, reuse existing prototype; if True, create new one
 
 
 @router.post("/generate-prompt")
@@ -101,6 +104,47 @@ async def generate_design_prompt(
         product_context = {"context": full_context}
         if request.context:
             product_context.update(request.context)
+        
+        # Check for existing prompt in phase submission (unless force_new=True)
+        existing_prompt = None
+        if not request.force_new and request.phase_submission_id:
+            try:
+                submission_query = text("""
+                    SELECT form_data
+                    FROM phase_submissions
+                    WHERE id = :phase_submission_id
+                """)
+                submission_result = await db.execute(submission_query, {"phase_submission_id": request.phase_submission_id})
+                submission_row = submission_result.fetchone()
+                if submission_row:
+                    form_data = submission_row[0] or {}
+                    if isinstance(form_data, dict):
+                        v0_lovable_prompts = form_data.get("v0_lovable_prompts", "")
+                        if v0_lovable_prompts:
+                            try:
+                                import json
+                                prompts_obj = json.loads(v0_lovable_prompts) if isinstance(v0_lovable_prompts, str) else v0_lovable_prompts
+                                if request.provider == "v0":
+                                    existing_prompt = prompts_obj.get("v0_prompt", "")
+                                elif request.provider == "lovable":
+                                    existing_prompt = prompts_obj.get("lovable_prompt", "")
+                            except:
+                                pass
+            except Exception as e:
+                logger.warning("error_loading_existing_prompt", error=str(e))
+        
+        # Return existing prompt if found and not forcing new
+        if existing_prompt and not request.force_new:
+            logger.info("returning_existing_prompt",
+                       provider=request.provider,
+                       product_id=request.product_id,
+                       phase_submission_id=request.phase_submission_id)
+            return {
+                "prompt": existing_prompt,
+                "provider": request.provider,
+                "product_id": request.product_id,
+                "is_existing": True
+            }
         
         # Load user-specific API keys
         from backend.services.api_key_loader import load_user_api_keys_from_db
@@ -167,7 +211,7 @@ async def generate_design_mockup(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Generate a design mockup using V0 or Lovable API."""
+    """Generate a design mockup using V0 or Lovable API. Returns immediately with project details. Updates existing project if found."""
     try:
         from backend.services.api_key_loader import load_user_api_keys_from_db
         
@@ -180,11 +224,28 @@ async def generate_design_mockup(
             if not v0_key:
                 raise HTTPException(status_code=400, detail="V0 API key is not configured. Please configure it in Settings.")
             
-            result = await v0_agent.generate_design_mockup(
-                v0_prompt=request.prompt,
-                v0_api_key=v0_key,
-                user_id=str(current_user["id"])
-            )
+            # Use AgnoV0Agent for immediate response - returns immediately after submission
+            from backend.agents import AGNO_AVAILABLE
+            if AGNO_AVAILABLE:
+                agno_v0_agent = AgnoV0Agent()
+                agno_v0_agent.set_v0_api_key(v0_key)
+                # Use create_v0_project_with_api - returns immediately after creating chat
+                # No timeout waiting - user can check status separately
+                result = await agno_v0_agent.create_v0_project_with_api(
+                    v0_prompt=request.prompt,
+                    v0_api_key=v0_key,
+                    user_id=str(current_user["id"]),
+                    product_id=request.product_id,
+                    db=db,
+                    create_new=False  # Check for existing prototypes
+                )
+            else:
+                # Fallback to legacy agent
+                result = await v0_agent.generate_design_mockup(
+                    v0_prompt=request.prompt,
+                    v0_api_key=v0_key,
+                    user_id=str(current_user["id"])
+                )
         elif request.provider == "lovable":
             # Use Lovable Link Generator (no API key needed)
             # Based on: https://docs.lovable.dev/integrations/build-with-url
@@ -207,36 +268,89 @@ async def generate_design_mockup(
                 RETURNING id, created_at
             """)
             
-            # Extract URLs from result
+            # Extract URLs and V0-specific fields from result
             import json
             # Handle different result formats for V0 vs Lovable
             if request.provider == "lovable":
                 image_url = ""  # Lovable links don't have images
                 thumbnail_url = ""
                 project_url = result.get("project_url", "")
+                v0_chat_id = None
+                v0_project_id = None
+                project_status = "completed"
             else:  # V0
                 image_url = result.get("image_url") or result.get("thumbnail_url") or ""
                 thumbnail_url = result.get("thumbnail_url") or image_url
-                project_url = result.get("project_url") or result.get("url") or ""
+                project_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
+                v0_chat_id = result.get("chat_id")
+                v0_project_id = result.get("project_id")
+                project_status = result.get("project_status", "in_progress")
             
             # Convert metadata to JSON string
             metadata_json = json.dumps(result) if isinstance(result, dict) else json.dumps({"result": str(result)})
             
-            insert_result = await db.execute(insert_query, {
-                "product_id": request.product_id,
-                "phase_submission_id": request.phase_submission_id,
-                "user_id": str(current_user["id"]),
-                "provider": request.provider,
-                "prompt": request.prompt,
-                "image_url": image_url,
-                "thumbnail_url": thumbnail_url,
-                "project_url": project_url,
-                "metadata": metadata_json
-            })
+            # Check if V0 tracking columns exist and insert accordingly
+            try:
+                if request.provider == "v0" and v0_chat_id:
+                    insert_query = text("""
+                        INSERT INTO design_mockups 
+                        (product_id, phase_submission_id, user_id, provider, prompt, 
+                         image_url, thumbnail_url, project_url, v0_chat_id, v0_project_id, 
+                         project_status, metadata)
+                        VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, 
+                                :image_url, :thumbnail_url, :project_url, :v0_chat_id, :v0_project_id, 
+                                :project_status, CAST(:metadata AS jsonb))
+                        RETURNING id, created_at
+                    """)
+                    insert_result = await db.execute(insert_query, {
+                        "product_id": request.product_id,
+                        "phase_submission_id": request.phase_submission_id,
+                        "user_id": str(current_user["id"]),
+                        "provider": request.provider,
+                        "prompt": request.prompt,
+                        "image_url": image_url,
+                        "thumbnail_url": thumbnail_url,
+                        "project_url": project_url,
+                        "v0_chat_id": v0_chat_id,
+                        "v0_project_id": v0_project_id,
+                        "project_status": project_status,
+                        "metadata": metadata_json
+                    })
+                else:
+                    insert_result = await db.execute(insert_query, {
+                        "product_id": request.product_id,
+                        "phase_submission_id": request.phase_submission_id,
+                        "user_id": str(current_user["id"]),
+                        "provider": request.provider,
+                        "prompt": request.prompt,
+                        "image_url": image_url,
+                        "thumbnail_url": thumbnail_url,
+                        "project_url": project_url,
+                        "metadata": metadata_json
+                    })
+            except Exception as col_error:
+                # Fallback if V0 tracking columns don't exist
+                if "column" in str(col_error).lower() and ("v0_chat_id" in str(col_error) or "project_status" in str(col_error)):
+                    logger.warning("v0_tracking_columns_not_found_in_generate_mockup", error=str(col_error))
+                    insert_result = await db.execute(insert_query, {
+                        "product_id": request.product_id,
+                        "phase_submission_id": request.phase_submission_id,
+                        "user_id": str(current_user["id"]),
+                        "provider": request.provider,
+                        "prompt": request.prompt,
+                        "image_url": image_url,
+                        "thumbnail_url": thumbnail_url,
+                        "project_url": project_url,
+                        "metadata": metadata_json
+                    })
+                else:
+                    raise
             
             await db.commit()
             row = insert_result.fetchone()
             mockup_id = str(row[0]) if row else None
+            
+            # No background polling - user can check status manually
         except Exception as db_error:
             # If table doesn't exist, log but don't fail
             if "does not exist" in str(db_error) or "relation" in str(db_error).lower():
@@ -246,17 +360,36 @@ async def generate_design_mockup(
                 await db.rollback()
                 raise
         
-        return {
+        # Return comprehensive project details for chatbot response
+        # For V0, always return "submitted" status - user can check status separately
+        response_data = {
             "id": mockup_id,
             "provider": request.provider,
             "image_url": result.get("image_url") or result.get("thumbnail_url") or "",
             "thumbnail_url": result.get("thumbnail_url") or result.get("image_url") or "",
-            "project_url": result.get("project_url") or result.get("url") or "",
+            "project_url": result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or "",
             "thumbnails": result.get("thumbnails", []),  # For Lovable multi-thumbnail support
             "code": result.get("code", ""),  # Generated code for V0
             "created_at": None,
-            "metadata": result
+            "metadata": result,
+            "status": "submitted" if request.provider == "v0" else "completed",  # V0 is submitted, not completed yet
+            "message": "V0 prototype request submitted successfully. It may take 10+ minutes to complete. Use 'Check Status' to see when it's ready." if request.provider == "v0" else None
         }
+        
+        # Add V0-specific fields for chatbot response
+        if request.provider == "v0":
+            response_data.update({
+                "v0_chat_id": result.get("chat_id"),
+                "v0_project_id": result.get("project_id") or result.get("chat_id"),
+                "project_name": result.get("project_name") or f"V0 Project {result.get('chat_id', '')[:8] if result.get('chat_id') else 'N/A'}",
+                "project_status": result.get("project_status", "in_progress"),
+                "web_url": result.get("web_url"),
+                "demo_url": result.get("demo_url"),
+                "is_existing": result.get("is_existing", False),
+                "is_updated": result.get("is_updated", False)
+            })
+        
+        return response_data
         
     except HTTPException:
         raise
@@ -317,46 +450,99 @@ async def get_design_mockups(
         # Check if table exists, if not return empty list
         try:
             # Build query conditionally to avoid PostgreSQL type inference issues with NULL
-            if provider:
-                query = text("""
-                    SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
-                           image_url, thumbnail_url, project_url, metadata, created_at, updated_at
-                    FROM design_mockups
-                    WHERE product_id = :product_id
-                    AND provider = :provider
-                    ORDER BY created_at DESC
-                """)
-                params = {"product_id": product_id, "provider": provider}
-            else:
-                query = text("""
-                    SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
-                           image_url, thumbnail_url, project_url, metadata, created_at, updated_at
-                    FROM design_mockups
-                    WHERE product_id = :product_id
-                    ORDER BY created_at DESC
-                """)
-                params = {"product_id": product_id}
-            
-            result = await db.execute(query, params)
-            rows = result.fetchall()
-            
-            mockups = [
-                {
-                    "id": str(row[0]),
-                    "product_id": str(row[1]) if row[1] else None,
-                    "phase_submission_id": str(row[2]) if row[2] else None,
-                    "user_id": str(row[3]) if row[3] else None,
-                    "provider": row[4],
-                    "prompt": row[5],
-                    "image_url": row[6],
-                    "thumbnail_url": row[7],
-                    "project_url": row[8] if len(row) > 8 else None,
-                    "metadata": row[9] if len(row) > 9 and row[9] else {},
-                    "created_at": row[10].isoformat() if len(row) > 10 and row[10] else None,
-                    "updated_at": row[11].isoformat() if len(row) > 11 and row[11] else None,
-                }
-                for row in rows
-            ]
+            # Include V0 tracking fields if they exist
+            try:
+                if provider:
+                    query = text("""
+                        SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
+                               image_url, thumbnail_url, project_url, v0_chat_id, v0_project_id,
+                               project_status, metadata, created_at, updated_at
+                        FROM design_mockups
+                        WHERE product_id = :product_id
+                        AND provider = :provider
+                        ORDER BY created_at DESC
+                    """)
+                    params = {"product_id": product_id, "provider": provider}
+                else:
+                    query = text("""
+                        SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
+                               image_url, thumbnail_url, project_url, v0_chat_id, v0_project_id,
+                               project_status, metadata, created_at, updated_at
+                        FROM design_mockups
+                        WHERE product_id = :product_id
+                        ORDER BY created_at DESC
+                    """)
+                    params = {"product_id": product_id}
+                
+                result = await db.execute(query, params)
+                rows = result.fetchall()
+                
+                mockups = []
+                for row in rows:
+                    mockup = {
+                        "id": str(row[0]),
+                        "product_id": str(row[1]) if row[1] else None,
+                        "phase_submission_id": str(row[2]) if row[2] else None,
+                        "user_id": str(row[3]) if row[3] else None,
+                        "provider": row[4],
+                        "prompt": row[5],
+                        "image_url": row[6],
+                        "thumbnail_url": row[7],
+                        "project_url": row[8] if len(row) > 8 else None,
+                        "v0_chat_id": row[9] if len(row) > 9 else None,
+                        "v0_project_id": row[10] if len(row) > 10 else None,
+                        "project_status": row[11] if len(row) > 11 else None,
+                        "metadata": row[12] if len(row) > 12 and row[12] else {},
+                        "created_at": row[13].isoformat() if len(row) > 13 and row[13] else None,
+                        "updated_at": row[14].isoformat() if len(row) > 14 and row[14] else None,
+                    }
+                    mockups.append(mockup)
+            except Exception as col_error:
+                # Fallback if V0 tracking columns don't exist yet
+                if "column" in str(col_error).lower() and ("v0_chat_id" in str(col_error) or "project_status" in str(col_error)):
+                    logger.warning("v0_tracking_columns_not_found_in_get", error=str(col_error))
+                    if provider:
+                        query = text("""
+                            SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
+                                   image_url, thumbnail_url, project_url, metadata, created_at, updated_at
+                            FROM design_mockups
+                            WHERE product_id = :product_id
+                            AND provider = :provider
+                            ORDER BY created_at DESC
+                        """)
+                        params = {"product_id": product_id, "provider": provider}
+                    else:
+                        query = text("""
+                            SELECT id, product_id, phase_submission_id, user_id, provider, prompt,
+                                   image_url, thumbnail_url, project_url, metadata, created_at, updated_at
+                            FROM design_mockups
+                            WHERE product_id = :product_id
+                            ORDER BY created_at DESC
+                        """)
+                        params = {"product_id": product_id}
+                    
+                    result = await db.execute(query, params)
+                    rows = result.fetchall()
+                    
+                    mockups = [
+                        {
+                            "id": str(row[0]),
+                            "product_id": str(row[1]) if row[1] else None,
+                            "phase_submission_id": str(row[2]) if row[2] else None,
+                            "user_id": str(row[3]) if row[3] else None,
+                            "provider": row[4],
+                            "prompt": row[5],
+                            "image_url": row[6],
+                            "thumbnail_url": row[7],
+                            "project_url": row[8] if len(row) > 8 else None,
+                            "metadata": row[9] if len(row) > 9 and row[9] else {},
+                            "created_at": row[10].isoformat() if len(row) > 10 and row[10] else None,
+                            "updated_at": row[11].isoformat() if len(row) > 11 and row[11] else None,
+                        }
+                        for row in rows
+                    ]
+                else:
+                    raise
             
             return {"mockups": mockups}
         except Exception as table_error:
@@ -368,6 +554,193 @@ async def get_design_mockups(
         
     except Exception as e:
         logger.error("error_getting_design_mockups", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/prototypes/{product_id}")
+async def get_prototypes_for_review(
+    product_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all prototypes for a product - optimized for review agent access.
+    Returns thumbnail URLs, project URLs, and status information.
+    """
+    try:
+        query = text("""
+            SELECT id, provider, prompt, project_url, v0_chat_id, v0_project_id,
+                   project_status, thumbnail_url, image_url, metadata, created_at, updated_at
+            FROM design_mockups
+            WHERE product_id = :product_id
+            ORDER BY created_at DESC
+        """)
+        
+        result = await db.execute(query, {"product_id": product_id})
+        rows = result.fetchall()
+        
+        prototypes = []
+        for row in rows:
+            prototypes.append({
+                "id": str(row[0]),
+                "provider": row[1],
+                "prompt": row[2],
+                "project_url": row[3],
+                "v0_chat_id": row[4] if len(row) > 4 else None,
+                "v0_project_id": row[5] if len(row) > 5 else None,
+                "project_status": row[6] if len(row) > 6 else None,
+                "thumbnail_url": row[7] if len(row) > 7 else None,
+                "image_url": row[8] if len(row) > 8 else None,
+                "metadata": row[9] if len(row) > 9 and row[9] else {},
+                "created_at": row[10].isoformat() if len(row) > 10 and row[10] else None,
+                "updated_at": row[11].isoformat() if len(row) > 11 and row[11] else None
+            })
+        
+        return {"prototypes": prototypes}
+    except Exception as e:
+        logger.error("error_getting_prototypes_for_review", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/mockups/{product_id}/status")
+async def check_project_status(
+    product_id: str,
+    provider: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Check status of existing V0/Lovable project without creating a new one.
+    Allows users to come back and check status later.
+    """
+    try:
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        
+        # Get the most recent prototype for this product
+        query = text("""
+            SELECT id, v0_chat_id, v0_project_id, project_url, project_status, 
+                   metadata, created_at, updated_at
+            FROM design_mockups
+            WHERE product_id = :product_id 
+              AND user_id = :user_id 
+              AND provider = :provider
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        
+        result = await db.execute(query, {
+            "product_id": product_id,
+            "user_id": str(current_user["id"]),
+            "provider": provider
+        })
+        row = result.fetchone()
+        
+        if not row:
+            return {
+                "status": "not_found",
+                "message": "No prototype found for this product"
+            }
+        
+        mockup_id, v0_chat_id, v0_project_id, project_url, project_status, \
+            metadata, created_at, updated_at = row
+        
+        # If it's a V0 project and has a chat_id, use Agno V0 Agent to check status
+        if provider == "v0" and v0_chat_id:
+            try:
+                user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+                v0_key = user_keys.get("v0") or settings.v0_api_key
+                
+                if v0_key:
+                    # Use Agno V0 Agent for status checking
+                    from backend.agents import AGNO_AVAILABLE
+                    if AGNO_AVAILABLE:
+                        from backend.agents.agno_v0_agent import AgnoV0Agent
+                        agno_v0_agent = AgnoV0Agent()
+                        agno_v0_agent.set_v0_api_key(v0_key)
+                        
+                        # Check status using V0 agent
+                        import httpx
+                        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+                            response = await client.get(
+                                f"https://api.v0.dev/v1/chats/{v0_chat_id}",
+                                headers={
+                                    "Authorization": f"Bearer {v0_key.strip()}",
+                                    "Content-Type": "application/json"
+                                }
+                            )
+                        
+                        if response.status_code == 200:
+                            v0_result = response.json()
+                            web_url = v0_result.get("webUrl") or v0_result.get("web_url")
+                            demo_url = v0_result.get("demo") or v0_result.get("demoUrl")
+                            files = v0_result.get("files", [])
+                            
+                            # Update status if we have URLs
+                            if demo_url or web_url or (files and len(files) > 0):
+                                new_status = "completed"
+                                new_project_url = demo_url or web_url
+                                
+                                # Update database
+                                update_query = text("""
+                                    UPDATE design_mockups
+                                    SET project_status = :status,
+                                        project_url = :project_url,
+                                        updated_at = now()
+                                    WHERE id = :id
+                                """)
+                                await db.execute(update_query, {
+                                    "id": mockup_id,
+                                    "status": new_status,
+                                    "project_url": new_project_url
+                                })
+                                await db.commit()
+                                
+                                project_name = v0_result.get("name") or (metadata.get("name") if isinstance(metadata, dict) else None) or f"V0 Project {v0_chat_id[:8] if v0_chat_id else 'N/A'}"
+                                
+                                return {
+                                    "status": new_status,
+                                    "mockup_id": str(mockup_id),
+                                    "v0_chat_id": v0_chat_id,
+                                    "v0_project_id": v0_project_id or v0_chat_id,
+                                    "project_name": project_name,
+                                    "project_url": new_project_url,
+                                    "web_url": web_url,
+                                    "demo_url": demo_url,
+                                    "has_files": len(files) > 0,
+                                    "message": "Prototype is ready"
+                                }
+                            else:
+                                project_name = (metadata.get("name") if isinstance(metadata, dict) else None) or f"V0 Project {v0_chat_id[:8] if v0_chat_id else 'N/A'}"
+                                
+                                return {
+                                    "status": project_status or "in_progress",
+                                    "mockup_id": str(mockup_id),
+                                    "v0_chat_id": v0_chat_id,
+                                    "v0_project_id": v0_project_id or v0_chat_id,
+                                    "project_name": project_name,
+                                    "project_url": project_url,
+                                    "message": "Prototype is still being generated"
+                                }
+            except Exception as poll_error:
+                logger.warning("status_poll_error", error=str(poll_error))
+                # Return cached status if polling fails
+                pass
+        
+        project_name = (metadata.get("name") if isinstance(metadata, dict) else None) or f"V0 Project {v0_chat_id[:8] if v0_chat_id else 'N/A'}"
+        
+        return {
+            "status": project_status or "unknown",
+            "mockup_id": str(mockup_id),
+            "v0_chat_id": v0_chat_id,
+            "v0_project_id": v0_project_id or v0_chat_id,
+            "project_name": project_name,
+            "project_url": project_url,
+            "created_at": created_at.isoformat() if created_at else None,
+            "updated_at": updated_at.isoformat() if updated_at else None
+        }
+        
+    except Exception as e:
+        logger.error("error_checking_project_status", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -409,11 +782,61 @@ async def create_design_project(
     """
     Create a V0 or Lovable project using multi-agent enhanced prompts.
     Uses multi-agent system to refine prompts before submission.
+    
+    If create_new=False (default), checks for existing prototype for this product_id
+    and returns it if found. If create_new=True, creates a new prototype.
     """
     try:
         from backend.services.api_key_loader import load_user_api_keys_from_db
         from backend.agents.agno_orchestrator import AgnoAgenticOrchestrator
         from backend.models.schemas import MultiAgentRequest
+        
+        # Step 1: Check for existing prototype (unless create_new=True)
+        if not request.create_new:
+            existing_query = text("""
+                SELECT id, v0_chat_id, v0_project_id, project_url, project_status, 
+                       image_url, thumbnail_url, metadata, created_at, updated_at
+                FROM design_mockups
+                WHERE product_id = :product_id 
+                  AND user_id = :user_id 
+                  AND provider = :provider
+                ORDER BY created_at DESC
+                LIMIT 1
+            """)
+            
+            existing_result = await db.execute(existing_query, {
+                "product_id": request.product_id,
+                "user_id": str(current_user["id"]),
+                "provider": request.provider
+            })
+            existing_row = existing_result.fetchone()
+            
+            if existing_row:
+                existing_id, v0_chat_id, v0_project_id, project_url, project_status, \
+                    image_url, thumbnail_url, metadata, created_at, updated_at = existing_row
+                
+                logger.info("existing_prototype_found",
+                           user_id=str(current_user["id"]),
+                           product_id=request.product_id,
+                           provider=request.provider,
+                           mockup_id=str(existing_id),
+                           status=project_status)
+                
+                # Return existing prototype
+                return {
+                    "id": str(existing_id),
+                    "provider": request.provider,
+                    "project_url": project_url or "",
+                    "image_url": image_url or "",
+                    "thumbnail_url": thumbnail_url or "",
+                    "v0_chat_id": v0_chat_id,
+                    "v0_project_id": v0_project_id,
+                    "project_status": project_status or "unknown",
+                    "is_existing": True,
+                    "created_at": created_at.isoformat() if created_at else None,
+                    "updated_at": updated_at.isoformat() if updated_at else None,
+                    "metadata": metadata if metadata else {}
+                }
         
         # Load user-specific API keys
         user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
@@ -533,7 +956,10 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
                         v0_prompt=enhanced_prompt,
                         v0_api_key=v0_key.strip(),  # Explicitly pass user's API key (trimmed)
                         user_id=str(current_user["id"]),
-                        product_id=request.product_id
+                        product_id=request.product_id,
+                        db=db,  # Pass database session for duplicate prevention
+                        create_new=request.create_new,  # Pass create_new flag
+                        timeout_seconds=900  # 15 minutes timeout
                     )
                 else:
                     # Fallback to legacy agent
@@ -543,6 +969,7 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
                         v0_api_key=v0_key,  # Use user's API key
                         user_id=str(current_user["id"]),
                         product_id=request.product_id
+                        # Note: Legacy agent doesn't support db/duplicate prevention
                     )
             except ValueError as e:
                 # Handle specific V0 API errors
@@ -617,38 +1044,89 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
         else:
             raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")
         
-        # Save project to database
+        # Save project to database with V0 tracking fields
         try:
             import json
-            insert_query = text("""
-                INSERT INTO design_mockups 
-                (product_id, phase_submission_id, user_id, provider, prompt, image_url, thumbnail_url, project_url, metadata)
-                VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, :image_url, :thumbnail_url, :project_url, CAST(:metadata AS jsonb))
-                RETURNING id, created_at
-            """)
+            
+            # Extract V0-specific fields
+            v0_chat_id = result.get("chat_id") if request.provider == "v0" else None
+            v0_project_id = result.get("project_id") if request.provider == "v0" else None
+            project_status = "in_progress"  # Will be updated when polling completes
+            
+            # Determine project status from result
+            if result.get("error"):
+                project_status = "failed"
+            elif result.get("project_url") or result.get("demo_url") or result.get("web_url"):
+                project_status = "completed"
+            elif v0_chat_id:
+                project_status = "in_progress"  # Will poll for completion
             
             image_url = result.get("image_url") or result.get("thumbnail_url") or ""
             thumbnail_url = result.get("thumbnail_url") or image_url
-            project_url = result.get("project_url") or result.get("url") or result.get("demo") or ""
+            project_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
             
             metadata_json = json.dumps({
                 "enhanced_prompt": enhanced_prompt,
                 "original_prompt": request.prompt,
                 "use_multi_agent": request.use_multi_agent,
+                "chat_id": v0_chat_id,
+                "project_id": v0_project_id,
                 **result
             })
             
-            insert_result = await db.execute(insert_query, {
-                "product_id": request.product_id,
-                "phase_submission_id": request.phase_submission_id,
-                "user_id": str(current_user["id"]),
-                "provider": request.provider,
-                "prompt": enhanced_prompt,
-                "image_url": image_url,
-                "thumbnail_url": thumbnail_url,
-                "project_url": project_url,
-                "metadata": metadata_json
-            })
+            # Check if columns exist (for backward compatibility)
+            try:
+                insert_query = text("""
+                    INSERT INTO design_mockups 
+                    (product_id, phase_submission_id, user_id, provider, prompt, 
+                     image_url, thumbnail_url, project_url, v0_chat_id, v0_project_id, 
+                     project_status, metadata)
+                    VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, 
+                            :image_url, :thumbnail_url, :project_url, :v0_chat_id, :v0_project_id, 
+                            :project_status, CAST(:metadata AS jsonb))
+                    RETURNING id, created_at
+                """)
+                
+                insert_result = await db.execute(insert_query, {
+                    "product_id": request.product_id,
+                    "phase_submission_id": request.phase_submission_id,
+                    "user_id": str(current_user["id"]),
+                    "provider": request.provider,
+                    "prompt": enhanced_prompt,
+                    "image_url": image_url,
+                    "thumbnail_url": thumbnail_url,
+                    "project_url": project_url,
+                    "v0_chat_id": v0_chat_id,
+                    "v0_project_id": v0_project_id,
+                    "project_status": project_status,
+                    "metadata": metadata_json
+                })
+            except Exception as col_error:
+                # Fallback if new columns don't exist yet (backward compatibility)
+                if "column" in str(col_error).lower() and ("v0_chat_id" in str(col_error) or "project_status" in str(col_error)):
+                    logger.warning("v0_tracking_columns_not_found", error=str(col_error))
+                    insert_query = text("""
+                        INSERT INTO design_mockups 
+                        (product_id, phase_submission_id, user_id, provider, prompt, 
+                         image_url, thumbnail_url, project_url, metadata)
+                        VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, 
+                                :image_url, :thumbnail_url, :project_url, CAST(:metadata AS jsonb))
+                        RETURNING id, created_at
+                    """)
+                    
+                    insert_result = await db.execute(insert_query, {
+                        "product_id": request.product_id,
+                        "phase_submission_id": request.phase_submission_id,
+                        "user_id": str(current_user["id"]),
+                        "provider": request.provider,
+                        "prompt": enhanced_prompt,
+                        "image_url": image_url,
+                        "thumbnail_url": thumbnail_url,
+                        "project_url": project_url,
+                        "metadata": metadata_json
+                    })
+                else:
+                    raise
             
             await db.commit()
             row = insert_result.fetchone()
@@ -667,9 +1145,13 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
             "project_url": project_url,
             "image_url": image_url,
             "thumbnail_url": thumbnail_url,
+            "v0_chat_id": v0_chat_id,
+            "v0_project_id": v0_project_id,
+            "project_status": project_status,
             "code": result.get("code", ""),
             "enhanced_prompt": enhanced_prompt,
             "original_prompt": request.prompt,
+            "is_existing": False,
             "metadata": result
         }
         

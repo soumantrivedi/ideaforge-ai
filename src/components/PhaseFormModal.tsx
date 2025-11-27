@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Send, Loader2, Sparkles, Wand2, Trash2, Play } from 'lucide-react';
+import { X, Send, Loader2, Sparkles, Wand2, Trash2, Play, Lightbulb } from 'lucide-react';
 import type { LifecyclePhase } from '../lib/product-lifecycle-service';
 import { lifecycleService } from '../lib/product-lifecycle-service';
 import { DesignMockupGallery } from './DesignMockupGallery';
@@ -38,22 +38,63 @@ export function PhaseFormModal({
   const [responseLength, setResponseLength] = useState<'short' | 'verbose'>('verbose');
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState<{v0: boolean, lovable: boolean}>({v0: false, lovable: false});
   const [isGeneratingMockup, setIsGeneratingMockup] = useState<{v0: boolean, lovable: boolean}>({v0: false, lovable: false});
+  const [isCheckingStatus, setIsCheckingStatus] = useState<{v0: boolean}>({v0: false});
+  const [v0PrototypeStatus, setV0PrototypeStatus] = useState<{
+    status: 'not_submitted' | 'submitted' | 'in_progress' | 'completed';
+    project_url?: string;
+    message?: string;
+  } | null>(null);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<string | undefined>();
   const [mockupRefreshTrigger, setMockupRefreshTrigger] = useState(0);
   const [lovableThumbnails, setLovableThumbnails] = useState<any[]>([]);
   const [showThumbnailSelector, setShowThumbnailSelector] = useState(false);
   const [promptScores, setPromptScores] = useState<{v0: number | null, lovable: number | null}>({v0: null, lovable: null});
   const [showSaveToChatbot, setShowSaveToChatbot] = useState(false);
+  const [phaseRecommendations, setPhaseRecommendations] = useState<Array<{
+    section: string;
+    importance: string;
+    recommendation: string;
+  }>>([]);
 
   useEffect(() => {
     if (isOpen) {
+      // Load recommendations if phase has been completed at least once
+      const loadRecommendations = async () => {
+        if (productId && phase.id && token) {
+          try {
+            const response = await fetch(`${API_URL}/api/products/${productId}/progress-report`, {
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+              },
+            });
+            
+            if (response.ok) {
+              const data = await response.json();
+              if (data.exists && data.missing_sections) {
+                const phaseRecs = data.missing_sections.filter((section: any) => 
+                  section.phase_id === phase.id
+                );
+                setPhaseRecommendations(phaseRecs);
+              }
+            }
+          } catch (error) {
+            console.error('Error loading recommendations:', error);
+          }
+        }
+      };
+      
       // Load existing submission data if available
       const loadExistingData = async () => {
         if (productId && phase.id && token) {
           try {
-            const { lifecycleService } = await import('../lib/product-lifecycle-service');
             lifecycleService.setToken(token);
             const submission = await lifecycleService.getPhaseSubmission(productId, phase.id);
+            
+            // Load recommendations if phase is completed
+            if (submission && (submission.status === 'completed' || submission.status === 'reviewed')) {
+              loadRecommendations();
+            }
             
             if (submission && submission.form_data) {
               // Merge existing form_data with any passed existingData
@@ -179,13 +220,13 @@ export function PhaseFormModal({
       const maxIndex = Math.min(phase.required_fields.length, phase.template_prompts.length) - 1;
       setCurrentPromptIndex((prevIndex) => {
         if (prevIndex > maxIndex) {
-          console.warn('currentPromptIndex was out of bounds, correcting:', {
+        console.warn('currentPromptIndex was out of bounds, correcting:', {
             old: prevIndex,
-            new: maxIndex,
-            max: maxIndex
-          });
+          new: maxIndex,
+          max: maxIndex
+        });
           return Math.max(0, maxIndex);
-        }
+      }
         return prevIndex;
       });
     }
@@ -259,21 +300,46 @@ export function PhaseFormModal({
     setIsSubmitting(true);
 
     try {
-      // Build the message to save to chatbot - format all form data nicely
-      let chatbotMessage = `## ${phase.phase_name} Phase Content\n\n`;
-      
-      // Check if this is Design phase with prompts
+      // Check if all required fields are filled
       const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
+      let allFieldsFilled = false;
+      
       if (isDesignPhase) {
         const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts'] || '{}') : {};
         const v0Prompt = promptsObj['v0_prompt'] || '';
         const lovablePrompt = promptsObj['lovable_prompt'] || '';
+        allFieldsFilled = v0Prompt.trim().length > 0 || lovablePrompt.trim().length > 0;
+      } else {
+        // Check all required fields except design_mockups
+        const fieldsToCheck = phase.required_fields.filter(f => f !== 'design_mockups');
+        allFieldsFilled = fieldsToCheck.every((field) => {
+          const value = formData[field];
+          if (!value) return false;
+          if (field === 'v0_lovable_prompts') {
+            try {
+              const parsed = JSON.parse(value);
+              return (parsed.v0_prompt?.trim() || parsed.lovable_prompt?.trim()) ? true : false;
+            } catch {
+              return false;
+            }
+          }
+          return value.trim().length > 0;
+        });
+      }
 
-        if (!v0Prompt.trim() && !lovablePrompt.trim()) {
-          alert('Please generate at least one prompt (V0 or Lovable) before saving to chat');
+      if (!allFieldsFilled) {
+        alert('Please fill in all required fields before saving to chat');
           setIsSubmitting(false);
           return;
         }
+
+      // Build the message to save to chatbot - format all form data nicely
+      let chatbotMessage = `## ${phase.phase_name} Phase Content\n\n`;
+      
+      if (isDesignPhase) {
+        const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts'] || '{}') : {};
+        const v0Prompt = promptsObj['v0_prompt'] || '';
+        const lovablePrompt = promptsObj['lovable_prompt'] || '';
 
         // Get the highest score (or prompt user to score if not scored)
         const maxScore = Math.max(
@@ -363,23 +429,24 @@ export function PhaseFormModal({
         throw new Error(`Failed to save to chatbot: ${response.status} - ${errorText}`);
       }
 
-      // Dispatch event to update chatbot UI
-      window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
-        detail: {
-          message: chatbotMessage,
-          productId,
-        }
-      }));
-
-      // Update phase submission metadata
+      // Update phase submission status to 'completed' since all fields are filled
       if (productId) {
         try {
-          const submission = await lifecycleService.getPhaseSubmission(productId, phase.id);
+          // First, ensure we have a submission - create or update it
+          let submission = await lifecycleService.getPhaseSubmission(productId, phase.id);
+          
+          if (!submission) {
+            // Create submission if it doesn't exist
+            await lifecycleService.submitPhaseData(productId, phase.id, formData, user?.id || '');
+            submission = await lifecycleService.getPhaseSubmission(productId, phase.id);
+          }
+          
           if (submission) {
             const metadata: any = {
               ...(submission.metadata || {}),
               saved_to_chatbot: true,
               saved_at: new Date().toISOString(),
+              all_fields_completed: true,
             };
             
             // Add design phase specific scores if available
@@ -396,10 +463,11 @@ export function PhaseFormModal({
               }
             }
             
+            // Update status to 'completed' since all fields are filled and saved to chat
             await lifecycleService.updatePhaseContent(
               submission.id,
-              submission.generated_content || '',
-              submission.status || 'completed',
+              submission.generated_content || chatbotMessage,
+              'completed', // Mark as completed
               metadata
             );
           }
@@ -409,23 +477,32 @@ export function PhaseFormModal({
         }
       }
 
-      // Don't close modal automatically - let user continue editing if needed
-      // Just show success message
-      alert(`${phase.phase_name} phase content saved to chat successfully!`);
-      
-      // Reload submissions to update progress in parent component
-      // But don't reset the form state or currentPromptIndex
-      if (productId && phase.id && token) {
-        try {
-          const { lifecycleService } = await import('../lib/product-lifecycle-service');
-          lifecycleService.setToken(token);
-          // Trigger a refresh in parent by calling onSubmit with current data
-          // This will update the submission status without resetting the form
-          await lifecycleService.getPhaseSubmission(productId, phase.id);
-        } catch (error) {
-          console.error('Error refreshing submission after save to chat:', error);
+      // Dispatch event to update chatbot UI with phase info for follow-up question
+      window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+        detail: {
+          message: chatbotMessage,
+          productId,
+          phaseName: phase.phase_name,
+          phaseId: phase.id,
+          allFieldsCompleted: allFieldsFilled,
         }
-      }
+      }));
+
+      // Dispatch event to refresh submissions in parent
+      window.dispatchEvent(new CustomEvent('phaseSubmissionUpdated', {
+        detail: { productId, phaseId: phase.id }
+      }));
+
+      // Close modal first
+      onClose();
+      
+      // Dispatch event to switch to chat view and focus chatbot
+      window.dispatchEvent(new CustomEvent('navigateToChat', {
+        detail: { 
+          productId,
+          focusChat: true  // Signal to focus the chat input
+        }
+      }));
     } catch (error) {
       console.error('Error saving to chat:', error);
       alert(`Failed to save to chat: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -845,6 +922,7 @@ export function PhaseFormModal({
           product_id: productId,
           phase_submission_id: selectedSubmissionId,
           provider,
+          force_new: true, // Always generate new prompt when "Help with AI" is clicked
           context: {
             phase_name: phase.phase_name,
             form_data: formData,
@@ -1044,9 +1122,16 @@ export function PhaseFormModal({
 
       const result = await response.json();
       
-      // For V0, show the generated code and prompt
-      if (provider === 'v0' && result.code) {
-        const v0Message = `V0 (Vercel) prototype generated!\n\n**Prompt Used:**\n${prompt}\n\n**Generated Code:**\n\`\`\`\n${result.code.substring(0, 1000)}${result.code.length > 1000 ? '...' : ''}\n\`\`\`\n\nTo deploy: Create a new Vercel project and paste the generated code.`;
+      // For V0, update status to submitted
+      if (provider === 'v0') {
+        setV0PrototypeStatus({
+          status: result.status === 'completed' ? 'completed' : 'submitted',
+          project_url: result.project_url,
+          message: result.message || 'V0 prototype request submitted successfully. It may take 10+ minutes to complete.'
+        });
+        
+        // Show success message
+        const v0Message = `V0 prototype request submitted!\n\n**Prompt Used:**\n${prompt}\n\n${result.message || 'Your prototype is being generated. This may take 10+ minutes. Use "Check Status" to see when it\'s ready.'}`;
         
         window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
           detail: {
@@ -1054,14 +1139,26 @@ export function PhaseFormModal({
             productId,
           }
         }));
+      } else {
+        // For Lovable, show the generated code and prompt
+        if (result.code) {
+          const lovableMessage = `Lovable prototype generated!\n\n**Prompt Used:**\n${prompt}\n\n**Generated Code:**\n\`\`\`\n${result.code.substring(0, 1000)}${result.code.length > 1000 ? '...' : ''}\n\`\`\`\n\nTo deploy: Create a new Lovable project and paste the generated code.`;
+          
+          window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
+            detail: {
+              message: lovableMessage,
+              productId,
+            }
+          }));
+        }
+        
+        // Open project URL if available
+        if (result.project_url) {
+          window.open(result.project_url, '_blank');
+        }
+        
+        alert(`Lovable mockup generated successfully! ${result.project_url ? 'Opening project in new tab...' : ''}`);
       }
-      
-      // For Lovable, open project URL if available
-      if (provider === 'lovable' && result.project_url) {
-        window.open(result.project_url, '_blank');
-      }
-      
-      alert(`${provider === 'v0' ? 'V0' : 'Lovable'} mockup generated successfully! ${provider === 'lovable' && result.project_url ? 'Opening project in new tab...' : ''}`);
       
       // Trigger refresh of mockup gallery
       setMockupRefreshTrigger(prev => prev + 1);
@@ -1308,29 +1405,78 @@ export function PhaseFormModal({
                     </div>
                            <button
                              type="button"
-                             onClick={() => handleGenerateMockup('v0')}
-                             disabled={isGeneratingMockup.v0 || isSubmitting || !productId || !sessionId || (() => {
-                               const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
-                               return !promptsObj['v0_prompt']?.trim();
+                             onClick={() => {
+                               const status = v0PrototypeStatus?.status || 'not_submitted';
+                               if (status === 'not_submitted' || status === 'submitted' || status === 'in_progress') {
+                                 if (status === 'not_submitted') {
+                                   handleGenerateMockup('v0');
+                                 } else {
+                                   handleCheckV0Status();
+                                 }
+                               } else if (status === 'completed' && v0PrototypeStatus?.project_url) {
+                                 window.open(v0PrototypeStatus.project_url, '_blank');
+                               }
+                             }}
+                             disabled={(isGeneratingMockup.v0 || isCheckingStatus.v0 || isSubmitting || !productId || !sessionId) && (() => {
+                               const status = v0PrototypeStatus?.status || 'not_submitted';
+                               if (status === 'not_submitted') {
+                                 const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                                 return !promptsObj['v0_prompt']?.trim();
+                               }
+                               return false;
                              })()}
                              className="w-full px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 rounded-lg hover:from-blue-700 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
                            >
-                             {isGeneratingMockup.v0 ? (
-                               <>
-                                 <Loader2 className="w-4 h-4 animate-spin" />
-                                 Generating V0 Prototype...
-                               </>
-                             ) : (
-                               <>
-                                 <Play className="w-4 h-4" />
-                                 Generate V0 Prototype
-                               </>
-                             )}
+                             {(() => {
+                               const status = v0PrototypeStatus?.status || 'not_submitted';
+                               if (isGeneratingMockup.v0) {
+                                 return (
+                                   <>
+                                     <Loader2 className="w-4 h-4 animate-spin" />
+                                     Submitting...
+                                   </>
+                                 );
+                               } else if (isCheckingStatus.v0) {
+                                 return (
+                                   <>
+                                     <Loader2 className="w-4 h-4 animate-spin" />
+                                     Checking Status...
+                                   </>
+                                 );
+                               } else if (status === 'completed') {
+                                 return (
+                                   <>
+                                     <Play className="w-4 h-4" />
+                                     Open Prototype
+                                   </>
+                                 );
+                               } else if (status === 'submitted' || status === 'in_progress') {
+                                 return (
+                                   <>
+                                     <RefreshCw className="w-4 h-4" />
+                                     Check Status
+                                   </>
+                                 );
+                               } else {
+                                 return (
+                                   <>
+                                     <Play className="w-4 h-4" />
+                                     Generate V0 Prototype
+                                   </>
+                                 );
+                               }
+                             })()}
                            </button>
-                           {isGeneratingMockup.v0 && (
+                           {v0PrototypeStatus && (v0PrototypeStatus.status === 'submitted' || v0PrototypeStatus.status === 'in_progress') && (
                              <div className="text-xs text-blue-600 mt-2 flex items-center gap-2">
                                <Loader2 className="w-3 h-3 animate-spin" />
-                               <span>Please wait while V0 generates your prototype. The prompt used will be shown in the chatbot.</span>
+                               <span>{v0PrototypeStatus.message || 'Prototype is being generated. This may take 10+ minutes. Click "Check Status" to see when it\'s ready.'}</span>
+                             </div>
+                           )}
+                           {v0PrototypeStatus && v0PrototypeStatus.status === 'completed' && v0PrototypeStatus.project_url && (
+                             <div className="text-xs text-green-600 mt-2 flex items-center gap-2">
+                               <CheckCircle2 className="w-3 h-3" />
+                               <span>Prototype is ready! Click the button above to open it.</span>
                              </div>
                            )}
                       </div>
@@ -1822,6 +1968,25 @@ export function PhaseFormModal({
             })()}
         </div>
       </form>
+
+      {/* Recommendations Section - Only show if phase has been completed at least once */}
+      {phaseRecommendations.length > 0 && (
+        <div className="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
+          <div className="flex items-center gap-2 mb-3">
+            <Lightbulb className="w-5 h-5 text-yellow-600" />
+            <h3 className="font-semibold text-yellow-900">Recommendations for Improvement</h3>
+          </div>
+          <div className="space-y-3">
+            {phaseRecommendations.map((rec, idx) => (
+              <div key={idx} className="bg-white rounded-lg p-3 border border-yellow-100">
+                <h4 className="font-medium text-gray-900 mb-1 text-sm">{rec.section}</h4>
+                <p className="text-xs text-gray-700 mb-2">{rec.importance}</p>
+                <p className="text-sm font-medium text-yellow-800">💡 {rec.recommendation}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Thumbnail Selector Modal for Lovable */}
       {showThumbnailSelector && lovableThumbnails.length > 0 && (

@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import httpx
 import structlog
+import asyncio
 
 from backend.agents.agno_base_agent import AgnoBaseAgent
 from backend.models.schemas import AgentMessage, AgentResponse
@@ -130,7 +131,8 @@ Your output should:
                             },
                             json={
                                 "message": prompt,
-                                "model": "v0-1.5-md"
+                                "model": "v0-1.5-md",
+                                "scope": "mckinsey"
                             }
                         )
                         
@@ -200,7 +202,8 @@ Your output should:
                                     }
                                 ],
                                 "temperature": 0.7,
-                                "max_tokens": 4000
+                                "max_tokens": 4000,
+                                "scope": "mckinsey"
                             }
                         )
                         
@@ -259,18 +262,194 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
         )
 
         response = await self.process([message], context={"task": "v0_prompt_generation"})
-        return response.response
+        prompt_text = response.response
+        
+        # Clean the prompt - remove headers/footers that AI might add
+        prompt_text = self._clean_v0_prompt(prompt_text)
+        
+        return prompt_text
     
+    def _clean_v0_prompt(self, prompt: str) -> str:
+        """
+        Clean V0 prompt by removing instructional headers/footers.
+        Removes text like "Below is a V0-ready prompt..." and similar metadata.
+        """
+        if not prompt:
+            return prompt
+        
+        lines = prompt.split('\n')
+        cleaned_lines = []
+        skip_until_content = True
+        
+        # Patterns that indicate we should skip lines
+        skip_patterns = [
+            "below is a v0-ready prompt",
+            "below is a v0 prompt",
+            "v0-ready prompt",
+            "you can paste directly into",
+            "v0 api or v0 ui",
+            "written for `v0-1.5-md`",
+            "assumes react",
+            "assumes next.js",
+            "tailwind",
+            "shadcn/ui",
+            "---",
+            "===",
+        ]
+        
+        for line in lines:
+            line_lower = line.lower().strip()
+            
+            # Skip empty lines at the start
+            if skip_until_content and not line_lower:
+                continue
+            
+            # Check if this line matches a skip pattern
+            should_skip = any(pattern in line_lower for pattern in skip_patterns)
+            
+            if should_skip:
+                skip_until_content = True
+                continue
+            
+            # If we find actual content, start including lines
+            if line_lower and not should_skip:
+                skip_until_content = False
+                cleaned_lines.append(line)
+            elif not skip_until_content:
+                cleaned_lines.append(line)
+        
+        # Join and clean up
+        cleaned = '\n'.join(cleaned_lines).strip()
+        
+        # Remove any trailing metadata
+        if cleaned:
+            # Remove common trailing patterns
+            trailing_patterns = [
+                "\n\n---\n",
+                "\n\n===\n",
+                "\n\nNote:",
+                "\n\nThis prompt",
+                "\n\nYou can",
+            ]
+            for pattern in trailing_patterns:
+                if cleaned.endswith(pattern) or pattern in cleaned[-100:]:
+                    cleaned = cleaned[:cleaned.rfind(pattern)].strip()
+        
+        return cleaned if cleaned else prompt
+    
+    async def poll_v0_chat_status(
+        self,
+        api_key: str,
+        chat_id: str,
+        max_polls: int = 60,  # 60 * 15s = 900s = 15 minutes
+        poll_interval: float = 15.0  # Poll every 15 seconds
+    ) -> Dict[str, Any]:
+        """
+        Poll V0 chat status until prototype is ready or timeout.
+        Returns chat data with prototype URLs when ready.
+        """
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+            request_headers = {
+                "Authorization": f"Bearer {api_key.strip()}",
+                "Content-Type": "application/json"
+            }
+            
+            for poll_count in range(max_polls):
+                try:
+                    response = await client.get(
+                        f"https://api.v0.dev/v1/chats/{chat_id}",
+                        headers=request_headers
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        web_url = result.get("webUrl") or result.get("web_url") or result.get("url")
+                        demo_url = result.get("demo") or result.get("demoUrl") or result.get("demo_url")
+                        files = result.get("files", [])
+                        status = result.get("status", "unknown")
+                        
+                        if demo_url or web_url or (files and len(files) > 0):
+                            elapsed = int((poll_count + 1) * poll_interval)
+                            logger.info("v0_chat_ready",
+                                       chat_id=chat_id,
+                                       poll_count=poll_count + 1,
+                                       elapsed_seconds=elapsed)
+                            return {
+                                "ready": True,
+                                "chat_id": chat_id,
+                                "web_url": web_url,
+                                "demo_url": demo_url,
+                                "files": files,
+                                "status": status,
+                                "poll_count": poll_count + 1,
+                                "elapsed_seconds": elapsed,
+                                "metadata": result
+                            }
+                        else:
+                            if poll_count % 4 == 0:  # Log every 4 polls (60s with 15s interval)
+                                elapsed = int((poll_count + 1) * poll_interval)
+                                logger.info("v0_chat_polling",
+                                           chat_id=chat_id,
+                                           poll_count=poll_count + 1,
+                                           max_polls=max_polls,
+                                           elapsed_seconds=elapsed,
+                                           status=status)
+                    elif response.status_code == 404:
+                        if poll_count % 4 == 0:  # Log every 4 polls (60s)
+                            logger.warning("v0_chat_not_found",
+                                         chat_id=chat_id,
+                                         poll_count=poll_count + 1)
+                    else:
+                        if poll_count % 4 == 0:  # Log every 4 polls (60s)
+                            logger.warning("v0_chat_status_error",
+                                         chat_id=chat_id,
+                                         status_code=response.status_code,
+                                         poll_count=poll_count + 1)
+                    
+                    if poll_count < max_polls - 1:
+                        await asyncio.sleep(poll_interval)
+                        
+                except Exception as e:
+                    if poll_count % 4 == 0:  # Log every 4 polls (60s)
+                        logger.warning("v0_chat_poll_error",
+                                     chat_id=chat_id,
+                                     error=str(e)[:100],
+                                     poll_count=poll_count + 1)
+                    if poll_count < max_polls - 1:
+                        await asyncio.sleep(poll_interval)
+            
+            # Timeout after max_polls
+            elapsed = int(max_polls * poll_interval)
+            logger.warning("v0_chat_poll_timeout",
+                         chat_id=chat_id,
+                         poll_count=max_polls,
+                         elapsed_seconds=elapsed)
+            return {
+                "ready": False,
+                "chat_id": chat_id,
+                "timeout": True,
+                "poll_count": max_polls,
+                "elapsed_seconds": elapsed
+            }
+
     async def create_v0_project_with_api(
         self,
         v0_prompt: str,
         v0_api_key: Optional[str] = None,
         user_id: Optional[str] = None,
-        product_id: Optional[str] = None
+        product_id: Optional[str] = None,
+        db: Optional[Any] = None,  # Database session for duplicate prevention
+        create_new: bool = False,  # If False, reuse existing; if True, create new
+        timeout_seconds: int = 600  # 10 minutes default, can be up to 900 (15 minutes)
     ) -> Dict[str, Any]:
         """
-        Create a V0 project using the V0 Platform API.
-        This method directly accesses the V0 platform.
+        Create a V0 project using the V0 Platform API with duplicate prevention and async polling.
+        
+        Features:
+        - Checks for existing prototype (unless create_new=True)
+        - Creates project with scope=mckinsey
+        - Polls for completion with configurable timeout (10-15 minutes)
+        - Returns chat_id, project_id, and status information
         """
         # Priority: passed parameter > instance variable > global settings
         api_key = v0_api_key
@@ -287,16 +466,147 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
         if not api_key:
             raise ValueError("V0 API key is not configured. Please configure it in Settings.")
         
+        # Step 1: Check for existing prototype (unless create_new=True)
+        if db and product_id and user_id and not create_new:
+            try:
+                from sqlalchemy import text
+                existing_query = text("""
+                    SELECT id, v0_chat_id, v0_project_id, project_url, project_status, 
+                           image_url, thumbnail_url, metadata
+                    FROM design_mockups
+                    WHERE product_id = :product_id 
+                      AND user_id = :user_id 
+                      AND provider = 'v0'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                
+                existing_result = await db.execute(existing_query, {
+                    "product_id": product_id,
+                    "user_id": user_id
+                })
+                existing_row = existing_result.fetchone()
+                
+                if existing_row:
+                    existing_id, v0_chat_id, v0_project_id, project_url, project_status, \
+                        image_url, thumbnail_url, metadata = existing_row
+                    
+                    logger.info("existing_v0_prototype_found",
+                               user_id=user_id,
+                               product_id=product_id,
+                               mockup_id=str(existing_id),
+                               chat_id=v0_chat_id,
+                               status=project_status)
+                    
+                    # If we have a chat_id, update the existing project with new prompt
+                    if v0_chat_id:
+                        logger.info("updating_existing_v0_prototype",
+                                   chat_id=v0_chat_id,
+                                   current_status=project_status)
+                        
+                        # Update existing chat with new prompt
+                        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+                            try:
+                                update_response = await client.post(
+                                    f"https://api.v0.dev/v1/chats/{v0_chat_id}",
+                                    headers={
+                                        "Authorization": f"Bearer {api_key}",
+                                        "Content-Type": "application/json"
+                                    },
+                                    json={
+                                        "message": v0_prompt,
+                                        "model": "v0-1.5-md",
+                                        "scope": "mckinsey"
+                                    }
+                                )
+                                
+                                if update_response.status_code in [200, 201]:
+                                    update_result = update_response.json()
+                                    updated_web_url = update_result.get("webUrl") or update_result.get("web_url") or update_result.get("url")
+                                    updated_demo_url = update_result.get("demo") or update_result.get("demoUrl") or update_result.get("demo_url")
+                                    updated_project_url = updated_demo_url or updated_web_url or project_url
+                                    
+                                    # Update database with new status
+                                    try:
+                                        update_query = text("""
+                                            UPDATE design_mockups
+                                            SET project_status = 'in_progress',
+                                                project_url = :project_url,
+                                                prompt = :prompt,
+                                                updated_at = now()
+                                            WHERE id = :id
+                                        """)
+                                        await db.execute(update_query, {
+                                            "id": existing_id,
+                                            "project_url": updated_project_url,
+                                            "prompt": v0_prompt
+                                        })
+                                        await db.commit()
+                                    except Exception as update_error:
+                                        logger.warning("failed_to_update_prototype_in_db",
+                                                     error=str(update_error))
+                                    
+                                    return {
+                                        "chat_id": v0_chat_id,
+                                        "project_id": v0_project_id or update_result.get("project_id"),
+                                        "project_url": updated_project_url,
+                                        "web_url": updated_web_url,
+                                        "demo_url": updated_demo_url,
+                                        "project_status": "in_progress",
+                                        "project_name": update_result.get("name") or f"V0 Project {v0_chat_id[:8]}",
+                                        "is_existing": True,
+                                        "is_updated": True,
+                                        "metadata": {
+                                            "api_version": "v1",
+                                            "model_used": "v0-1.5-md",
+                                            "workflow": "update_existing_prototype",
+                                            "key_source": key_source
+                                        }
+                                    }
+                                else:
+                                    logger.warning("failed_to_update_v0_chat",
+                                                 chat_id=v0_chat_id,
+                                                 status_code=update_response.status_code)
+                                    # Fall through to return existing data
+                            except Exception as update_error:
+                                logger.warning("error_updating_v0_chat",
+                                             chat_id=v0_chat_id,
+                                             error=str(update_error))
+                                # Fall through to return existing data
+                    
+                    # Return existing prototype (if update failed or no chat_id)
+                    return {
+                        "chat_id": v0_chat_id,
+                        "project_id": v0_project_id,
+                        "project_url": project_url or "",
+                        "project_status": project_status or "unknown",
+                        "project_name": metadata.get("name") if isinstance(metadata, dict) else f"V0 Project {v0_chat_id[:8] if v0_chat_id else 'N/A'}",
+                        "is_existing": True,
+                        "image_url": image_url,
+                        "thumbnail_url": thumbnail_url,
+                        "metadata": metadata if metadata else {}
+                    }
+            except Exception as db_error:
+                logger.warning("database_check_failed",
+                             error=str(db_error),
+                             user_id=user_id,
+                             product_id=product_id)
+                # Continue with project creation if database check fails
+        
         # Log key usage (without logging the actual key)
         logger.info("v0_api_key_usage",
                    user_id=user_id,
                    key_source=key_source,
                    key_length=len(api_key) if api_key else 0,
                    has_instance_key=bool(self.v0_api_key),
-                   has_global_key=bool(settings.v0_api_key))
+                   has_global_key=bool(settings.v0_api_key),
+                   create_new=create_new)
         
+        # Step 2: Create new project
         # Disable SSL verification for V0 API (as requested)
-        async with httpx.AsyncClient(timeout=180.0, verify=False) as client:
+        # Use longer timeout (90s) - V0 API can take time to create chat
+        # Strategy: Return immediately with chat_id, status can be checked separately
+        async with httpx.AsyncClient(timeout=90.0, verify=False) as client:
             try:
                 # Log the request (without sensitive data)
                 logger.info("v0_api_request",
@@ -305,6 +615,7 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                            prompt_length=len(v0_prompt) if v0_prompt else 0,
                            key_source=key_source)
                 
+                # Make the request with longer timeout
                 response = await client.post(
                     "https://api.v0.dev/v1/chats",
                     headers={
@@ -313,7 +624,8 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                     },
                     json={
                         "message": v0_prompt,
-                        "model": "v0-1.5-md"
+                        "model": "v0-1.5-md",
+                        "scope": "mckinsey"
                     }
                 )
                 
@@ -369,7 +681,15 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                         pass
                     raise ValueError(f"V0 API error: {response.status_code} - {error_text}")
                 
-                result = response.json()
+                # Parse response
+                try:
+                    result = response.json()
+                except Exception as json_error:
+                    logger.error("v0_api_json_parse_error",
+                               user_id=user_id,
+                               error=str(json_error),
+                               response_text=response.text[:500])
+                    raise ValueError(f"V0 API returned invalid JSON. Response: {response.text[:200]}")
                 
                 chat_id = result.get("id") or result.get("chat_id")
                 web_url = result.get("webUrl") or result.get("web_url") or result.get("url")
@@ -377,31 +697,149 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                 files = result.get("files", [])
                 code = "\n\n".join([f.get("content", "") for f in files if f.get("content")])
                 
-                project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                if not chat_id:
+                    logger.error("v0_api_no_chat_id",
+                               user_id=user_id,
+                               response_keys=list(result.keys()) if isinstance(result, dict) else "not_dict")
+                    raise ValueError("No chat_id returned from V0 API. Response may be incomplete.")
+                
+                logger.info("v0_chat_created",
+                           chat_id=chat_id,
+                           user_id=user_id,
+                           product_id=product_id,
+                           has_demo=bool(demo_url),
+                           has_web_url=bool(web_url),
+                           num_files=len(files))
+                
+                # Return immediately with project details - no polling
+                # Even if prototype isn't ready, we have chat_id and can check status later
+                initial_project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                initial_status = "completed" if (demo_url or web_url or files) else "in_progress"
+                project_name = result.get("name") or f"V0 Project {chat_id[:8] if chat_id else 'N/A'}"
                 
                 return {
                     "chat_id": chat_id,
-                    "project_url": project_url,
+                    "project_id": result.get("project_id") or chat_id,  # Use chat_id as project_id if not provided
+                    "project_url": initial_project_url,
                     "web_url": web_url,
                     "demo_url": demo_url,
+                    "project_name": project_name,
                     "code": code,
                     "files": files,
                     "prompt": v0_prompt,
                     "image_url": None,
                     "thumbnail_url": None,
+                    "project_status": initial_status,
+                    "is_existing": False,
                     "metadata": {
                         "api_version": "v1",
                         "model_used": "v0-1.5-md",
                         "num_files": len(files),
-                        "has_demo": demo_url is not None
+                        "has_demo": demo_url is not None,
+                        "has_web_url": web_url is not None,
+                        "workflow": "create_chat_immediate",
+                        "key_source": key_source
                     }
                 }
                 
-            except httpx.TimeoutException:
-                raise ValueError("V0 API request timed out. Please try again.")
+            except httpx.TimeoutException as timeout_error:
+                # Timeout occurred - V0 API might still be processing
+                # This is acceptable - user can check status later
+                logger.warning("v0_api_timeout",
+                             user_id=user_id,
+                             error=str(timeout_error),
+                             message="V0 API request timed out but prototype may still be creating")
+                raise ValueError("V0 API request timed out after 90 seconds. The prototype may still be creating. Please check the status later using the status check button.")
             except httpx.RequestError as e:
+                logger.error("v0_api_connection_error",
+                           user_id=user_id,
+                           error=str(e))
                 raise ValueError(f"V0 API connection error: {str(e)}")
+            except ValueError:
+                # Re-raise ValueError as-is (these are our custom errors)
+                raise
             except Exception as e:
-                logger.error("v0_project_creation_error", error=str(e), api_key_length=len(api_key) if api_key else 0)
+                logger.error("v0_project_creation_error", 
+                           error=str(e), 
+                           error_type=type(e).__name__,
+                           api_key_length=len(api_key) if api_key else 0)
                 raise ValueError(f"V0 API error: {str(e)}")
+    
+    async def poll_and_update_prototype_status(
+        self,
+        api_key: str,
+        chat_id: str,
+        mockup_id: str,
+        db: Any,
+        timeout_seconds: int = 900
+    ) -> None:
+        """
+        Background task to poll V0 chat status and update database.
+        This runs in the background after the API returns immediately.
+        """
+        try:
+            logger.info("v0_background_polling_start",
+                       chat_id=chat_id,
+                       mockup_id=mockup_id,
+                       timeout_seconds=timeout_seconds)
+            
+            poll_result = await self.poll_v0_chat_status(
+                api_key,
+                chat_id,
+                max_polls=int(timeout_seconds / 15),  # Poll every 15 seconds
+                poll_interval=15.0
+            )
+            
+            # Update database with final status
+            if poll_result.get("ready"):
+                final_web_url = poll_result.get("web_url")
+                final_demo_url = poll_result.get("demo_url")
+                final_project_url = final_demo_url or final_web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                final_status = "completed"
+                
+                logger.info("v0_background_polling_completed",
+                           chat_id=chat_id,
+                           mockup_id=mockup_id,
+                           project_url=final_project_url,
+                           poll_count=poll_result.get("poll_count", 0),
+                           elapsed_seconds=poll_result.get("elapsed_seconds", 0))
+            else:
+                final_project_url = poll_result.get("web_url") or poll_result.get("demo_url") or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                final_status = "timeout" if poll_result.get("timeout") else "in_progress"
+                
+                logger.warning("v0_background_polling_timeout",
+                             chat_id=chat_id,
+                             mockup_id=mockup_id,
+                             status=final_status,
+                             poll_count=poll_result.get("poll_count", 0),
+                             elapsed_seconds=poll_result.get("elapsed_seconds", 0))
+            
+            # Update database
+            try:
+                from sqlalchemy import text
+                update_query = text("""
+                    UPDATE design_mockups
+                    SET project_status = :status,
+                        project_url = :project_url,
+                        updated_at = now()
+                    WHERE id = :id
+                """)
+                await db.execute(update_query, {
+                    "id": mockup_id,
+                    "status": final_status,
+                    "project_url": final_project_url
+                })
+                await db.commit()
+                logger.info("v0_database_updated",
+                           mockup_id=mockup_id,
+                           status=final_status)
+            except Exception as update_error:
+                logger.error("v0_database_update_failed",
+                           mockup_id=mockup_id,
+                           error=str(update_error))
+        except Exception as e:
+            logger.error("v0_background_polling_error",
+                        chat_id=chat_id,
+                        mockup_id=mockup_id,
+                        error=str(e))
 
