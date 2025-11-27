@@ -739,7 +739,7 @@ async def process_multi_agent_request(
             await db.execute(assistant_message_query, {
                 "session_id": session_id,
                 "product_id": product_id_str,
-                "message_type": "assistant",
+                "message_type": "agent",  # Changed from "assistant" to match database constraint
                 "agent_name": response.primary_agent,
                 "agent_role": response.primary_agent,
                 "content": response.response,

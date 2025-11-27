@@ -14,9 +14,18 @@ metadata:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "600"
+    nginx.ingress.kubernetes.io/upstream-keepalive-connections: "50"
+    nginx.ingress.kubernetes.io/upstream-keepalive-timeout: "60"
+    # Specific timeout for multi-agent endpoint (longer processing time)
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      location ~ ^/api/multi-agent/process$ {
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 1800s;
+      }
     # SPA support - serve index.html for all routes (handled by frontend's internal nginx)
     nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
     # CORS headers (if needed)
@@ -30,7 +39,23 @@ spec:
   - host: ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud
     http:
       paths:
-      # All requests go to frontend - frontend nginx proxies /api to backend service internally
+      # Multi-agent endpoint with longer timeout (must come before /api)
+      - path: /api/multi-agent/process
+        pathType: Exact
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8000
+      # All other API requests go to backend
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8000
+      # Frontend routes (catch-all)
       - path: /
         pathType: Prefix
         backend:

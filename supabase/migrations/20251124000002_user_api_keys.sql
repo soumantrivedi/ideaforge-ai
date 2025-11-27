@@ -4,7 +4,7 @@
 CREATE TABLE IF NOT EXISTS user_api_keys (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id uuid NOT NULL REFERENCES user_profiles(id) ON DELETE CASCADE,
-  provider text NOT NULL CHECK (provider IN ('openai', 'anthropic', 'google', 'v0', 'lovable')),
+  provider text NOT NULL CHECK (provider IN ('openai', 'anthropic', 'google', 'v0', 'lovable', 'github', 'atlassian')),
   api_key_encrypted text NOT NULL, -- In production, use proper encryption
   is_active boolean DEFAULT true,
   created_at timestamptz DEFAULT now(),
