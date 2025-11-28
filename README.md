@@ -8,33 +8,32 @@ Multi-agent platform for full-stack product management. Specialized agents colla
 
 ## 🚀 Quick Start
 
-### Local Development (Kind Cluster - Preferred)
+### Local Development (Kind Cluster - Recommended)
+
+For complete step-by-step instructions, see [Local Development Guide](docs/guides/local-development-guide.md).
 
 ```bash
 # 1. Setup environment
-cp env.example .env
 cp env.kind.example env.kind
-# Edit env.kind with your configuration
+# Edit env.kind with your API keys
 
-# 2. Build and deploy to Kind
+# 2. Build and deploy (single command)
 make build-apps
-make kind-deploy
+make kind-deploy-full
 
-# 3. Check status
-make kind-status
-
-# 4. Access application
-# Frontend: http://localhost:80
-# Backend API: http://localhost:80/api
+# 3. Access application
+# Frontend: http://localhost:8080/
+# Backend API: http://localhost:8080/api/
 ```
 
-### Docker Compose (Fallback)
+### Docker Compose (Alternative)
+
+For Docker Compose setup, see [Local Development Guide](docs/guides/local-development-guide.md#option-2-docker-compose-simpler-faster-startup).
 
 ```bash
 # 1. Setup environment
 cp env.example .env
-cp env.docker-compose.example .env
-# Edit .env with your configuration
+# Edit .env with your API keys
 
 # 2. Build and start
 make build
@@ -47,9 +46,10 @@ make up
 
 ### Production (EKS)
 
+For complete step-by-step instructions, see [EKS Production Deployment Guide](docs/guides/eks-production-guide.md).
+
 ```bash
 # 1. Setup environment
-cp env.example .env
 cp env.eks.example env.eks
 # Edit env.eks with production configuration
 
@@ -59,8 +59,8 @@ aws eks update-kubeconfig --name ideaforge-ai --region us-east-1
 # 3. Deploy
 make eks-deploy-full \
   EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 \
-  BACKEND_IMAGE_TAG=<tag> \
-  FRONTEND_IMAGE_TAG=<tag>
+  BACKEND_IMAGE_TAG=$(git rev-parse --short HEAD) \
+  FRONTEND_IMAGE_TAG=$(git rev-parse --short HEAD)
 ```
 
 ---
@@ -87,14 +87,16 @@ make eks-deploy-full \
 - [AI Model Configuration](docs/AI_MODEL_UPGRADE.md)
 
 ### Guides
-- [Quick Start Guide](docs/guides/quick-start.md)
-- [Quick Deploy](docs/guides/quick-deploy.md)
-- [Make Targets Reference](docs/guides/make-targets.md)
-- [Multi-Agent System](docs/guides/multi-agent-system.md)
-- [Multi-Agent Memory](docs/guides/multi-agent-memory.md)
-- [Product Lifecycle](docs/guides/product-lifecycle.md)
-- [Flexible Lifecycle and Export](docs/guides/flexible-lifecycle-and-export.md)
-- [Agno Framework Migration](docs/guides/agno-migration.md)
+- [Local Development Guide](docs/guides/local-development-guide.md) - Complete setup for local development
+- [EKS Production Deployment Guide](docs/guides/eks-production-guide.md) - Step-by-step EKS deployment
+- [Quick Start Guide](docs/guides/quick-start.md) - Get started in 10 minutes
+- [Make Targets Reference](docs/guides/make-targets.md) - All available make commands
+- [Multi-Agent System](docs/guides/multi-agent-system.md) - Understanding agent collaboration
+- [Multi-Agent Memory](docs/guides/multi-agent-memory.md) - Agent memory and context
+- [Product Lifecycle](docs/guides/product-lifecycle.md) - Product lifecycle management
+- [Flexible Lifecycle and Export](docs/guides/flexible-lifecycle-and-export.md) - Lifecycle customization
+- [Database Migration Guide](docs/guides/database-migration.md) - Database migrations
+- [Agno Framework Migration](docs/guides/agno-migration.md) - Agno framework integration
 
 ### Troubleshooting
 - [Common Issues](docs/troubleshooting/common-issues.md)
