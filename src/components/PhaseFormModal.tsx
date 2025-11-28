@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Send, Loader2, Sparkles, Wand2, Trash2, Play, Lightbulb } from 'lucide-react';
+import { X, Send, Loader2, Sparkles, Wand2, Trash2, Play, Lightbulb, RefreshCw, CheckCircle2 } from 'lucide-react';
 import type { LifecyclePhase } from '../lib/product-lifecycle-service';
 import { lifecycleService } from '../lib/product-lifecycle-service';
 import { DesignMockupGallery } from './DesignMockupGallery';
@@ -1031,7 +1031,16 @@ export function PhaseFormModal({
         }));
         
         // Open project URL in new tab
-        window.open(result.project_url, '_blank');
+        const url = result.project_url;
+        if (url && url.startsWith('http')) {
+          const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
+          if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+            // Popup blocked, show alert with link
+            alert(`Popup blocked. Please click this link to open the prototype:\n${url}`);
+          }
+        } else {
+          alert(`Invalid prototype URL: ${url}`);
+        }
       }
 
       alert(`${provider === 'v0' ? 'V0' : 'Lovable'} project created successfully! ${result.project_url ? 'Opening project in new tab...' : ''}`);
@@ -1154,10 +1163,21 @@ export function PhaseFormModal({
         
         // Open project URL if available
         if (result.project_url) {
-          window.open(result.project_url, '_blank');
+          const url = result.project_url;
+          if (url && url.startsWith('http')) {
+            const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
+            if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+              // Popup blocked, show alert with link
+              alert(`Lovable mockup generated successfully!\n\nPopup blocked. Please click this link to open the prototype:\n${url}`);
+            } else {
+              alert(`Lovable mockup generated successfully! Opening project in new tab...`);
+            }
+          } else {
+            alert(`Lovable mockup generated successfully! Invalid URL: ${url}`);
+          }
+        } else {
+          alert(`Lovable mockup generated successfully!`);
         }
-        
-        alert(`Lovable mockup generated successfully! ${result.project_url ? 'Opening project in new tab...' : ''}`);
       }
       
       // Trigger refresh of mockup gallery
@@ -1414,7 +1434,17 @@ export function PhaseFormModal({
                                    handleCheckV0Status();
                                  }
                                } else if (status === 'completed' && v0PrototypeStatus?.project_url) {
-                                 window.open(v0PrototypeStatus.project_url, '_blank');
+                                 // Open prototype URL in new window/tab
+                                 const url = v0PrototypeStatus.project_url;
+                                 if (url && url.startsWith('http')) {
+                                   const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
+                                   if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+                                     // Popup blocked, show alert with link
+                                     alert(`Popup blocked. Please click this link to open the prototype:\n${url}`);
+                                   }
+                                 } else {
+                                   alert(`Invalid prototype URL: ${url}`);
+                                 }
                                }
                              }}
                              disabled={(isGeneratingMockup.v0 || isCheckingStatus.v0 || isSubmitting || !productId || !sessionId) && (() => {
@@ -2035,7 +2065,16 @@ export function PhaseFormModal({
               
               // Open Lovable project in browser if URL is available
               if (result.project_url) {
-                window.open(result.project_url, '_blank');
+                const url = result.project_url;
+                if (url && url.startsWith('http')) {
+                  const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
+                  if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+                    // Popup blocked, show alert with link
+                    alert(`Popup blocked. Please click this link to open the prototype:\n${url}`);
+                  }
+                } else {
+                  alert(`Invalid prototype URL: ${url}`);
+                }
               }
               
               // Send to chatbot

@@ -21,7 +21,7 @@ spec:
       - name: ghcr-secret
       initContainers:
       - name: run-migrations
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:28a283d
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:cd895e1
         imagePullPolicy: IfNotPresent
         command: ["python3", "-m", "backend.database.migrate"]
         env:
@@ -57,7 +57,7 @@ spec:
       containers:
       - name: backend
         # Image pulled from GitHub Container Registry
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:28a283d
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:cd895e1
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -149,6 +149,21 @@ spec:
             configMapKeyRef:
               name: ideaforge-ai-config
               key: AGENT_RESPONSE_TIMEOUT
+        - name: V0_API_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: V0_API_TIMEOUT
+        - name: V0_POLL_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: V0_POLL_INTERVAL
+        - name: V0_POLL_MAX_DURATION
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: V0_POLL_MAX_DURATION
         # Okta Configuration
         - name: OKTA_CLIENT_ID
           valueFrom:
@@ -291,7 +306,7 @@ spec:
           failureThreshold: 3
       initContainers:
       - name: run-migrations
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:28a283d
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:cd895e1
         imagePullPolicy: IfNotPresent
         command: ["python3", "-m", "backend.database.migrate"]
         env:

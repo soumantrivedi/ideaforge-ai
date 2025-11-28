@@ -26,6 +26,9 @@ data:
   AGENT_MODEL_SECONDARY: "claude-sonnet-4-20250522"  # Claude 4 Sonnet: Advanced reasoning and ideation
   AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
   AGENT_RESPONSE_TIMEOUT: "180.0"  # Timeout in seconds (3 minutes max per agent - configurable, jobs run in background)
+  V0_API_TIMEOUT: "90.0"  # V0 API initial request timeout (90 seconds - returns immediately, background polling continues)
+  V0_POLL_INTERVAL: "10"  # V0 status polling interval in seconds
+  V0_POLL_MAX_DURATION: "900"  # V0 status polling maximum duration in seconds (15 minutes)
   
   # Async Job Processing Configuration
   JOB_POLL_INTERVAL_MS: "10000"  # Polling interval in milliseconds (10 seconds for 400+ concurrent users)

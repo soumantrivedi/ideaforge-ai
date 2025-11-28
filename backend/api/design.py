@@ -205,13 +205,127 @@ async def generate_design_prompt(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def poll_v0_status_background(
+    mockup_id: str,
+    v0_chat_id: str,
+    v0_api_key: str,
+    user_id: str,
+    product_id: str,
+    max_duration_seconds: int = 900,  # 15 minutes
+    poll_interval_seconds: int = 10
+):
+    """
+    Background task to poll V0 API for prototype status.
+    Polls every 10 seconds for up to 15 minutes.
+    If no response after 15 mins, sets status to indicate manual check needed.
+    """
+    import asyncio
+    from backend.database import AsyncSessionLocal
+    from sqlalchemy import text
+    import httpx
+    
+    start_time = asyncio.get_event_loop().time()
+    poll_count = 0
+    max_polls = max_duration_seconds // poll_interval_seconds
+    
+    async with AsyncSessionLocal() as db:
+        try:
+            while poll_count < max_polls:
+                await asyncio.sleep(poll_interval_seconds)
+                poll_count += 1
+                elapsed = int((asyncio.get_event_loop().time() - start_time))
+                
+                try:
+                    # Check V0 API status
+                    async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+                        response = await client.get(
+                            f"https://api.v0.dev/v1/chats/{v0_chat_id}",
+                            headers={
+                                "Authorization": f"Bearer {v0_api_key.strip()}",
+                                "Content-Type": "application/json"
+                            }
+                        )
+                    
+                    if response.status_code == 200:
+                        v0_result = response.json()
+                        web_url = v0_result.get("webUrl") or v0_result.get("web_url")
+                        demo_url = v0_result.get("demo") or v0_result.get("demoUrl")
+                        files = v0_result.get("files", [])
+                        
+                        # If prototype is ready, update database
+                        if demo_url or web_url or (files and len(files) > 0):
+                            new_status = "completed"
+                            new_project_url = demo_url or web_url
+                            
+                            update_query = text("""
+                                UPDATE design_mockups
+                                SET project_status = :status,
+                                    project_url = :project_url,
+                                    updated_at = now()
+                                WHERE id = :id
+                            """)
+                            await db.execute(update_query, {
+                                "id": mockup_id,
+                                "status": new_status,
+                                "project_url": new_project_url
+                            })
+                            await db.commit()
+                            
+                            logger.info("v0_background_polling_completed",
+                                       mockup_id=mockup_id,
+                                       chat_id=v0_chat_id,
+                                       poll_count=poll_count,
+                                       elapsed_seconds=elapsed)
+                            return  # Success - exit polling
+                    
+                    # Still in progress, continue polling
+                    logger.debug("v0_background_polling_in_progress",
+                               mockup_id=mockup_id,
+                               chat_id=v0_chat_id,
+                               poll_count=poll_count,
+                               elapsed_seconds=elapsed)
+                    
+                except Exception as poll_error:
+                    logger.warning("v0_background_polling_error",
+                                 mockup_id=mockup_id,
+                                 chat_id=v0_chat_id,
+                                 poll_count=poll_count,
+                                 error=str(poll_error))
+                    # Continue polling despite errors
+                    continue
+            
+            # Timeout reached - update status to indicate manual check needed
+            update_query = text("""
+                UPDATE design_mockups
+                SET project_status = 'pending_manual_check',
+                    updated_at = now()
+                WHERE id = :id
+            """)
+            await db.execute(update_query, {"id": mockup_id})
+            await db.commit()
+            
+            logger.info("v0_background_polling_timeout",
+                      mockup_id=mockup_id,
+                      chat_id=v0_chat_id,
+                      poll_count=poll_count,
+                      elapsed_seconds=elapsed,
+                      message="Polling timeout - user should check manually in V0 dashboard")
+            
+        except Exception as e:
+            logger.error("v0_background_polling_fatal_error",
+                        mockup_id=mockup_id,
+                        chat_id=v0_chat_id,
+                        error=str(e))
+            # Don't update status on fatal error - let user check manually
+
+
 @router.post("/generate-mockup")
 async def generate_design_mockup(
     request: GenerateDesignRequest,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Generate a design mockup using V0 or Lovable API. Returns immediately with project details. Updates existing project if found."""
+    """Generate a design mockup using V0 or Lovable API. Returns immediately with project details. Starts background polling for V0."""
     try:
         from backend.services.api_key_loader import load_user_api_keys_from_db
         
@@ -280,13 +394,8 @@ async def generate_design_mockup(
             else:  # V0
                 image_url = result.get("image_url") or result.get("thumbnail_url") or ""
                 thumbnail_url = result.get("thumbnail_url") or image_url
-                base_project_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
-                
-                # For V0 prototypes, the design is usually at project_url/design
-                if base_project_url and "vusercontent.net" in base_project_url and not base_project_url.endswith("/design"):
-                    project_url = f"{base_project_url.rstrip('/')}/design"
-                else:
-                    project_url = base_project_url
+                # V0 project URLs already contain the correct path (e.g., ideation/design)
+                project_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
                 
                 v0_chat_id = result.get("chat_id")
                 v0_project_id = result.get("project_id")
@@ -370,7 +479,35 @@ async def generate_design_mockup(
             row = insert_result.fetchone()
             mockup_id = str(row[0]) if row else None
             
-            # No background polling - user can check status manually
+            # Start background polling for V0 prototypes
+            # Even if chat_id is None (due to timeout), we can still poll later when it becomes available
+            if request.provider == "v0" and mockup_id:
+                import asyncio
+                # If we have chat_id, start polling immediately
+                # If not (due to timeout), we'll need to get it from the database later
+                if v0_chat_id:
+                    # Start background task to poll V0 status
+                    # Poll every 10 seconds for up to 15 minutes
+                    asyncio.create_task(poll_v0_status_background(
+                        mockup_id=mockup_id,
+                        v0_chat_id=v0_chat_id,
+                        v0_api_key=v0_key,
+                        user_id=str(current_user["id"]),
+                        product_id=request.product_id,
+                        max_duration_seconds=900,  # 15 minutes
+                        poll_interval_seconds=10
+                    ))
+                    logger.info("v0_background_polling_started",
+                               mockup_id=mockup_id,
+                               chat_id=v0_chat_id,
+                               user_id=str(current_user["id"]))
+                else:
+                    # No chat_id yet (timeout case) - log but don't start polling
+                    # User can check status manually or we can retry later
+                    logger.warning("v0_background_polling_deferred",
+                                 mockup_id=mockup_id,
+                                 reason="No chat_id available yet (timeout during submission)",
+                                 message="User should check status manually or retry later")
         except Exception as db_error:
             await db.rollback()
             # If table doesn't exist, log but don't fail
@@ -383,13 +520,8 @@ async def generate_design_mockup(
         
         # Return comprehensive project details for chatbot response
         # For V0, always return "submitted" status - user can check status separately
-        base_response_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
-        
-        # For V0 prototypes, the design is usually at project_url/design
-        if request.provider == "v0" and base_response_url and "vusercontent.net" in base_response_url and not base_response_url.endswith("/design"):
-            response_project_url = f"{base_response_url.rstrip('/')}/design"
-        else:
-            response_project_url = base_response_url
+        # V0 project URLs already contain the correct path (e.g., ideation/design)
+        response_project_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
         
         response_data = {
             "id": mockup_id,
@@ -402,7 +534,7 @@ async def generate_design_mockup(
             "created_at": None,
             "metadata": result,
             "status": "submitted" if request.provider == "v0" else "completed",  # V0 is submitted, not completed yet
-            "message": "V0 prototype request submitted successfully. It may take 10+ minutes to complete. Use 'Check Status' to see when it's ready." if request.provider == "v0" else None
+            "message": "V0 prototype request submitted successfully. Background polling has started and will check status every 10 seconds for up to 15 minutes. If not ready by then, please check manually in the V0 dashboard." if request.provider == "v0" else None
         }
         
         # Add V0-specific fields for chatbot response
@@ -707,13 +839,8 @@ async def check_project_status(
                             # Update status if we have URLs
                             if demo_url or web_url or (files and len(files) > 0):
                                 new_status = "completed"
-                                base_project_url = demo_url or web_url
-                                
-                                # For V0 prototypes, the design is usually at project_url/design
-                                if base_project_url and "vusercontent.net" in base_project_url and not base_project_url.endswith("/design"):
-                                    new_project_url = f"{base_project_url.rstrip('/')}/design"
-                                else:
-                                    new_project_url = base_project_url
+                                # V0 project URLs already contain the correct path (e.g., ideation/design)
+                                new_project_url = demo_url or web_url
                                 
                                 # Update database
                                 update_query = text("""

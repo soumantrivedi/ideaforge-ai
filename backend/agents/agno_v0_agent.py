@@ -713,13 +713,8 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                 
                 # Return immediately with project details - no polling
                 # Even if prototype isn't ready, we have chat_id and can check status later
-                # For V0 prototypes, the design is usually at project_url/design
-                base_project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
-                if base_project_url and "vusercontent.net" in base_project_url and not base_project_url.endswith("/design"):
-                    # Append /design to vusercontent.net URLs
-                    initial_project_url = f"{base_project_url.rstrip('/')}/design"
-                else:
-                    initial_project_url = base_project_url
+                # V0 project URLs already contain the correct path (e.g., ideation/design)
+                initial_project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
                 
                 initial_status = "completed" if (demo_url or web_url or files) else "in_progress"
                 project_name = result.get("name") or f"V0 Project {chat_id[:8] if chat_id else 'N/A'}"
@@ -751,12 +746,37 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                 
             except httpx.TimeoutException as timeout_error:
                 # Timeout occurred - V0 API might still be processing
-                # This is acceptable - user can check status later
-                logger.warning("v0_api_timeout",
+                # This is acceptable - return what we have and let background polling handle it
+                # Don't throw error - return a response indicating submission was made
+                logger.warning("v0_api_timeout_but_continuing",
                              user_id=user_id,
                              error=str(timeout_error),
-                             message="V0 API request timed out but prototype may still be creating")
-                raise ValueError("V0 API request timed out after 90 seconds. The prototype may still be creating. Please check the status later using the status check button.")
+                             message="V0 API request timed out but prototype may still be creating - background polling will continue")
+                
+                # Return a response indicating the request was submitted
+                # Background polling will check status later
+                return {
+                    "chat_id": None,  # We don't have chat_id yet due to timeout
+                    "project_id": None,
+                    "project_url": None,
+                    "web_url": None,
+                    "demo_url": None,
+                    "project_name": "V0 Project (submitted)",
+                    "code": "",
+                    "files": [],
+                    "prompt": v0_prompt,
+                    "image_url": None,
+                    "thumbnail_url": None,
+                    "project_status": "submitted",  # Indicate it was submitted
+                    "is_existing": False,
+                    "metadata": {
+                        "api_version": "v1",
+                        "model_used": "v0-1.5-md",
+                        "workflow": "create_chat_timeout_but_submitted",
+                        "key_source": key_source,
+                        "timeout_note": "Initial request timed out but may still be processing. Background polling will check status."
+                    }
+                }
             except httpx.RequestError as e:
                 logger.error("v0_api_connection_error",
                            user_id=user_id,
@@ -801,13 +821,8 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
             if poll_result.get("ready"):
                 final_web_url = poll_result.get("web_url")
                 final_demo_url = poll_result.get("demo_url")
-                base_final_url = final_demo_url or final_web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
-                
-                # For V0 prototypes, the design is usually at project_url/design
-                if base_final_url and "vusercontent.net" in base_final_url and not base_final_url.endswith("/design"):
-                    final_project_url = f"{base_final_url.rstrip('/')}/design"
-                else:
-                    final_project_url = base_final_url
+                # V0 project URLs already contain the correct path (e.g., ideation/design)
+                final_project_url = final_demo_url or final_web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
                 
                 final_status = "completed"
                 
@@ -818,13 +833,8 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                            poll_count=poll_result.get("poll_count", 0),
                            elapsed_seconds=poll_result.get("elapsed_seconds", 0))
             else:
-                base_final_url = poll_result.get("web_url") or poll_result.get("demo_url") or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
-                
-                # For V0 prototypes, the design is usually at project_url/design
-                if base_final_url and "vusercontent.net" in base_final_url and not base_final_url.endswith("/design"):
-                    final_project_url = f"{base_final_url.rstrip('/')}/design"
-                else:
-                    final_project_url = base_final_url
+                # V0 project URLs already contain the correct path (e.g., ideation/design)
+                final_project_url = poll_result.get("web_url") or poll_result.get("demo_url") or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
                 
                 final_status = "timeout" if poll_result.get("timeout") else "in_progress"
                 
