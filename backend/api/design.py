@@ -1231,8 +1231,9 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
             import json
             
             # Extract V0-specific fields
+            # V0 API uses projectId (camelCase) in responses, but we store as v0_project_id in DB
             v0_chat_id = result.get("chat_id") if request.provider == "v0" else None
-            v0_project_id = result.get("project_id") if request.provider == "v0" else None
+            v0_project_id = result.get("projectId") or result.get("project_id") if request.provider == "v0" else None  # Prefer projectId (camelCase)
             project_status = "in_progress"  # Will be updated when polling completes
             
             # Determine project status from result
@@ -1328,7 +1329,8 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
             "image_url": image_url,
             "thumbnail_url": thumbnail_url,
             "v0_chat_id": v0_chat_id,
-            "v0_project_id": v0_project_id,
+            "v0_project_id": v0_project_id,  # Database field (snake_case)
+            "projectId": v0_project_id,  # V0 API format (camelCase) for frontend
             "project_status": project_status,
             "code": result.get("code", ""),
             "enhanced_prompt": enhanced_prompt,
@@ -1343,3 +1345,118 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
         await db.rollback()
         logger.error("error_creating_design_project", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/check-status/{product_id}")
+async def check_v0_project_status(
+    product_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Check status of V0 project by project_id.
+    Can be called multiple times (for "Check Status" button).
+    Returns latest chat status from the project.
+    """
+    try:
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        from sqlalchemy import text
+        
+        # Get project_id from database
+        query = text("""
+            SELECT v0_project_id, v0_chat_id, project_status, project_url
+            FROM design_mockups
+            WHERE product_id = :product_id 
+              AND user_id = :user_id 
+              AND provider = 'v0'
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        
+        result = await db.execute(query, {
+            "product_id": product_id,
+            "user_id": str(current_user["id"])
+        })
+        row = result.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="No V0 project found for this product")
+        
+        v0_project_id, v0_chat_id, current_status, current_url = row
+        
+        if not v0_project_id:
+            raise HTTPException(status_code=404, detail="No V0 project_id found. Project may not have been created yet.")
+        
+        # Load user's V0 API key
+        user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+        v0_key = user_keys.get("v0") or settings.v0_api_key
+        
+        if not v0_key:
+            raise HTTPException(status_code=400, detail="V0 API key is not configured")
+        
+        # Use AgnoV0Agent to check status
+        from backend.main import agno_enabled
+        if agno_enabled:
+            from backend.agents.agno_v0_agent import AgnoV0Agent
+            agno_v0_agent = AgnoV0Agent()
+            agno_v0_agent.set_v0_api_key(v0_key.strip())
+            
+            status_result = await agno_v0_agent.check_v0_project_status(
+                project_id=v0_project_id,
+                v0_api_key=v0_key.strip(),
+                user_id=str(current_user["id"]),
+                product_id=product_id
+            )
+        else:
+            # Fallback - basic status check
+            status_result = {
+                "project_id": v0_project_id,
+                "chat_id": v0_chat_id,
+                "project_status": current_status or "unknown",
+                "project_url": current_url,
+                "is_complete": current_status == "completed"
+            }
+        
+        # Update database with latest status
+        if status_result.get("project_status") and status_result.get("project_status") != current_status:
+            try:
+                update_query = text("""
+                    UPDATE design_mockups
+                    SET project_status = :status,
+                        project_url = :project_url,
+                        v0_chat_id = COALESCE(:chat_id, v0_chat_id),
+                        updated_at = now()
+                    WHERE product_id = :product_id 
+                      AND user_id = :user_id 
+                      AND provider = 'v0'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                await db.execute(update_query, {
+                    "product_id": product_id,
+                    "user_id": str(current_user["id"]),
+                    "status": status_result.get("project_status"),
+                    "project_url": status_result.get("project_url"),
+                    "chat_id": status_result.get("chat_id")
+                })
+                await db.commit()
+            except Exception as update_error:
+                logger.warning("failed_to_update_status_in_db", error=str(update_error))
+        
+        return {
+            "projectId": v0_project_id,  # Use projectId (camelCase) to match V0 API format
+            "project_id": v0_project_id,  # Keep for backward compatibility
+            "chat_id": status_result.get("chat_id"),
+            "project_status": status_result.get("project_status"),
+            "project_url": status_result.get("project_url"),
+            "web_url": status_result.get("web_url"),
+            "demo_url": status_result.get("demo_url"),
+            "is_complete": status_result.get("is_complete", False),
+            "can_submit_new": status_result.get("is_complete", False)  # Can submit new changes only if completed
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("error_checking_v0_status", error=str(e), product_id=product_id)
+        raise HTTPException(status_code=500, detail=f"Error checking status: {str(e)}")

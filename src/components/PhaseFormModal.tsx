@@ -41,9 +41,11 @@ export function PhaseFormModal({
   const [isGeneratingMockup, setIsGeneratingMockup] = useState<{v0: boolean, lovable: boolean}>({v0: false, lovable: false});
   const [isCheckingStatus, setIsCheckingStatus] = useState<{v0: boolean}>({v0: false});
   const [v0PrototypeStatus, setV0PrototypeStatus] = useState<{
-    status: 'not_submitted' | 'submitted' | 'in_progress' | 'completed';
+    status: 'not_submitted' | 'in_progress' | 'completed';
     project_url?: string;
     message?: string;
+    project_id?: string;
+    last_prompt?: string; // Track last submitted prompt to detect changes
   } | null>(null);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<string | undefined>();
   const [errorModal, setErrorModal] = useState<{
@@ -1220,38 +1222,51 @@ export function PhaseFormModal({
         }
       }
       
-      // For V0 or if Lovable thumbnails failed, generate directly
-      const response = await fetch(`${API_URL}/api/design/generate-mockup`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          product_id: productId,
-          phase_submission_id: selectedSubmissionId,
-          provider,
-          prompt,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to generate mockup: ${response.status} - ${errorText}`);
-      }
-
-      const result = await response.json();
-      
-      // For V0, update status to submitted
+      // For V0, use new create-project endpoint (project-based workflow)
       if (provider === 'v0') {
+        const response = await fetch(`${API_URL}/api/design/create-project`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            product_id: productId,
+            phase_submission_id: selectedSubmissionId,
+            provider: 'v0',
+            prompt,
+            create_new: false, // Reuse existing project if available
+            use_multi_agent: false, // Can be enabled later if needed
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to create V0 project: ${response.status} - ${errorText}`);
+        }
+
+        const result = await response.json();
+        
+        // Update status based on response
+        const projectStatus = result.project_status || 'in_progress';
+        const isCompleted = projectStatus === 'completed' || result.is_existing;
+        const projectId = result.v0_project_id;
+        
+        // Use projectId (camelCase) from API response, fallback to v0_project_id
+        const projectIdValue = result.projectId || result.v0_project_id;
+        
         setV0PrototypeStatus({
-          status: result.status === 'completed' ? 'completed' : 'submitted',
+          status: isCompleted ? 'completed' : 'in_progress',
           project_url: result.project_url,
-          message: result.message || 'V0 prototype request submitted successfully. It may take 10+ minutes to complete.'
+          project_id: projectIdValue, // Store projectId
+          last_prompt: prompt, // Store last submitted prompt
+          message: projectIdValue 
+            ? `V0 project created! Project ID: ${projectIdValue}. Use "Check Status" to see when prototype is ready.`
+            : 'V0 prototype request submitted. Use "Check Status" to see when it\'s ready.'
         });
         
         // Show success message
-        const v0Message = `V0 prototype request submitted!\n\n**Prompt Used:**\n${prompt}\n\n${result.message || 'Your prototype is being generated. This may take 10+ minutes. Use "Check Status" to see when it\'s ready.'}`;
+        const v0Message = `V0 prototype request submitted!\n\n**Project ID:** ${result.v0_project_id || 'N/A'}\n**Prompt Used:**\n${prompt}\n\nUse "Check Status" to see when your prototype is ready.`;
         
         window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
           detail: {
@@ -1260,6 +1275,27 @@ export function PhaseFormModal({
           }
         }));
       } else {
+        // For Lovable, use generate-mockup endpoint
+        const response = await fetch(`${API_URL}/api/design/generate-mockup`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            product_id: productId,
+            phase_submission_id: selectedSubmissionId,
+            provider,
+            prompt,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to generate mockup: ${response.status} - ${errorText}`);
+        }
+
+        const result = await response.json();
         // For Lovable, show the generated code and prompt
         if (result.code) {
           const lovableMessage = `Lovable prototype generated!\n\n**Prompt Used:**\n${prompt}\n\n**Generated Code:**\n\`\`\`\n${result.code.substring(0, 1000)}${result.code.length > 1000 ? '...' : ''}\n\`\`\`\n\nTo deploy: Create a new Lovable project and paste the generated code.`;
@@ -1315,7 +1351,8 @@ export function PhaseFormModal({
     setIsCheckingStatus({ ...isCheckingStatus, v0: true });
 
     try {
-      const response = await fetch(`${API_URL}/api/design/mockups/${productId}/status?provider=v0`, {
+      // Use new check-status endpoint
+      const response = await fetch(`${API_URL}/api/design/check-status/${productId}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -1324,47 +1361,49 @@ export function PhaseFormModal({
       });
 
       if (!response.ok) {
+        if (response.status === 404) {
+          // No project found - reset to not_submitted
+          setV0PrototypeStatus({
+            status: 'not_submitted',
+            project_url: undefined,
+            message: 'No V0 project found. Please generate a new prototype.'
+          });
+          setIsCheckingStatus({ ...isCheckingStatus, v0: false });
+          return;
+        }
         const errorText = await response.text();
         throw new Error(`Failed to check V0 status: ${response.status} - ${errorText}`);
       }
 
       const result = await response.json();
       
-      // Handle not_found status
-      if (result.status === 'not_found') {
-        setV0PrototypeStatus({
-          status: 'not_submitted',
-          project_url: undefined,
-          message: result.message || 'No prototype found for this product. Please generate a new prototype.'
-        });
-        alert(result.message || 'No prototype found for this product. Please generate a new prototype.');
-        return;
-      }
-      
-      // Update status based on response
-      const status = result.status || 'not_submitted';
-      
       // Map backend statuses to frontend statuses
+      const projectStatus = result.project_status || 'unknown';
       let frontendStatus: 'not_submitted' | 'submitted' | 'in_progress' | 'completed';
-      if (status === 'completed') {
+      
+      if (projectStatus === 'completed' || result.is_complete) {
         frontendStatus = 'completed';
-      } else if (status === 'in_progress' || status === 'pending') {
+      } else if (projectStatus === 'in_progress' || projectStatus === 'pending') {
         frontendStatus = 'in_progress';
-      } else if (status === 'submitted' || status === 'unknown') {
-        frontendStatus = 'submitted';
       } else {
-        frontendStatus = 'submitted'; // Default to submitted for other statuses
+        frontendStatus = 'in_progress'; // Default to in_progress
       }
+      
+      // Use projectId (camelCase) from API response, fallback to project_id
+      const projectIdValue = result.projectId || result.project_id;
       
       setV0PrototypeStatus({
         status: frontendStatus,
         project_url: result.project_url || result.demo_url || result.web_url,
-        message: result.message || `Status: ${status}`
+        project_id: projectIdValue, // Store projectId from status check
+        message: result.is_complete 
+          ? 'Prototype is ready! Click the button above to open it.'
+          : `Status: ${projectStatus}. Prototype is still being generated.`
       });
 
       // If completed, show success message
-      if (status === 'completed' && (result.project_url || result.demo_url || result.web_url)) {
-        const url = result.project_url || result.demo_url || result.web_url;
+      if (result.is_complete && result.project_url) {
+        const url = result.project_url;
         const shouldOpen = confirm(`V0 prototype is ready!\n\nWould you like to open it now?`);
         if (shouldOpen && url && url.startsWith('http')) {
           const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
@@ -1372,14 +1411,14 @@ export function PhaseFormModal({
             alert(`Popup blocked. Please click this link to open the prototype:\n${url}`);
           }
         }
-      } else if (status === 'in_progress' || status === 'pending' || status === 'submitted' || status === 'unknown') {
+      } else if (projectStatus === 'in_progress' || projectStatus === 'pending' || projectStatus === 'unknown') {
         // Show message for in-progress prototypes
-        const statusMessage = status === 'pending' 
+        const statusMessage = projectStatus === 'pending' 
           ? 'V0 prototype request is pending and will start generating soon.'
-          : status === 'in_progress'
+          : projectStatus === 'in_progress'
           ? 'V0 prototype is currently being generated. This may take 10+ minutes.'
           : 'V0 prototype status is being checked. Please wait a moment and try again.';
-        alert(`${statusMessage}\n\nStatus: ${status}\n\nPlease check again in a few minutes.`);
+        alert(`${statusMessage}\n\nStatus: ${projectStatus}\n\nPlease check again in a few minutes.`);
       }
 
       // Trigger refresh of mockup gallery
@@ -1625,12 +1664,18 @@ export function PhaseFormModal({
                              type="button"
                              onClick={() => {
                                const status = v0PrototypeStatus?.status || 'not_submitted';
-                               if (status === 'not_submitted' || status === 'submitted' || status === 'in_progress') {
-                                 if (status === 'not_submitted') {
-                                   handleGenerateMockup('v0');
-                                 } else {
-                                   handleCheckV0Status();
-                                 }
+                               const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                               const currentPrompt = promptsObj['v0_prompt'] || '';
+                               
+                               // Check if prompt has changed from last submission
+                               const promptChanged = v0PrototypeStatus?.last_prompt && v0PrototypeStatus.last_prompt !== currentPrompt;
+                               
+                               if (status === 'not_submitted' || promptChanged) {
+                                 // Generate new prototype or submit new prompt to existing project
+                                 handleGenerateMockup('v0');
+                               } else if (status === 'in_progress') {
+                                 // Check status
+                                 handleCheckV0Status();
                                } else if (status === 'completed' && v0PrototypeStatus?.project_url) {
                                  // Open prototype URL in new window/tab
                                  const url = v0PrototypeStatus.project_url;
@@ -1647,9 +1692,13 @@ export function PhaseFormModal({
                              }}
                              disabled={(isGeneratingMockup.v0 || isCheckingStatus.v0 || isSubmitting || !productId || !sessionId) && (() => {
                                const status = v0PrototypeStatus?.status || 'not_submitted';
-                               if (status === 'not_submitted') {
-                                 const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
-                                 return !promptsObj['v0_prompt']?.trim();
+                               const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                               const currentPrompt = promptsObj['v0_prompt'] || '';
+                               const promptChanged = v0PrototypeStatus?.last_prompt && v0PrototypeStatus.last_prompt !== currentPrompt;
+                               
+                               // Disable if no prompt and not submitting to existing project
+                               if ((status === 'not_submitted' || promptChanged) && !currentPrompt.trim()) {
+                                 return true;
                                }
                                return false;
                              })()}
@@ -1657,6 +1706,10 @@ export function PhaseFormModal({
                            >
                              {(() => {
                                const status = v0PrototypeStatus?.status || 'not_submitted';
+                               const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
+                               const currentPrompt = promptsObj['v0_prompt'] || '';
+                               const promptChanged = v0PrototypeStatus?.last_prompt !== currentPrompt;
+                               
                                if (isGeneratingMockup.v0) {
                                  return (
                                    <>
@@ -1671,14 +1724,14 @@ export function PhaseFormModal({
                                      Checking Status...
                                    </>
                                  );
-                               } else if (status === 'completed') {
+                               } else if (status === 'completed' && !promptChanged) {
                                  return (
                                    <>
                                      <Play className="w-4 h-4" />
                                      Open Prototype
                                    </>
                                  );
-                               } else if (status === 'submitted' || status === 'in_progress') {
+                               } else if (status === 'in_progress' && !promptChanged) {
                                  return (
                                    <>
                                      <RefreshCw className="w-4 h-4" />
@@ -1686,19 +1739,20 @@ export function PhaseFormModal({
                                    </>
                                  );
                                } else {
+                                 // Show "Generate V0 Prototype" if not submitted, or if prompt changed
                                  return (
                                    <>
                                      <Play className="w-4 h-4" />
-                                     Generate V0 Prototype
+                                     {promptChanged ? 'Submit New Prompt' : 'Generate V0 Prototype'}
                                    </>
                                  );
                                }
                              })()}
                            </button>
-                           {v0PrototypeStatus && (v0PrototypeStatus.status === 'submitted' || v0PrototypeStatus.status === 'in_progress') && (
+                           {v0PrototypeStatus && v0PrototypeStatus.status === 'in_progress' && (
                              <div className="text-xs text-blue-600 mt-2 flex items-center gap-2">
                                <Loader2 className="w-3 h-3 animate-spin" />
-                               <span>{v0PrototypeStatus.message || 'Prototype is being generated. This may take 10+ minutes. Click "Check Status" to see when it\'s ready.'}</span>
+                               <span>{v0PrototypeStatus.message || 'Prototype is being generated. Click "Check Status" to see when it\'s ready.'}</span>
                              </div>
                            )}
                            {v0PrototypeStatus && v0PrototypeStatus.status === 'completed' && v0PrototypeStatus.project_url && (

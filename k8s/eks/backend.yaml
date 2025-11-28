@@ -19,45 +19,10 @@ spec:
     spec:
       imagePullSecrets:
       - name: ghcr-secret
-      initContainers:
-      - name: run-migrations
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:9d894bc
-        imagePullPolicy: IfNotPresent
-        command: ["python3", "-m", "backend.database.migrate"]
-        env:
-        - name: POSTGRES_HOST
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_HOST
-        - name: POSTGRES_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_PORT
-        - name: POSTGRES_USER
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_USER
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: ideaforge-ai-secrets
-              key: POSTGRES_PASSWORD
-        - name: POSTGRES_DB
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_DB
-        volumeMounts:
-        - name: migrations
-          mountPath: /migrations
-          readOnly: true
       containers:
       - name: backend
         # Image pulled from GitHub Container Registry
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:9d894bc
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:2efc81e
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -306,7 +271,7 @@ spec:
           failureThreshold: 3
       initContainers:
       - name: run-migrations
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:9d894bc
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:2efc81e
         imagePullPolicy: IfNotPresent
         command: ["python3", "-m", "backend.database.migrate"]
         env:

@@ -466,126 +466,36 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
         if not api_key:
             raise ValueError("V0 API key is not configured. Please configure it in Settings.")
         
-        # Step 1: Check for existing prototype (unless create_new=True)
+        # Step 1: Check for existing project_id in database (unless create_new=True)
+        # If project_id exists, we'll submit new chat to same project (not create new project)
+        existing_project_id = None
         if db and product_id and user_id and not create_new:
             try:
                 from sqlalchemy import text
-                existing_query = text("""
-                    SELECT id, v0_chat_id, v0_project_id, project_url, project_status, 
-                           image_url, thumbnail_url, metadata
+                project_query = text("""
+                    SELECT v0_project_id
                     FROM design_mockups
                     WHERE product_id = :product_id 
                       AND user_id = :user_id 
                       AND provider = 'v0'
+                      AND v0_project_id IS NOT NULL
                     ORDER BY created_at DESC
                     LIMIT 1
                 """)
                 
-                existing_result = await db.execute(existing_query, {
+                project_result = await db.execute(project_query, {
                     "product_id": product_id,
                     "user_id": user_id
                 })
-                existing_row = existing_result.fetchone()
+                project_row = project_result.fetchone()
                 
-                if existing_row:
-                    existing_id, v0_chat_id, v0_project_id, project_url, project_status, \
-                        image_url, thumbnail_url, metadata = existing_row
-                    
-                    logger.info("existing_v0_prototype_found",
+                if project_row:
+                    existing_project_id = project_row[0]
+                    logger.info("existing_project_id_found",
                                user_id=user_id,
                                product_id=product_id,
-                               mockup_id=str(existing_id),
-                               chat_id=v0_chat_id,
-                               status=project_status)
-                    
-                    # If we have a chat_id, update the existing project with new prompt
-                    if v0_chat_id:
-                        logger.info("updating_existing_v0_prototype",
-                                   chat_id=v0_chat_id,
-                                   current_status=project_status)
-                        
-                        # Update existing chat with new prompt
-                        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
-                            try:
-                                update_response = await client.post(
-                                    f"https://api.v0.dev/v1/chats/{v0_chat_id}",
-                                    headers={
-                                        "Authorization": f"Bearer {api_key}",
-                                        "Content-Type": "application/json"
-                                    },
-                                    json={
-                                        "message": v0_prompt,
-                                        "model": "v0-1.5-md",
-                                        "scope": "mckinsey"
-                                    }
-                                )
-                                
-                                if update_response.status_code in [200, 201]:
-                                    update_result = update_response.json()
-                                    updated_web_url = update_result.get("webUrl") or update_result.get("web_url") or update_result.get("url")
-                                    updated_demo_url = update_result.get("demo") or update_result.get("demoUrl") or update_result.get("demo_url")
-                                    updated_project_url = updated_demo_url or updated_web_url or project_url
-                                    
-                                    # Update database with new status
-                                    try:
-                                        update_query = text("""
-                                            UPDATE design_mockups
-                                            SET project_status = 'in_progress',
-                                                project_url = :project_url,
-                                                prompt = :prompt,
-                                                updated_at = now()
-                                            WHERE id = :id
-                                        """)
-                                        await db.execute(update_query, {
-                                            "id": existing_id,
-                                            "project_url": updated_project_url,
-                                            "prompt": v0_prompt
-                                        })
-                                        await db.commit()
-                                    except Exception as update_error:
-                                        logger.warning("failed_to_update_prototype_in_db",
-                                                     error=str(update_error))
-                                    
-                                    return {
-                                        "chat_id": v0_chat_id,
-                                        "project_id": v0_project_id or update_result.get("project_id"),
-                                        "project_url": updated_project_url,
-                                        "web_url": updated_web_url,
-                                        "demo_url": updated_demo_url,
-                                        "project_status": "in_progress",
-                                        "project_name": update_result.get("name") or f"V0 Project {v0_chat_id[:8]}",
-                                        "is_existing": True,
-                                        "is_updated": True,
-                                        "metadata": {
-                                            "api_version": "v1",
-                                            "model_used": "v0-1.5-md",
-                                            "workflow": "update_existing_prototype",
-                                            "key_source": key_source
-                                        }
-                                    }
-                                else:
-                                    logger.warning("failed_to_update_v0_chat",
-                                                 chat_id=v0_chat_id,
-                                                 status_code=update_response.status_code)
-                                    # Fall through to return existing data
-                            except Exception as update_error:
-                                logger.warning("error_updating_v0_chat",
-                                             chat_id=v0_chat_id,
-                                             error=str(update_error))
-                                # Fall through to return existing data
-                    
-                    # Return existing prototype (if update failed or no chat_id)
-                    return {
-                        "chat_id": v0_chat_id,
-                        "project_id": v0_project_id,
-                        "project_url": project_url or "",
-                        "project_status": project_status or "unknown",
-                        "project_name": metadata.get("name") if isinstance(metadata, dict) else f"V0 Project {v0_chat_id[:8] if v0_chat_id else 'N/A'}",
-                        "is_existing": True,
-                        "image_url": image_url,
-                        "thumbnail_url": thumbnail_url,
-                        "metadata": metadata if metadata else {}
-                    }
+                               project_id=existing_project_id,
+                               note="Will submit new chat to existing project")
             except Exception as db_error:
                 logger.warning("database_check_failed",
                              error=str(db_error),
@@ -602,31 +512,90 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                    has_global_key=bool(settings.v0_api_key),
                    create_new=create_new)
         
-        # Step 2: Create new project
-        # Disable SSL verification for V0 API (as requested)
-        # Use longer timeout (90s) - V0 API can take time to create chat
-        # Strategy: Return immediately with chat_id, status can be checked separately
-        async with httpx.AsyncClient(timeout=90.0, verify=False) as client:
+        # Step 2: Get or create project (IMMEDIATE - < 1 second)
+        # Use existing project_id if found, otherwise get or create one
+        project_id = existing_project_id
+        project_name = f"V0 Project {product_id[:8] if product_id else 'Default'}"
+        
+        try:
+            # If no existing project_id, get or create one
+            if not project_id:
+                async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+                    # List existing projects
+                    projects_resp = await client.get(
+                        "https://api.v0.dev/v1/projects",
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json"
+                        }
+                    )
+                    
+                    if projects_resp.status_code == 200:
+                        projects = projects_resp.json().get("data", [])
+                        # Look for project with matching name or use most recent
+                        for p in projects:
+                            if p.get("name") == project_name:
+                                project_id = p.get("id")
+                                break
+                        if not project_id and projects:
+                            project_id = projects[0].get("id")  # Use most recent
+                    
+                    # Create new project if none found
+                    if not project_id:
+                        create_resp = await client.post(
+                            "https://api.v0.dev/v1/projects",
+                            headers={
+                                "Authorization": f"Bearer {api_key}",
+                                "Content-Type": "application/json"
+                            },
+                            json={"name": project_name}
+                        )
+                        if create_resp.status_code in [200, 201]:
+                            project_id = create_resp.json().get("id")
+                            logger.info("v0_project_created",
+                                       user_id=user_id,
+                                       product_id=product_id,
+                                       project_id=project_id)
+                
+                if not project_id:
+                    raise ValueError("Failed to get or create V0 project")
+        
+        except Exception as project_error:
+            logger.warning("project_creation_failed",
+                         error=str(project_error),
+                         user_id=user_id,
+                         product_id=product_id)
+            # Continue without project_id - will create new project per chat (fallback)
+        
+        # Step 3: Submit chat to project with SHORT timeout (returns immediately)
+        # Use projectId (camelCase) parameter to associate with project
+        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:  # Short timeout
             try:
-                # Log the request (without sensitive data)
+                # Log the request
                 logger.info("v0_api_request",
                            user_id=user_id,
                            endpoint="https://api.v0.dev/v1/chats",
                            prompt_length=len(v0_prompt) if v0_prompt else 0,
+                           project_id=project_id,
                            key_source=key_source)
                 
-                # Make the request with longer timeout
+                # Submit chat with projectId parameter (camelCase)
+                chat_payload = {
+                    "message": v0_prompt,
+                    "model": "v0-1.5-md",
+                    "scope": "mckinsey"
+                }
+                
+                if project_id:
+                    chat_payload["projectId"] = project_id  # camelCase - correct format
+                
                 response = await client.post(
                     "https://api.v0.dev/v1/chats",
                     headers={
                         "Authorization": f"Bearer {api_key}",
                         "Content-Type": "application/json"
                     },
-                    json={
-                        "message": v0_prompt,
-                        "model": "v0-1.5-md",
-                        "scope": "mckinsey"
-                    }
+                    json=chat_payload
                 )
                 
                 # Log response status
@@ -692,6 +661,11 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                     raise ValueError(f"V0 API returned invalid JSON. Response: {response.text[:200]}")
                 
                 chat_id = result.get("id") or result.get("chat_id")
+                returned_project_id = result.get("projectId")  # camelCase in response
+                
+                # Use returned project_id if available, otherwise use the one we created/got
+                final_project_id = returned_project_id or project_id
+                
                 web_url = result.get("webUrl") or result.get("web_url") or result.get("url")
                 demo_url = result.get("demo") or result.get("demoUrl") or result.get("demo_url")
                 files = result.get("files", [])
@@ -703,29 +677,47 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                                response_keys=list(result.keys()) if isinstance(result, dict) else "not_dict")
                     raise ValueError("No chat_id returned from V0 API. Response may be incomplete.")
                 
+                # If chat was created in different project, try to assign it
+                if returned_project_id and returned_project_id != project_id and project_id:
+                    try:
+                        assign_resp = await client.patch(
+                            f"https://api.v0.dev/v1/chats/{chat_id}",
+                            headers={
+                                "Authorization": f"Bearer {api_key}",
+                                "Content-Type": "application/json"
+                            },
+                            json={"projectId": project_id}
+                        )
+                        if assign_resp.status_code in [200, 201, 204]:
+                            final_project_id = project_id
+                            logger.info("v0_chat_assigned_to_project",
+                                       chat_id=chat_id,
+                                       project_id=project_id)
+                    except:
+                        pass  # Assignment failed, use returned project_id
+                
                 logger.info("v0_chat_created",
                            chat_id=chat_id,
                            user_id=user_id,
                            product_id=product_id,
+                           project_id=final_project_id,
                            has_demo=bool(demo_url),
                            has_web_url=bool(web_url),
                            num_files=len(files))
                 
-                # Return immediately with project details - no polling
-                # Even if prototype isn't ready, we have chat_id and can check status later
-                # V0 project URLs already contain the correct path (e.g., ideation/design)
+                # Return IMMEDIATELY with project_id - no waiting for generation
                 initial_project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
-                
                 initial_status = "completed" if (demo_url or web_url or files) else "in_progress"
-                project_name = result.get("name") or f"V0 Project {chat_id[:8] if chat_id else 'N/A'}"
+                project_name_result = result.get("name") or f"V0 Project {final_project_id[:8] if final_project_id else 'N/A'}"
                 
                 return {
                     "chat_id": chat_id,
-                    "project_id": result.get("project_id") or chat_id,  # Use chat_id as project_id if not provided
+                    "projectId": final_project_id,  # Use projectId (camelCase) to match V0 API format
+                    "project_id": final_project_id,  # Keep for backward compatibility
                     "project_url": initial_project_url,
                     "web_url": web_url,
                     "demo_url": demo_url,
-                    "project_name": project_name,
+                    "project_name": project_name_result,
                     "code": code,
                     "files": files,
                     "prompt": v0_prompt,
@@ -739,42 +731,42 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                         "num_files": len(files),
                         "has_demo": demo_url is not None,
                         "has_web_url": web_url is not None,
-                        "workflow": "create_chat_immediate",
+                        "workflow": "project_based_immediate",
                         "key_source": key_source
                     }
                 }
                 
             except httpx.TimeoutException as timeout_error:
-                # Timeout occurred - V0 API might still be processing
-                # This is acceptable - return what we have and let background polling handle it
-                # Don't throw error - return a response indicating submission was made
-                logger.warning("v0_api_timeout_but_continuing",
-                             user_id=user_id,
-                             error=str(timeout_error),
-                             message="V0 API request timed out but prototype may still be creating - background polling will continue")
+                # Timeout is EXPECTED - V0 API generates in background
+                # Return immediately with project_id - user can check status later
+                logger.info("v0_chat_submission_timeout",
+                           user_id=user_id,
+                           product_id=product_id,
+                           project_id=project_id,
+                           note="Timeout expected - chat is being generated in background")
                 
-                # Return a response indicating the request was submitted
-                # Background polling will check status later
+                # Return immediately with projectId - chat will appear in project
                 return {
-                    "chat_id": None,  # We don't have chat_id yet due to timeout
-                    "project_id": None,
+                    "chat_id": None,  # Will be found via project polling
+                    "projectId": project_id or "unknown",  # Use projectId (camelCase) to match V0 API format
+                    "project_id": project_id or "unknown",  # Keep for backward compatibility
                     "project_url": None,
                     "web_url": None,
                     "demo_url": None,
-                    "project_name": "V0 Project (submitted)",
-                    "code": "",
+                    "project_name": project_name,
+                    "code": None,
                     "files": [],
                     "prompt": v0_prompt,
                     "image_url": None,
                     "thumbnail_url": None,
-                    "project_status": "submitted",  # Indicate it was submitted
+                    "project_status": "in_progress",
                     "is_existing": False,
                     "metadata": {
                         "api_version": "v1",
                         "model_used": "v0-1.5-md",
-                        "workflow": "create_chat_timeout_but_submitted",
+                        "workflow": "project_based_timeout",
                         "key_source": key_source,
-                        "timeout_note": "Initial request timed out but may still be processing. Background polling will check status."
+                        "note": "Chat submitted but timed out - check status later via projectId"
                     }
                 }
             except httpx.RequestError as e:
@@ -791,6 +783,161 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                            error_type=type(e).__name__,
                            api_key_length=len(api_key) if api_key else 0)
                 raise ValueError(f"V0 API error: {str(e)}")
+    
+    async def check_v0_project_status(
+        self,
+        project_id: str,
+        v0_api_key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        product_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Check status of V0 project by getting latest chat and checking its status.
+        This is used for the "Check Status" button - can be called multiple times.
+        
+        Returns:
+            - projectId: The project ID (camelCase to match V0 API format)
+            - project_id: The project ID (snake_case for backward compatibility)
+            - chat_id: Latest chat ID in the project
+            - project_status: "completed", "in_progress", or "unknown"
+            - project_url: URL to the prototype (if completed)
+            - web_url: Web URL
+            - demo_url: Demo URL
+            - is_complete: Boolean indicating if prototype is ready
+        """
+        api_key = v0_api_key or self.v0_api_key or settings.v0_api_key
+        
+        if not api_key:
+            raise ValueError("V0 API key is not configured")
+        
+        if not project_id:
+            raise ValueError("project_id is required")
+        
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            try:
+                # Step 1: Get project to find latest chat
+                project_resp = await client.get(
+                    f"https://api.v0.dev/v1/projects/{project_id}",
+                    headers=headers
+                )
+                
+                if project_resp.status_code == 404:
+                    return {
+                        "projectId": project_id,  # Use projectId (camelCase)
+                        "project_id": project_id,  # Keep for backward compatibility
+                        "chat_id": None,
+                        "project_status": "unknown",
+                        "project_url": None,
+                        "web_url": None,
+                        "demo_url": None,
+                        "is_complete": False,
+                        "error": "Project not found"
+                    }
+                
+                if project_resp.status_code != 200:
+                    raise ValueError(f"Failed to get project: {project_resp.status_code}")
+                
+                project_data = project_resp.json()
+                chats = project_data.get("chats", [])
+                
+                if not chats or len(chats) == 0:
+                    return {
+                        "projectId": project_id,  # Use projectId (camelCase)
+                        "project_id": project_id,  # Keep for backward compatibility
+                        "chat_id": None,
+                        "project_status": "pending",
+                        "project_url": None,
+                        "web_url": None,
+                        "demo_url": None,
+                        "is_complete": False,
+                        "note": "No chats found in project"
+                    }
+                
+                # Get latest chat (first in list, usually sorted by date)
+                latest_chat = chats[0]
+                chat_id = latest_chat.get("id")
+                
+                if not chat_id:
+                    return {
+                        "projectId": project_id,  # Use projectId (camelCase)
+                        "project_id": project_id,  # Keep for backward compatibility
+                        "chat_id": None,
+                        "project_status": "unknown",
+                        "project_url": None,
+                        "web_url": None,
+                        "demo_url": None,
+                        "is_complete": False,
+                        "error": "No chat ID found"
+                    }
+                
+                # Step 2: Check chat status
+                chat_resp = await client.get(
+                    f"https://api.v0.dev/v1/chats/{chat_id}",
+                    headers=headers
+                )
+                
+                if chat_resp.status_code != 200:
+                    return {
+                        "projectId": project_id,  # Use projectId (camelCase)
+                        "project_id": project_id,  # Keep for backward compatibility
+                        "chat_id": chat_id,
+                        "project_status": "unknown",
+                        "project_url": None,
+                        "web_url": None,
+                        "demo_url": None,
+                        "is_complete": False,
+                        "error": f"Failed to get chat: {chat_resp.status_code}"
+                    }
+                
+                chat_data = chat_resp.json()
+                web_url = chat_data.get("webUrl") or chat_data.get("web_url")
+                demo_url = chat_data.get("demo") or chat_data.get("demoUrl") or chat_data.get("demo_url")
+                files = chat_data.get("files", [])
+                
+                # Determine status
+                is_complete = bool(demo_url or web_url or (files and len(files) > 0))
+                project_status = "completed" if is_complete else "in_progress"
+                project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                
+                logger.info("v0_status_checked",
+                           projectId=project_id,
+                           chat_id=chat_id,
+                           status=project_status,
+                           is_complete=is_complete,
+                           user_id=user_id,
+                           product_id=product_id)
+                
+                return {
+                    "projectId": project_id,  # Use projectId (camelCase) to match V0 API format
+                    "project_id": project_id,  # Keep for backward compatibility
+                    "chat_id": chat_id,
+                    "project_status": project_status,
+                    "project_url": project_url,
+                    "web_url": web_url,
+                    "demo_url": demo_url,
+                    "is_complete": is_complete,
+                    "num_files": len(files),
+                    "files": files
+                }
+                
+            except httpx.RequestError as e:
+                logger.error("v0_status_check_error",
+                           projectId=project_id,
+                           error=str(e),
+                           user_id=user_id)
+                raise ValueError(f"V0 API connection error: {str(e)}")
+            except Exception as e:
+                logger.error("v0_status_check_error",
+                           projectId=project_id,
+                           error=str(e),
+                           error_type=type(e).__name__,
+                           user_id=user_id)
+                raise ValueError(f"V0 status check error: {str(e)}")
     
     async def poll_and_update_prototype_status(
         self,
