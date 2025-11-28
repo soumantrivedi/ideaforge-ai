@@ -162,7 +162,7 @@ jobs:
   build-backend:
     needs: [prepare, build-backend-base, check-backend-base]
     runs-on: ubuntu-latest
-    if: always() && (needs.build-backend-base.result == 'success' || needs.build-backend-base.result == 'skipped') && (needs.check-backend-base.result == 'success' || needs.check-backend-base.result == 'skipped')
+    if: always() && needs.prepare.result == 'success' && (needs.build-backend-base.result == 'success' || needs.build-backend-base.result == 'skipped') && (needs.check-backend-base.result == 'success' || needs.check-backend-base.result == 'skipped')
     permissions:
       contents: read
       packages: write
