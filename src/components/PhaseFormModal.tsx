@@ -1330,10 +1330,34 @@ export function PhaseFormModal({
 
       const result = await response.json();
       
+      // Handle not_found status
+      if (result.status === 'not_found') {
+        setV0PrototypeStatus({
+          status: 'not_submitted',
+          project_url: undefined,
+          message: result.message || 'No prototype found for this product. Please generate a new prototype.'
+        });
+        alert(result.message || 'No prototype found for this product. Please generate a new prototype.');
+        return;
+      }
+      
       // Update status based on response
       const status = result.status || 'not_submitted';
+      
+      // Map backend statuses to frontend statuses
+      let frontendStatus: 'not_submitted' | 'submitted' | 'in_progress' | 'completed';
+      if (status === 'completed') {
+        frontendStatus = 'completed';
+      } else if (status === 'in_progress' || status === 'pending') {
+        frontendStatus = 'in_progress';
+      } else if (status === 'submitted' || status === 'unknown') {
+        frontendStatus = 'submitted';
+      } else {
+        frontendStatus = 'submitted'; // Default to submitted for other statuses
+      }
+      
       setV0PrototypeStatus({
-        status: status === 'completed' ? 'completed' : (status === 'in_progress' ? 'in_progress' : 'submitted'),
+        status: frontendStatus,
         project_url: result.project_url || result.demo_url || result.web_url,
         message: result.message || `Status: ${status}`
       });
@@ -1348,8 +1372,14 @@ export function PhaseFormModal({
             alert(`Popup blocked. Please click this link to open the prototype:\n${url}`);
           }
         }
-      } else if (status === 'in_progress' || status === 'submitted') {
-        alert(`V0 prototype is still being generated. Status: ${status}\n\nPlease check again in a few minutes.`);
+      } else if (status === 'in_progress' || status === 'pending' || status === 'submitted' || status === 'unknown') {
+        // Show message for in-progress prototypes
+        const statusMessage = status === 'pending' 
+          ? 'V0 prototype request is pending and will start generating soon.'
+          : status === 'in_progress'
+          ? 'V0 prototype is currently being generated. This may take 10+ minutes.'
+          : 'V0 prototype status is being checked. Please wait a moment and try again.';
+        alert(`${statusMessage}\n\nStatus: ${status}\n\nPlease check again in a few minutes.`);
       }
 
       // Trigger refresh of mockup gallery

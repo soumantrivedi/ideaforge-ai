@@ -778,9 +778,10 @@ async def check_project_status(
         from backend.services.api_key_loader import load_user_api_keys_from_db
         
         # Get the most recent prototype for this product
+        # First try with user_id filter, then without if not found (in case prototype was created by different user)
         query = text("""
             SELECT id, v0_chat_id, v0_project_id, project_url, project_status, 
-                   metadata, created_at, updated_at
+                   metadata, created_at, updated_at, user_id
             FROM design_mockups
             WHERE product_id = :product_id 
               AND user_id = :user_id 
@@ -796,14 +797,33 @@ async def check_project_status(
         })
         row = result.fetchone()
         
+        # If not found with user_id filter, try without user_id filter (for shared products)
+        if not row:
+            query_no_user = text("""
+                SELECT id, v0_chat_id, v0_project_id, project_url, project_status, 
+                       metadata, created_at, updated_at, user_id
+                FROM design_mockups
+                WHERE product_id = :product_id 
+                  AND provider = :provider
+                ORDER BY created_at DESC
+                LIMIT 1
+            """)
+            
+            result_no_user = await db.execute(query_no_user, {
+                "product_id": product_id,
+                "provider": provider
+            })
+            row = result_no_user.fetchone()
+        
         if not row:
             return {
                 "status": "not_found",
                 "message": "No prototype found for this product"
             }
         
+        # Unpack row (user_id is always included in SELECT, so we always have 9 columns)
         mockup_id, v0_chat_id, v0_project_id, project_url, project_status, \
-            metadata, created_at, updated_at = row
+            metadata, created_at, updated_at, row_user_id = row
         
         # If it's a V0 project and has a chat_id, use Agno V0 Agent to check status
         if provider == "v0" and v0_chat_id:
