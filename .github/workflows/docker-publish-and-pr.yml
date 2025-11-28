@@ -71,9 +71,49 @@ jobs:
           echo "vite_api_url=$VITE_API_URL" >> $GITHUB_OUTPUT
           echo "VITE_API_URL set to: $VITE_API_URL"
 
-  build-backend-base:
+  check-base-image-changes:
     needs: prepare
     runs-on: ubuntu-latest
+    outputs:
+      needs-rebuild: ${{ steps.check-files.outputs.needs-rebuild }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if base image needs rebuild
+        id: check-files
+        run: |
+          # Check if this is a manual workflow dispatch (always rebuild)
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "needs-rebuild=true" >> $GITHUB_OUTPUT
+            echo "Manual workflow dispatch - will rebuild base image"
+            exit 0
+          fi
+          
+          # Check if base image files changed
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            # For PRs, check changed files against base branch
+            BASE_FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E "(Dockerfile\.base\.backend|backend/requirements\.txt)" || true)
+          else
+            # For pushes, check last commit
+            BASE_FILES_CHANGED=$(git diff --name-only HEAD~1 HEAD | grep -E "(Dockerfile\.base\.backend|backend/requirements\.txt)" || true)
+          fi
+          
+          if [ -n "$BASE_FILES_CHANGED" ]; then
+            echo "needs-rebuild=true" >> $GITHUB_OUTPUT
+            echo "Base image files changed - will rebuild:"
+            echo "$BASE_FILES_CHANGED"
+          else
+            echo "needs-rebuild=false" >> $GITHUB_OUTPUT
+            echo "No base image file changes detected - will use existing base image from GHCR"
+          fi
+
+  build-backend-base:
+    needs: [prepare, check-base-image-changes]
+    runs-on: ubuntu-latest
+    if: needs.check-base-image-changes.outputs.needs-rebuild == 'true' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       packages: write
@@ -123,10 +163,40 @@ jobs:
             echo "   Tags: ${{ steps.meta-backend-base.outputs.tags }}"
           fi
 
-  build-backend:
-    needs: [prepare, build-backend-base]
+  ensure-base-image-exists:
+    needs: [prepare, check-base-image-changes]
     runs-on: ubuntu-latest
-    if: always() && needs.prepare.result == 'success' && needs.build-backend-base.result == 'success'
+    if: needs.check-base-image-changes.outputs.needs-rebuild != 'true' && github.event_name != 'workflow_dispatch'
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify base image exists in GHCR
+        run: |
+          BASE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND_BASE }}:latest"
+          echo "📥 Checking if base image exists: $BASE_IMAGE"
+          
+          # Try to pull the image to verify it exists
+          if docker pull "$BASE_IMAGE" 2>/dev/null; then
+            echo "✅ Base image found in GHCR: $BASE_IMAGE"
+            echo "   Will use existing base image for backend build"
+          else
+            echo "⚠️  Base image not found in GHCR: $BASE_IMAGE"
+            echo "   This should not happen on main branch. Building base image now..."
+            exit 1
+          fi
+
+  build-backend:
+    needs: [prepare, build-backend-base, ensure-base-image-exists]
+    runs-on: ubuntu-latest
+    if: always() && needs.prepare.result == 'success' && (needs.build-backend-base.result == 'success' || needs.build-backend-base.result == 'skipped') && (needs.ensure-base-image-exists.result == 'success' || needs.ensure-base-image-exists.result == 'skipped')
     permissions:
       contents: read
       packages: write
@@ -235,7 +305,7 @@ jobs:
           echo "   Tags: ${{ steps.meta-frontend.outputs.tags }}"
 
   prepare-release-notes:
-    needs: [prepare, build-backend-base, build-backend, build-frontend]
+    needs: [prepare, build-backend-base, ensure-base-image-exists, build-backend, build-frontend]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -323,7 +393,7 @@ jobs:
           echo "   File: release-notes.md"
 
   summary:
-    needs: [prepare, build-backend-base, build-backend, build-frontend, prepare-release-notes]
+    needs: [prepare, build-backend-base, ensure-base-image-exists, build-backend, build-frontend, prepare-release-notes]
     runs-on: ubuntu-latest
     if: always()
     steps:
