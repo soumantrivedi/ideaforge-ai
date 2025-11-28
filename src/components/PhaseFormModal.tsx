@@ -1195,6 +1195,63 @@ export function PhaseFormModal({
     }
   };
 
+  const handleCheckV0Status = async () => {
+    if (!productId) {
+      alert('Product ID is required');
+      return;
+    }
+
+    setIsCheckingStatus({ ...isCheckingStatus, v0: true });
+
+    try {
+      const response = await fetch(`${API_URL}/api/design/mockups/${productId}/status?provider=v0`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to check V0 status: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+      
+      // Update status based on response
+      const status = result.status || 'not_submitted';
+      setV0PrototypeStatus({
+        status: status === 'completed' ? 'completed' : (status === 'in_progress' ? 'in_progress' : 'submitted'),
+        project_url: result.project_url || result.demo_url || result.web_url,
+        message: result.message || `Status: ${status}`
+      });
+
+      // If completed, show success message
+      if (status === 'completed' && (result.project_url || result.demo_url || result.web_url)) {
+        const url = result.project_url || result.demo_url || result.web_url;
+        const shouldOpen = confirm(`V0 prototype is ready!\n\nWould you like to open it now?`);
+        if (shouldOpen && url && url.startsWith('http')) {
+          const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
+          if (!newWindow || newWindow.closed || typeof newWindow.closed === 'undefined') {
+            alert(`Popup blocked. Please click this link to open the prototype:\n${url}`);
+          }
+        }
+      } else if (status === 'in_progress' || status === 'submitted') {
+        alert(`V0 prototype is still being generated. Status: ${status}\n\nPlease check again in a few minutes.`);
+      }
+
+      // Trigger refresh of mockup gallery
+      setMockupRefreshTrigger(prev => prev + 1);
+    } catch (error) {
+      console.error('Error checking V0 status:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      alert(`Failed to check V0 status: ${errorMessage}`);
+    } finally {
+      setIsCheckingStatus({ ...isCheckingStatus, v0: false });
+    }
+  };
+
   if (!isOpen) return null;
 
   // Safety checks for array bounds
