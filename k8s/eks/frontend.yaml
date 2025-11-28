@@ -22,7 +22,7 @@ spec:
       containers:
       - name: frontend
         # Image pulled from GitHub Container Registry
-        image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:ea42f53
+        image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:9d894bc
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 import structlog
 import re
 from uuid import UUID
+import io
 
 from backend.database import get_db
 from backend.api.auth import get_current_user
@@ -27,6 +28,21 @@ class ConfluenceUploadRequest(BaseModel):
     product_id: Optional[str] = None
 
 
+def extract_text_from_pdf(content: bytes) -> str:
+    """Extract text content from PDF bytes."""
+    try:
+        from pypdf import PdfReader
+        pdf_file = io.BytesIO(content)
+        reader = PdfReader(pdf_file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text.strip()
+    except Exception as e:
+        logger.error("pdf_extraction_failed", error=str(e))
+        raise HTTPException(status_code=400, detail=f"Failed to extract text from PDF: {str(e)}")
+
+
 @router.post("/upload")
 async def upload_local_file(
     file: UploadFile = File(...),
@@ -40,7 +56,32 @@ async def upload_local_file(
         
         # Read file content
         content = await file.read()
-        content_str = content.decode('utf-8', errors='ignore')
+        
+        # Extract text based on file type
+        content_type = file.content_type or ""
+        if content_type == "application/pdf" or (file.filename and file.filename.lower().endswith('.pdf')):
+            # Extract text from PDF
+            content_str = extract_text_from_pdf(content)
+        elif content_type.startswith("text/") or content_type in ["application/json", "application/xml"]:
+            # Decode text files
+            try:
+                content_str = content.decode('utf-8')
+            except UnicodeDecodeError:
+                # Try other encodings
+                try:
+                    content_str = content.decode('latin-1')
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"Failed to decode text file: {str(e)}")
+        else:
+            # For other file types, try to decode as text, but log a warning
+            try:
+                content_str = content.decode('utf-8', errors='replace')
+                logger.warning("non_text_file_uploaded", filename=file.filename, content_type=content_type)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Unsupported file type. Please upload PDF or text files. Error: {str(e)}"
+                )
         
         # Save to knowledge base
         # Note: knowledge_articles table requires product_id, so if no product_id, we'll need to handle it
@@ -55,7 +96,7 @@ async def upload_local_file(
         
         metadata = {
             "filename": file.filename,
-            "content_type": file.content_type,
+            "content_type": content_type,
             "size": len(content),
             "user_id": str(current_user["id"])
         }
@@ -78,6 +119,8 @@ async def upload_local_file(
             "message": "File uploaded successfully"
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         logger.error("document_upload_failed", error=str(e))

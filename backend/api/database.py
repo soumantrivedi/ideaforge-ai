@@ -244,8 +244,8 @@ async def create_knowledge_article(
         
         query = text("""
             INSERT INTO knowledge_articles 
-            (product_id, title, content, source, metadata, tenant_id)
-            VALUES (:product_id, :title, :content, :source, :metadata, :tenant_id)
+            (product_id, title, content, source, metadata)
+            VALUES (:product_id, :title, :content, :source, :metadata)
             RETURNING id, created_at
         """)
         
@@ -255,7 +255,6 @@ async def create_knowledge_article(
             "content": article.get("content"),
             "source": article.get("source", "manual"),
             "metadata": article.get("metadata", {}),
-            "tenant_id": current_user["tenant_id"],
         })
         
         await db.commit()
@@ -708,9 +707,12 @@ async def delete_knowledge_article(
         await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
         
         # Verify article exists and user has access
+        # Join with products table to get tenant_id since knowledge_articles doesn't have tenant_id
         check_query = text("""
-            SELECT id, product_id, tenant_id FROM knowledge_articles
-            WHERE id = :article_id AND tenant_id = :tenant_id
+            SELECT ka.id, ka.product_id, p.tenant_id
+            FROM knowledge_articles ka
+            INNER JOIN products p ON ka.product_id = p.id
+            WHERE ka.id = :article_id AND p.tenant_id = :tenant_id
         """)
         check_result = await db.execute(check_query, {
             "article_id": article_id,
@@ -738,14 +740,13 @@ async def delete_knowledge_article(
             if not check_result.fetchone():
                 raise HTTPException(status_code=403, detail="Access denied to article")
         
-        # Delete the article
+        # Delete the article (no tenant_id needed in WHERE clause since we already verified it)
         delete_query = text("""
             DELETE FROM knowledge_articles
-            WHERE id = :article_id AND tenant_id = :tenant_id
+            WHERE id = :article_id
         """)
         await db.execute(delete_query, {
-            "article_id": article_id,
-            "tenant_id": current_user["tenant_id"]
+            "article_id": article_id
         })
         
         await db.commit()

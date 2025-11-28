@@ -592,6 +592,40 @@ async def export_prd_document(
             logger.warning(f"Could not fetch knowledge articles: {str(e)}")
             knowledge_base = []
         
+        # Get design mockups/prototypes
+        design_mockups = []
+        try:
+            mockup_query = text("""
+                SELECT id, provider, prompt, project_url, v0_chat_id, v0_project_id,
+                       project_status, thumbnail_url, image_url, metadata, created_at
+                FROM design_mockups
+                WHERE product_id = :product_id
+                ORDER BY created_at DESC
+            """)
+            mockup_result = await db.execute(mockup_query, {"product_id": str(product_id)})
+            mockup_rows = mockup_result.fetchall()
+            
+            design_mockups = [
+                {
+                    "id": str(row[0]),
+                    "provider": row[1],
+                    "prompt": row[2],
+                    "project_url": row[3],
+                    "v0_chat_id": row[4] if len(row) > 4 else None,
+                    "v0_project_id": row[5] if len(row) > 5 else None,
+                    "project_status": row[6] if len(row) > 6 else None,
+                    "thumbnail_url": row[7] if len(row) > 7 else None,
+                    "image_url": row[8] if len(row) > 8 else None,
+                    "metadata": row[9] if len(row) > 9 and row[9] else {},
+                    "created_at": row[10].isoformat() if len(row) > 10 and row[10] else None
+                }
+                for row in mockup_rows
+            ]
+        except Exception as e:
+            # If design_mockups table doesn't exist or query fails, continue without it
+            logger.warning(f"Could not fetch design mockups: {str(e)}")
+            design_mockups = []
+        
         # Generate PRD using export agent
         if export_agent:
             prd_content = await export_agent.generate_comprehensive_prd(

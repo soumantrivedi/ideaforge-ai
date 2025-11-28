@@ -58,6 +58,7 @@ structlog==24.4.0
 uuid7==0.1.0
 cryptography==43.0.1
 markdown==3.7
+pypdf==5.1.0  # PDF text extraction
 
 # Testing
 pytest==8.3.4
