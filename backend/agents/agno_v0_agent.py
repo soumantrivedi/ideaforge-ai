@@ -432,6 +432,209 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                 "elapsed_seconds": elapsed
             }
 
+    async def get_or_create_v0_project(
+        self,
+        v0_api_key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        product_id: Optional[str] = None,
+        db: Optional[Any] = None,
+        create_new: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get or create a V0 project. Returns projectId immediately.
+        This is Step 1 of the workflow - project creation only, no chat submission.
+        
+        Returns:
+            - projectId: The project ID (camelCase)
+            - project_id: The project ID (snake_case for backward compatibility)
+            - project_url: Project URL if available
+            - existing: Whether project was existing or newly created
+        """
+        api_key = v0_api_key or self.v0_api_key or settings.v0_api_key
+        if not api_key:
+            raise ValueError("V0 API key is required")
+        
+        # Check database for existing project_id
+        existing_project_id = None
+        if db and product_id and user_id and not create_new:
+            try:
+                from sqlalchemy import text
+                project_query = text("""
+                    SELECT v0_project_id
+                    FROM design_mockups
+                    WHERE product_id = :product_id 
+                      AND user_id = :user_id 
+                      AND provider = 'v0'
+                      AND v0_project_id IS NOT NULL
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                project_result = await db.execute(project_query, {
+                    "product_id": product_id,
+                    "user_id": user_id
+                })
+                project_row = project_result.fetchone()
+                if project_row:
+                    existing_project_id = project_row[0]
+                    logger.info("existing_project_id_found",
+                               user_id=user_id,
+                               product_id=product_id,
+                               project_id=existing_project_id)
+            except Exception as db_error:
+                logger.warning("database_check_failed",
+                             error=str(db_error),
+                             user_id=user_id,
+                             product_id=product_id)
+        
+        # Get or create project
+        project_id = existing_project_id
+        project_name = f"V0 Project {product_id[:8] if product_id else 'Default'}"
+        project_url = None
+        
+        try:
+            if not project_id:
+                async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+                    headers = {
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    }
+                    
+                    # List existing projects
+                    try:
+                        projects_resp = await client.get(
+                            "https://api.v0.dev/v1/projects",
+                            headers=headers
+                        )
+                        
+                        if projects_resp.status_code == 200:
+                            projects_data = projects_resp.json()
+                            projects = projects_data.get("data", [])
+                            
+                            if isinstance(projects, list) and len(projects) > 0:
+                                # Priority 1: Exact name match
+                                for p in projects:
+                                    if p.get("name") == project_name:
+                                        project_id = p.get("id")
+                                        project_url = p.get("webUrl") or p.get("web_url")
+                                        break
+                                
+                                # Priority 2: Similar name
+                                if not project_id:
+                                    for p in projects:
+                                        if project_name.lower() in p.get("name", "").lower():
+                                            project_id = p.get("id")
+                                            project_url = p.get("webUrl") or p.get("web_url")
+                                            break
+                                
+                                # Priority 3: Most recent
+                                if not project_id:
+                                    project = projects[0]
+                                    project_id = project.get("id")
+                                    project_url = project.get("webUrl") or project.get("web_url")
+                    except Exception as list_error:
+                        logger.warning("v0_project_list_failed", error=str(list_error))
+                    
+                    # Create new project if none found
+                    if not project_id:
+                        create_resp = await client.post(
+                            "https://api.v0.dev/v1/projects",
+                            headers=headers,
+                            json={"name": project_name}
+                        )
+                        
+                        if create_resp.status_code in [200, 201]:
+                            create_result = create_resp.json()
+                            project_id = create_result.get("id")
+                            project_url = create_result.get("webUrl") or create_result.get("web_url")
+                        else:
+                            raise ValueError(f"Failed to create project: {create_resp.status_code}")
+                
+                if not project_id:
+                    raise ValueError("Failed to get or create V0 project")
+            
+            return {
+                "projectId": project_id,
+                "project_id": project_id,
+                "project_url": project_url,
+                "existing": existing_project_id is not None,
+                "project_name": project_name
+            }
+        except Exception as e:
+            logger.error("v0_project_creation_failed", error=str(e))
+            raise ValueError(f"Failed to get or create V0 project: {str(e)}")
+    
+    async def submit_chat_to_v0_project(
+        self,
+        v0_prompt: str,
+        project_id: str,
+        v0_api_key: Optional[str] = None,
+        user_id: Optional[str] = None,
+        product_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Submit a chat to an existing V0 project. Does NOT wait for response.
+        This is Step 2 of the workflow - chat submission only.
+        
+        Returns immediately with projectId, even if chat times out.
+        """
+        api_key = v0_api_key or self.v0_api_key or settings.v0_api_key
+        if not api_key:
+            raise ValueError("V0 API key is required")
+        
+        if not project_id:
+            raise ValueError("project_id is required")
+        
+        # Submit chat with SHORT timeout (10 seconds) - don't wait for generation
+        async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+            try:
+                response = await client.post(
+                    "https://api.v0.dev/v1/chats",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "message": v0_prompt,
+                        "model": "v0-1.5-md",
+                        "scope": "mckinsey",
+                        "projectId": project_id  # camelCase
+                    }
+                )
+                
+                if response.status_code in [200, 201]:
+                    result = response.json()
+                    chat_id = result.get("id") or result.get("chat_id")
+                    returned_projectId = result.get("projectId")
+                    
+                    return {
+                        "success": True,
+                        "chat_id": chat_id,
+                        "projectId": returned_projectId or project_id,
+                        "project_id": returned_projectId or project_id,
+                        "immediate": True
+                    }
+                else:
+                    raise ValueError(f"Failed to submit chat: {response.status_code}")
+                    
+            except httpx.TimeoutException:
+                # Timeout is EXPECTED - return immediately with projectId
+                logger.info("v0_chat_submission_timeout",
+                           user_id=user_id,
+                           product_id=product_id,
+                           projectId=project_id,
+                           note="Timeout expected - chat submitted in background")
+                return {
+                    "success": True,
+                    "chat_id": None,  # Will be found via project polling
+                    "projectId": project_id,
+                    "project_id": project_id,
+                    "immediate": False,
+                    "note": "Chat submitted but timed out - will appear in project later"
+                }
+            except Exception as e:
+                logger.error("v0_chat_submission_failed", error=str(e))
+                raise ValueError(f"Failed to submit chat: {str(e)}")
+
     async def create_v0_project_with_api(
         self,
         v0_prompt: str,
@@ -513,62 +716,130 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                    create_new=create_new)
         
         # Step 2: Get or create project (IMMEDIATE - < 1 second)
-        # Use existing project_id if found, otherwise get or create one
+        # This MUST happen BEFORE submitting chat - matches test workflow
         project_id = existing_project_id
         project_name = f"V0 Project {product_id[:8] if product_id else 'Default'}"
+        project_url = None
         
         try:
-            # If no existing project_id, get or create one
+            # If no existing project_id, get or create one using the same logic as test workflow
             if not project_id:
                 async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
-                    # List existing projects
-                    projects_resp = await client.get(
-                        "https://api.v0.dev/v1/projects",
-                        headers={
-                            "Authorization": f"Bearer {api_key}",
-                            "Content-Type": "application/json"
-                        }
-                    )
+                    headers = {
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    }
                     
-                    if projects_resp.status_code == 200:
-                        projects = projects_resp.json().get("data", [])
-                        # Look for project with matching name or use most recent
-                        for p in projects:
-                            if p.get("name") == project_name:
-                                project_id = p.get("id")
-                                break
-                        if not project_id and projects:
-                            project_id = projects[0].get("id")  # Use most recent
+                    # Step 1: List existing projects - ALWAYS reuse if any exist (matches test workflow)
+                    try:
+                        projects_resp = await client.get(
+                            "https://api.v0.dev/v1/projects",
+                            headers=headers
+                        )
+                        
+                        if projects_resp.status_code == 200:
+                            projects_data = projects_resp.json()
+                            projects = projects_data.get("data", [])
+                            
+                            if isinstance(projects, list) and len(projects) > 0:
+                                logger.info("v0_projects_found",
+                                           user_id=user_id,
+                                           product_id=product_id,
+                                           count=len(projects))
+                                
+                                # Priority 1: Look for project with exact matching name
+                                for p in projects:
+                                    if p.get("name") == project_name:
+                                        project_id = p.get("id")
+                                        project_url = p.get("webUrl") or p.get("web_url")
+                                        logger.info("v0_project_found_exact_name",
+                                                   user_id=user_id,
+                                                   product_id=product_id,
+                                                   project_id=project_id,
+                                                   name=project_name)
+                                        break
+                                
+                                # Priority 2: Look for projects containing the name
+                                if not project_id:
+                                    for p in projects:
+                                        if project_name.lower() in p.get("name", "").lower():
+                                            project_id = p.get("id")
+                                            project_url = p.get("webUrl") or p.get("web_url")
+                                            logger.info("v0_project_found_similar_name",
+                                                       user_id=user_id,
+                                                       product_id=product_id,
+                                                       project_id=project_id,
+                                                       name=p.get("name"))
+                                            break
+                                
+                                # Priority 3: ALWAYS reuse the most recent project (first in list)
+                                if not project_id:
+                                    project = projects[0]
+                                    project_id = project.get("id")
+                                    project_url = project.get("webUrl") or project.get("web_url")
+                                    logger.info("v0_project_reusing_most_recent",
+                                               user_id=user_id,
+                                               product_id=product_id,
+                                               project_id=project_id,
+                                               name=project.get("name", "Unnamed"))
+                    except Exception as list_error:
+                        logger.warning("v0_project_list_failed",
+                                     error=str(list_error),
+                                     user_id=user_id,
+                                     product_id=product_id)
                     
-                    # Create new project if none found
+                    # Step 2: Create new project ONLY if NO projects exist at all
                     if not project_id:
+                        logger.info("v0_creating_new_project",
+                                   user_id=user_id,
+                                   product_id=product_id,
+                                   name=project_name)
                         create_resp = await client.post(
                             "https://api.v0.dev/v1/projects",
-                            headers={
-                                "Authorization": f"Bearer {api_key}",
-                                "Content-Type": "application/json"
-                            },
+                            headers=headers,
                             json={"name": project_name}
                         )
+                        
                         if create_resp.status_code in [200, 201]:
-                            project_id = create_resp.json().get("id")
+                            create_result = create_resp.json()
+                            project_id = create_result.get("id")
+                            project_url = create_result.get("webUrl") or create_result.get("web_url")
                             logger.info("v0_project_created",
                                        user_id=user_id,
                                        product_id=product_id,
-                                       project_id=project_id)
+                                       project_id=project_id,
+                                       project_url=project_url)
+                        else:
+                            error_text = create_resp.text[:200] if create_resp.text else "No error text"
+                            logger.error("v0_project_creation_failed",
+                                       user_id=user_id,
+                                       product_id=product_id,
+                                       status_code=create_resp.status_code,
+                                       error=error_text)
+                            raise ValueError(f"Failed to create V0 project: {create_resp.status_code} - {error_text}")
                 
                 if not project_id:
-                    raise ValueError("Failed to get or create V0 project")
+                    raise ValueError("Failed to get or create V0 project - no project_id returned")
+            else:
+                logger.info("v0_using_existing_project_id",
+                           user_id=user_id,
+                           product_id=product_id,
+                           project_id=project_id)
         
         except Exception as project_error:
-            logger.warning("project_creation_failed",
+            logger.error("project_creation_failed",
                          error=str(project_error),
                          user_id=user_id,
-                         product_id=product_id)
-            # Continue without project_id - will create new project per chat (fallback)
+                         product_id=product_id,
+                         error_type=type(project_error).__name__)
+            raise ValueError(f"Failed to get or create V0 project: {str(project_error)}")
         
         # Step 3: Submit chat to project with SHORT timeout (returns immediately)
         # Use projectId (camelCase) parameter to associate with project
+        # This happens AFTER project is created/retrieved (matches test workflow)
+        if not project_id:
+            raise ValueError("Cannot submit chat: project_id is required but was not created/retrieved")
+        
         async with httpx.AsyncClient(timeout=10.0, verify=False) as client:  # Short timeout
             try:
                 # Log the request
@@ -739,17 +1010,25 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
             except httpx.TimeoutException as timeout_error:
                 # Timeout is EXPECTED - V0 API generates in background
                 # Return immediately with project_id - user can check status later
+                # CRITICAL: project_id MUST be set at this point (created in Step 2)
+                if not project_id:
+                    logger.error("v0_timeout_without_project_id",
+                               user_id=user_id,
+                               product_id=product_id,
+                               error="Project creation failed but timeout occurred - this should not happen")
+                    raise ValueError("V0 project creation failed. Cannot submit chat without project_id.")
+                
                 logger.info("v0_chat_submission_timeout",
                            user_id=user_id,
                            product_id=product_id,
-                           project_id=project_id,
-                           note="Timeout expected - chat is being generated in background")
+                           projectId=project_id,
+                           note="Timeout expected - chat is being generated in background, projectId is available")
                 
                 # Return immediately with projectId - chat will appear in project
                 return {
                     "chat_id": None,  # Will be found via project polling
-                    "projectId": project_id or "unknown",  # Use projectId (camelCase) to match V0 API format
-                    "project_id": project_id or "unknown",  # Keep for backward compatibility
+                    "projectId": project_id,  # Use projectId (camelCase) - MUST be set (created in Step 2)
+                    "project_id": project_id,  # Keep for backward compatibility
                     "project_url": None,
                     "web_url": None,
                     "demo_url": None,

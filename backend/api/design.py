@@ -1,5 +1,5 @@
 """Design API endpoints for V0 and Lovable integration."""
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import List, Dict, Any, Optional
@@ -397,8 +397,9 @@ async def generate_design_mockup(
                 # V0 project URLs already contain the correct path (e.g., ideation/design)
                 project_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
                 
+                # V0 API uses projectId (camelCase) in responses, prefer that over project_id
                 v0_chat_id = result.get("chat_id")
-                v0_project_id = result.get("project_id")
+                v0_project_id = result.get("projectId") or result.get("project_id")  # Prefer projectId (camelCase)
                 project_status = result.get("project_status", "submitted")  # Default to "submitted" for new requests
             
             # Convert metadata to JSON string
@@ -1023,75 +1024,10 @@ async def create_design_project(
         # Load user-specific API keys
         user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
         
-        # Enhance prompt using multi-agent system if requested
-        enhanced_prompt = request.prompt
-        if request.use_multi_agent:
-            try:
-                # Use global orchestrator from main.py
-                from backend.main import orchestrator, agno_enabled
-                
-                # If Agno is not enabled, create a temporary orchestrator
-                if not agno_enabled:
-                    orchestrator = AgnoAgenticOrchestrator()
-                
-                # Build context for multi-agent enhancement
-                enhancement_context = request.context or {}
-                enhancement_context.update({
-                    "product_id": request.product_id,
-                    "provider": request.provider,
-                    "original_prompt": request.prompt,
-                    "task": "enhance_prototype_prompt"
-                })
-                
-                # Determine primary agent based on provider
-                # Use ideation agent for prompt enhancement (it's available in orchestrator)
-                primary_agent = "ideation"  # Generic agent for design prompt enhancement
-                supporting_agents = ["rag", "analysis", "strategy"]
-                
-                # Create enhancement query
-                enhancement_query = f"""Enhance and optimize the following {request.provider.upper()} prototype generation prompt to ensure it will create a high-quality, production-ready prototype:
-
-Original Prompt:
-{request.prompt}
-
-Context:
-{enhancement_context.get('phase_name', 'Design phase')}
-{enhancement_context.get('form_data', {})}
-
-Please enhance this prompt to:
-1. Be more specific and detailed
-2. Include all necessary technical requirements
-3. Ensure it follows {request.provider.upper()} best practices
-4. Include all context from previous phases
-5. Be optimized for the {request.provider.upper()} API
-
-Return only the enhanced prompt, ready to use with the {request.provider.upper()} API."""
-                
-                multi_agent_request = MultiAgentRequest(
-                    query=enhancement_query,
-                    coordination_mode="enhanced_collaborative",
-                    primary_agent=primary_agent,
-                    supporting_agents=supporting_agents,
-                    context=enhancement_context
-                )
-                
-                multi_agent_response = await orchestrator.process_multi_agent_request(
-                    user_id=UUID(current_user["id"]),
-                    request=multi_agent_request,
-                    db=db
-                )
-                
-                enhanced_prompt = multi_agent_response.response.strip()
-                logger.info("prompt_enhanced", 
-                           provider=request.provider,
-                           original_length=len(request.prompt),
-                           enhanced_length=len(enhanced_prompt))
-            except Exception as e:
-                logger.warning("multi_agent_enhancement_failed", error=str(e))
-                # Continue with original prompt if enhancement fails
-                enhanced_prompt = request.prompt
+        # For create-project, we only create/get project, no prompt enhancement needed yet
+        # Prompt will be used in submit-chat endpoint
         
-        # Generate project using appropriate agent
+        # Create/get project using appropriate agent
         if request.provider == "v0":
             # Prioritize user's API key over global settings
             v0_key = user_keys.get("v0")
@@ -1103,87 +1039,65 @@ Return only the enhanced prompt, ready to use with the {request.provider.upper()
             if not v0_key:
                 raise HTTPException(status_code=400, detail="V0 API key is not configured. Please configure it in Settings.")
             
-            # Validate key format (V0 API keys typically start with specific patterns)
-            if not v0_key or len(v0_key.strip()) < 10:
-                logger.error("v0_key_invalid_format",
-                           user_id=str(current_user["id"]),
-                           key_source=key_source,
-                           key_length=len(v0_key) if v0_key else 0)
-                raise HTTPException(
-                    status_code=400,
-                    detail="V0 API key appears to be invalid. Please check your API key in Settings."
-                )
-            
-            # Log which key source is being used (without logging the actual key)
-            logger.info("v0_key_loaded", 
-                       user_id=str(current_user["id"]),
-                       key_source=key_source,
-                       has_user_key=bool(user_keys.get("v0")),
-                       key_length=len(v0_key) if v0_key else 0,
-                       key_prefix=v0_key[:8] + "..." if v0_key and len(v0_key) > 8 else "N/A")
-            
-            # Use AgnoV0Agent for V0 project creation (preferred when Agno is available)
+            # Use AgnoV0Agent to get or create project (ONLY project, no chat submission)
             try:
                 from backend.main import agno_enabled
                 if agno_enabled:
                     from backend.agents.agno_v0_agent import AgnoV0Agent
                     agno_v0_agent = AgnoV0Agent()
-                    # Set the user's API key explicitly BEFORE creating the agent
                     agno_v0_agent.set_v0_api_key(v0_key.strip())
-                    logger.info("using_agno_v0_agent",
-                               user_id=str(current_user["id"]),
-                               key_source=key_source,
-                               key_set=True)
-                    result = await agno_v0_agent.create_v0_project_with_api(
-                        v0_prompt=enhanced_prompt,
-                        v0_api_key=v0_key.strip(),  # Explicitly pass user's API key (trimmed)
+                    
+                    # Call get_or_create_v0_project - returns projectId immediately
+                    result = await agno_v0_agent.get_or_create_v0_project(
+                        v0_api_key=v0_key.strip(),
                         user_id=str(current_user["id"]),
                         product_id=request.product_id,
-                        db=db,  # Pass database session for duplicate prevention
-                        create_new=request.create_new,  # Pass create_new flag
-                        timeout_seconds=900  # 15 minutes timeout
+                        db=db,
+                        create_new=request.create_new
                     )
+                    
+                    # Store projectId in database
+                    try:
+                        insert_query = text("""
+                            INSERT INTO design_mockups 
+                            (product_id, phase_submission_id, user_id, provider, prompt, 
+                             v0_project_id, project_status, metadata)
+                            VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, 
+                                    :v0_project_id, 'in_progress', CAST(:metadata AS jsonb))
+                            ON CONFLICT DO NOTHING
+                            RETURNING id
+                        """)
+                        await db.execute(insert_query, {
+                            "product_id": request.product_id,
+                            "phase_submission_id": request.phase_submission_id,
+                            "user_id": str(current_user["id"]),
+                            "provider": "v0",
+                            "prompt": request.prompt or "",
+                            "v0_project_id": result.get("projectId"),
+                            "metadata": json.dumps({"project_created": True, "project_url": result.get("project_url")})
+                        })
+                        await db.commit()
+                    except Exception as db_error:
+                        logger.warning("failed_to_store_project", error=str(db_error))
+                        await db.rollback()
+                    
+                    return {
+                        "id": None,  # Will be set after chat submission
+                        "provider": "v0",
+                        "projectId": result.get("projectId"),
+                        "v0_project_id": result.get("projectId"),
+                        "project_url": result.get("project_url"),
+                        "project_status": "in_progress",
+                        "is_existing": result.get("existing", False),
+                        "message": f"Project {'found' if result.get('existing') else 'created'}. Use /submit-chat to submit your prompt."
+                    }
                 else:
-                    # Fallback to legacy agent
-                    logger.info("using_legacy_v0_agent", user_id=str(current_user["id"]))
-                    result = await v0_agent.create_v0_project_with_api(
-                        v0_prompt=enhanced_prompt,
-                        v0_api_key=v0_key,  # Use user's API key
-                        user_id=str(current_user["id"]),
-                        product_id=request.product_id
-                        # Note: Legacy agent doesn't support db/duplicate prevention
-                    )
+                    raise HTTPException(status_code=500, detail="Agno framework is required for V0 project creation")
             except ValueError as e:
-                # Handle specific V0 API errors
                 error_msg = str(e)
-                # Check for credit-related errors more specifically
-                is_credit_error = (
-                    "out of credits" in error_msg.lower() or 
-                    "credits" in error_msg.lower() and ("402" in error_msg or "exhausted" in error_msg.lower())
-                )
-                
-                if is_credit_error:
-                    logger.error("v0_credits_error", 
-                               user_id=str(current_user["id"]),
-                               has_user_key=bool(user_keys.get("v0")),
-                               key_source=key_source,
-                               key_prefix=v0_key[:8] + "..." if v0_key and len(v0_key) > 8 else "N/A",
-                               error=error_msg)
-                    raise HTTPException(
-                        status_code=402,
-                        detail=f"V0 API error: {error_msg}"
-                    )
-                elif "401" in error_msg or "invalid" in error_msg.lower() or "unauthorized" in error_msg.lower():
-                    logger.error("v0_auth_error", 
-                               user_id=str(current_user["id"]),
-                               has_user_key=bool(user_keys.get("v0")),
-                               error=error_msg)
-                    raise HTTPException(
-                        status_code=401,
-                        detail=f"V0 API authentication error: {error_msg}. Please verify your V0 API key in Settings."
-                    )
+                if "401" in error_msg or "invalid" in error_msg.lower() or "unauthorized" in error_msg.lower():
+                    raise HTTPException(status_code=401, detail=f"V0 API authentication error: {error_msg}")
                 else:
-                    logger.error("v0_project_creation_error", error=error_msg, user_id=str(current_user["id"]))
                     raise HTTPException(status_code=500, detail=f"V0 API error: {error_msg}")
             except Exception as e:
                 logger.error("v0_project_creation_error", error=str(e), user_id=str(current_user["id"]))
@@ -1460,3 +1374,200 @@ async def check_v0_project_status(
     except Exception as e:
         logger.error("error_checking_v0_status", error=str(e), product_id=product_id)
         raise HTTPException(status_code=500, detail=f"Error checking status: {str(e)}")
+
+
+@router.post("/submit-chat")
+async def submit_chat_to_project(
+    request: SubmitChatRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submit a chat/prompt to an existing V0 project. Does NOT wait for response.
+    This is Step 2 - chat submission only, returns immediately.
+    
+    After this, use /check-status/{product_id} to check prototype status.
+    A background task will also periodically check status.
+    """
+    try:
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        import json
+        
+        if request.provider == "v0":
+            if not request.project_id:
+                raise HTTPException(status_code=400, detail="project_id is required for V0")
+            
+            # Load user's V0 API key
+            user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+            v0_key = user_keys.get("v0") or settings.v0_api_key
+            
+            if not v0_key:
+                raise HTTPException(status_code=400, detail="V0 API key is not configured")
+            
+            # Use AgnoV0Agent to submit chat
+            try:
+                from backend.main import agno_enabled
+                if agno_enabled:
+                    from backend.agents.agno_v0_agent import AgnoV0Agent
+                    agno_v0_agent = AgnoV0Agent()
+                    agno_v0_agent.set_v0_api_key(v0_key.strip())
+                    
+                    # Submit chat - returns immediately, doesn't wait
+                    result = await agno_v0_agent.submit_chat_to_v0_project(
+                        v0_prompt=request.prompt,
+                        project_id=request.project_id,
+                        v0_api_key=v0_key.strip(),
+                        user_id=str(current_user["id"]),
+                        product_id=request.product_id
+                    )
+                    
+                    # Update database with chat submission
+                    try:
+                        update_query = text("""
+                            UPDATE design_mockups
+                            SET v0_chat_id = COALESCE(:chat_id, v0_chat_id),
+                                prompt = :prompt,
+                                project_status = 'in_progress',
+                                updated_at = now()
+                            WHERE product_id = :product_id 
+                              AND user_id = :user_id 
+                              AND provider = 'v0'
+                              AND v0_project_id = :project_id
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        """)
+                        await db.execute(update_query, {
+                            "product_id": request.product_id,
+                            "user_id": str(current_user["id"]),
+                            "project_id": request.project_id,
+                            "chat_id": result.get("chat_id"),
+                            "prompt": request.prompt
+                        })
+                        await db.commit()
+                    except Exception as db_error:
+                        logger.warning("failed_to_update_chat", error=str(db_error))
+                        await db.rollback()
+                    
+                    # Start background task to check status periodically
+                    background_tasks.add_task(
+                        check_v0_status_background,
+                        v0_key.strip(),
+                        request.project_id,
+                        request.product_id,
+                        str(current_user["id"]),
+                        db
+                    )
+                    
+                    return {
+                        "success": True,
+                        "chat_id": result.get("chat_id"),
+                        "projectId": result.get("projectId"),
+                        "project_id": result.get("project_id"),
+                        "message": "Chat submitted successfully. Use /check-status to monitor progress.",
+                        "status": "submitted"
+                    }
+                else:
+                    raise HTTPException(status_code=500, detail="Agno framework is required")
+            except ValueError as e:
+                error_msg = str(e)
+                if "401" in error_msg or "unauthorized" in error_msg.lower():
+                    raise HTTPException(status_code=401, detail=f"V0 API authentication error: {error_msg}")
+                else:
+                    raise HTTPException(status_code=500, detail=f"V0 API error: {error_msg}")
+            except Exception as e:
+                logger.error("v0_chat_submission_error", error=str(e), user_id=str(current_user["id"]))
+                raise HTTPException(status_code=500, detail=f"V0 API error: {str(e)}")
+        elif request.provider == "lovable":
+            # Lovable doesn't use projects - handle differently
+            raise HTTPException(status_code=400, detail="Lovable doesn't use submit-chat endpoint. Use generate-mockup directly.")
+        else:
+            raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("submit_chat_error", error=str(e), user_id=str(current_user["id"]))
+        raise HTTPException(status_code=500, detail=f"Error submitting chat: {str(e)}")
+
+
+async def check_v0_status_background(
+    api_key: str,
+    project_id: str,
+    product_id: str,
+    user_id: str,
+    db: AsyncSession
+):
+    """
+    Background task to periodically check V0 project status.
+    Runs every 30 seconds for up to 15 minutes (30 checks).
+    """
+    import asyncio
+    from backend.agents.agno_v0_agent import AgnoV0Agent
+    
+    max_checks = 30  # 15 minutes (30 * 30 seconds)
+    check_interval = 30  # 30 seconds
+    
+    agno_v0_agent = AgnoV0Agent()
+    agno_v0_agent.set_v0_api_key(api_key)
+    
+    for check_num in range(1, max_checks + 1):
+        try:
+            await asyncio.sleep(check_interval)
+            
+            # Check status
+            status_result = await agno_v0_agent.check_v0_project_status(
+                project_id=project_id,
+                v0_api_key=api_key,
+                user_id=user_id,
+                product_id=product_id
+            )
+            
+            # Update database
+            if status_result.get("project_status"):
+                try:
+                    update_query = text("""
+                        UPDATE design_mockups
+                        SET project_status = :status,
+                            project_url = :project_url,
+                            v0_chat_id = COALESCE(:chat_id, v0_chat_id),
+                            updated_at = now()
+                        WHERE product_id = :product_id 
+                          AND user_id = :user_id 
+                          AND provider = 'v0'
+                          AND v0_project_id = :project_id
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                    """)
+                    await db.execute(update_query, {
+                        "product_id": product_id,
+                        "user_id": user_id,
+                        "project_id": project_id,
+                        "status": status_result.get("project_status"),
+                        "project_url": status_result.get("project_url"),
+                        "chat_id": status_result.get("chat_id")
+                    })
+                    await db.commit()
+                except Exception as db_error:
+                    logger.warning("background_status_update_failed", error=str(db_error))
+                    await db.rollback()
+            
+            # If completed, stop checking
+            if status_result.get("is_complete"):
+                logger.info("v0_prototype_completed",
+                           project_id=project_id,
+                           product_id=product_id,
+                           check_num=check_num)
+                break
+                
+        except Exception as e:
+            logger.error("background_status_check_failed",
+                        project_id=project_id,
+                        check_num=check_num,
+                        error=str(e))
+            # Continue checking even if one check fails
+    
+    logger.info("background_status_checking_completed",
+               project_id=project_id,
+               product_id=product_id,
+               total_checks=check_num)
