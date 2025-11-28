@@ -142,6 +142,46 @@ def _map_provider_exception(exc: Exception):
             status_code=401,
             detail="Google Gemini rejected the API key. Please verify the key in Settings → Providers."
         )
+    # Handle quota/rate limit errors with helpful messages
+    if isinstance(exc, OpenAIAPIError):
+        error_str = str(exc).lower()
+        if "quota" in error_str or "429" in error_str or "insufficient_quota" in error_str or "rate limit" in error_str:
+            # Check if other providers are available
+            available_providers = []
+            if provider_registry.has_claude_key():
+                available_providers.append("Anthropic Claude")
+            if provider_registry.has_gemini_key():
+                available_providers.append("Google Gemini")
+            
+            if available_providers:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"OpenAI API quota exceeded. Please check your OpenAI billing or configure an alternative provider ({', '.join(available_providers)}) in Settings → Providers."
+                )
+            else:
+                raise HTTPException(
+                    status_code=429,
+                    detail="OpenAI API quota exceeded. Please check your OpenAI billing details or configure an alternative provider (Anthropic Claude or Google Gemini) in Settings → Providers."
+                )
+    if isinstance(exc, ClaudeAPIError):
+        error_str = str(exc).lower()
+        if "quota" in error_str or "429" in error_str or "rate limit" in error_str:
+            available_providers = []
+            if provider_registry.has_openai_key():
+                available_providers.append("OpenAI")
+            if provider_registry.has_gemini_key():
+                available_providers.append("Google Gemini")
+            
+            if available_providers:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Anthropic Claude API quota exceeded. Please check your Anthropic billing or configure an alternative provider ({', '.join(available_providers)}) in Settings → Providers."
+                )
+            else:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Anthropic Claude API quota exceeded. Please check your Anthropic billing details or configure an alternative provider (OpenAI or Google Gemini) in Settings → Providers."
+                )
     if isinstance(exc, (OpenAIConnectionError, ClaudeConnectionError, GoogleAPIError, OpenAIAPIError, ClaudeAPIError)):
         raise HTTPException(
             status_code=502,
@@ -804,8 +844,36 @@ async def process_multi_agent_request(
         logger.error("invalid_multi_agent_request", error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        _map_provider_exception(e)
-        logger.error("multi_agent_error", error=str(e))
+        # Try to map provider exceptions first
+        try:
+            _map_provider_exception(e)
+        except HTTPException:
+            # If _map_provider_exception raised an HTTPException, re-raise it
+            raise
+        except:
+            # If _map_provider_exception didn't handle it, check error message for quota/rate limit
+            error_str = str(e).lower()
+            if "quota" in error_str or "429" in error_str or "insufficient_quota" in error_str or "rate limit" in error_str or "exceeded" in error_str:
+                # Check if other providers are available
+                available_providers = []
+                if provider_registry.has_claude_key():
+                    available_providers.append("Anthropic Claude")
+                if provider_registry.has_gemini_key():
+                    available_providers.append("Google Gemini")
+                
+                if available_providers:
+                    raise HTTPException(
+                        status_code=429,
+                        detail=f"AI provider quota exceeded. Please check your billing or configure an alternative provider ({', '.join(available_providers)}) in Settings → Providers."
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=429,
+                        detail="AI provider quota exceeded. Please check your billing details or configure an alternative provider (Anthropic Claude or Google Gemini) in Settings → Providers."
+                    )
+        
+        # If we get here, it's an unhandled exception
+        logger.error("multi_agent_error", error=str(e), error_type=type(e).__name__)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

@@ -21,7 +21,7 @@ spec:
       - name: ghcr-secret
       initContainers:
       - name: run-migrations
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:cd895e1
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:ea42f53
         imagePullPolicy: IfNotPresent
         command: ["python3", "-m", "backend.database.migrate"]
         env:
@@ -57,7 +57,7 @@ spec:
       containers:
       - name: backend
         # Image pulled from GitHub Container Registry
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:cd895e1
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:ea42f53
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -306,7 +306,7 @@ spec:
           failureThreshold: 3
       initContainers:
       - name: run-migrations
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:cd895e1
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:ea42f53
         imagePullPolicy: IfNotPresent
         command: ["python3", "-m", "backend.database.migrate"]
         env:
