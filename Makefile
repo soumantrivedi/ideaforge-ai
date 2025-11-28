@@ -1,4 +1,4 @@
-.PHONY: help build up down restart logs clean deploy deploy-full health test rebuild redeploy check-errors check-logs version clean-all build-versioned deploy-versioned db-migrate db-seed db-setup agno-init setup db-backup db-restore rebuild-safe kind-create kind-delete kind-deploy kind-test kind-cleanup eks-deploy eks-test eks-cleanup k8s-deploy k8s-test k8s-logs k8s-status migrate-to-kind
+.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace
 
 # Get git SHA for versioning
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -11,407 +11,57 @@ help: ## Show this help message
 	@echo "Current Git SHA: $(GIT_SHA)"
 	@echo "Image Tag: $(IMAGE_TAG)"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
+	@echo "Local Development (Kind Cluster):"
+	@grep -E '^kind-[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Production (EKS Cluster):"
+	@grep -E '^eks-[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Build & Utilities:"
+	@grep -E '^(build|version|help):.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "Base Image:"
+	@grep -E '^build-backend-base.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
 version: ## Show current version information
 	@echo "Git SHA: $(GIT_SHA)"
 	@echo "Version: $(VERSION)"
 	@echo "Image Tag: $(IMAGE_TAG)"
 
-clean-all: ## Complete cleanup: backup DB first, then remove containers, volumes, networks, and images
-	@echo "🧹 Performing complete cleanup..."
-	@echo "⚠️  WARNING: This will remove all data including database!"
-	@echo "📦 Creating database backup before cleanup..."
-	@$(MAKE) db-backup || echo "⚠️  Backup failed, but continuing..."
-	@echo "💾 Database backup saved in backups/ directory"
-	docker-compose down -v --remove-orphans
-	docker system prune -f
-	@echo "✅ Cleanup complete"
+build-backend-base: ## Build backend base image (contains system dependencies and Python packages)
+	@echo "🔨 Building backend base image..."
+	@docker build -f Dockerfile.base.backend -t ideaforge-ai-backend-base:latest .
+	@echo "✅ Backend base image built: ideaforge-ai-backend-base:latest"
 
-build: ## Build Docker images with current git SHA
-	@echo "🔨 Building Docker images with tag: $(IMAGE_TAG)"
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose build --build-arg GIT_SHA=$(GIT_SHA) --build-arg VERSION=$(VERSION)
-	@echo "✅ Build complete"
+build-backend-base-push: build-backend-base ## Build and push backend base image to GHCR
+	@echo "📤 Pushing backend base image to GHCR..."
+	@if [ -z "$$GITHUB_TOKEN" ]; then \
+		echo "⚠️  GITHUB_TOKEN not set. Skipping push."; \
+		echo "   To push, set GITHUB_TOKEN environment variable"; \
+		exit 0; \
+	fi
+	@echo $$GITHUB_TOKEN | docker login ghcr.io -u soumantrivedi --password-stdin
+	@docker tag ideaforge-ai-backend-base:latest ghcr.io/soumantrivedi/ideaforge-ai/backend-base:latest
+	@docker push ghcr.io/soumantrivedi/ideaforge-ai/backend-base:latest
+	@echo "✅ Backend base image pushed to GHCR"
 
-build-no-cache: ## Build Docker images without cache
-	@echo "🔨 Building Docker images (no cache) with tag: $(IMAGE_TAG)"
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose build --no-cache --build-arg GIT_SHA=$(GIT_SHA) --build-arg VERSION=$(VERSION)
-	@echo "✅ Build complete"
-
-build-versioned: build-no-cache ## Alias for build-no-cache with versioning
-
-build-apps: ## Build only backend and frontend images (skip postgres/redis)
+build-apps: build-backend-base ## Build only backend and frontend images (uses base image)
 	@echo "🔨 Building application images (backend + frontend) with tag: $(GIT_SHA)"
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose build --build-arg GIT_SHA=$(GIT_SHA) --build-arg VERSION=$(VERSION) backend frontend
+	@echo "   Using local base image: ideaforge-ai-backend-base:latest"
+	@docker build -f Dockerfile.backend \
+		--build-arg GIT_SHA=$(GIT_SHA) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg BASE_IMAGE_TAG=latest \
+		--build-arg BASE_IMAGE_REGISTRY=ideaforge-ai \
+		-t ideaforge-ai-backend:$(GIT_SHA) .
+	@docker build -f Dockerfile.frontend --build-arg GIT_SHA=$(GIT_SHA) --build-arg VERSION=$(VERSION) -t ideaforge-ai-frontend:$(GIT_SHA) .
 	@echo "✅ Application images built: ideaforge-ai-backend:$(GIT_SHA) and ideaforge-ai-frontend:$(GIT_SHA)"
 
-up: ## Start all services
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose up -d
-
-down: ## Stop all services (preserves data and config files)
-	docker-compose down
-
-down-clean: ## Stop and remove containers, networks (preserves volumes and config files)
-	@echo "🛑 Stopping and removing containers and networks..."
-	@echo "⚠️  This will preserve volumes and configuration files"
-	docker-compose down --remove-orphans
-	@echo "✅ Containers and networks removed (volumes preserved)"
-
-restart: ## Restart all services
-	docker-compose restart
-
-logs: ## View logs (use: make logs SERVICE=backend)
-	docker-compose logs -f $(SERVICE)
-clean: ## Remove containers, networks, and volumes (with backup)
-	@echo "⚠️  WARNING: This will remove database volumes!"
-	@echo "📦 Creating database backup before cleanup..."
-	@$(MAKE) db-backup || echo "⚠️  Backup failed, but continuing..."
-	@docker-compose down -v
-	@docker system prune -f
-	@echo "💾 Database backup saved in backups/ directory"
-
-logs-all: ## View all service logs
-	docker-compose logs -f
-
-
-deploy: ## Full deployment (build + start + migrations + health check)
-	@echo "🚀 Deploying IdeaForge AI (Version: $(VERSION))..."
-	@if [ ! -f .env ]; then \
-		echo "⚠️  .env file not found. Continuing with environment variables from shell..."; \
-	fi
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) $(MAKE) build
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) $(MAKE) up
-	@echo "⏳ Waiting for services to start..."
-	@sleep 10
-	@echo "🔄 Running database migrations..."
-	@$(MAKE) db-migrate
-	@$(MAKE) health
-	@echo ""
-	@echo "✅ Deployment complete!"
-	@echo "   Version: $(VERSION)"
-	@echo "   Frontend: http://localhost:3001"
-	@echo "   Backend:  http://localhost:8000"
-	@echo "   API Docs: http://localhost:8000/docs"
-	@echo ""
-	@echo "💡 To seed database and initialize Agno, run: make setup"
-
-deploy-full: ## Full deployment with complete setup (build + start + migrations + seed + agno init)
-	@echo "🚀 Deploying IdeaForge AI with Complete Setup (Version: $(VERSION))..."
-	@if [ ! -f .env ]; then \
-		echo "⚠️  .env file not found. Creating from .env.example..."; \
-		if [ -f .env.example ]; then \
-			cp .env.example .env; \
-			echo "   Created .env from .env.example - please fill in your API keys!"; \
-			echo "   Required keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, V0_API_KEY, GITHUB_TOKEN, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"; \
-			exit 1; \
-		else \
-			echo "   .env.example not found. Continuing with environment variables from shell..."; \
-		fi; \
-	fi
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) $(MAKE) build
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) $(MAKE) up
-	@echo "⏳ Waiting for services to start..."
-	@sleep 10
-	@echo "🔄 Running complete database setup (migrations + seeding)..."
-	@$(MAKE) db-setup
-	@echo "🤖 Initializing Agno framework..."
-	@$(MAKE) agno-init
-	@$(MAKE) health
-	@echo ""
-	@echo "✅ Full deployment complete!"
-	@echo "   Version: $(VERSION)"
-	@echo "   Frontend: http://localhost:3001"
-	@echo "   Backend:  http://localhost:8000"
-	@echo "   API Docs: http://localhost:8000/docs"
-	@echo ""
-	@echo "📊 Database Summary:"
-	@docker-compose exec -T postgres psql -U agentic_pm -d agentic_pm_db -c "SELECT COUNT(*) as total_products FROM products; SELECT COUNT(*) as total_users FROM user_profiles; SELECT COUNT(*) as total_tenants FROM tenants;" 2>&1 | grep -E "total_|-[[:space:]]*[0-9]" || true
-
-health: ## Check health of all services
-	@echo "🏥 Checking service health..."
-	@docker-compose ps
-	@echo ""
-	@echo "🔍 Backend Health Check:"
-	@curl -s http://localhost:8000/health | python3 -m json.tool 2>/dev/null || echo "❌ Backend not responding"
-	@echo ""
-
-test: ## Run tests
-	docker-compose exec backend pytest || echo "⚠️  Tests not configured"
-
-ps: ## Show running containers
-	docker-compose ps
-
-stop: ## Stop all services
-	docker-compose stop
-
-start: ## Start stopped services
-	docker-compose start
-
-rebuild: ## Rebuild and restart services (preserves database)
-	@echo "🔨 Rebuilding and restarting services..."
-	docker-compose up -d --build --force-recreate
-	@echo "✅ Rebuild complete"
-
-rebuild-safe: ## Safe rebuild: backup DB, rebuild images, restore if needed (preserves all data)
-	@echo "🔄 Performing safe rebuild..."
-	@echo "📦 Creating database backup..."
-	@$(MAKE) db-backup || echo "⚠️  Backup failed, but continuing..."
-	@echo "🔨 Rebuilding images..."
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose build --no-cache
-	@echo "🛑 Stopping services..."
-	@docker-compose down
-	@echo "🚀 Starting services with new images..."
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose up -d
-	@echo "⏳ Waiting for services to start..."
-	@sleep 10
-	@echo "🔄 Running migrations..."
-	@$(MAKE) db-migrate
-	@echo "✅ Safe rebuild complete (data preserved)"
-
-logs-backend: ## View backend logs
-	docker-compose logs -f backend
-
-logs-frontend: ## View frontend logs
-	docker-compose logs -f frontend
-
-logs-postgres: ## View postgres logs
-	docker-compose logs -f postgres
-
-logs-redis: ## View redis logs
-	docker-compose logs -f redis
-
-check-errors-backend: ## Check for errors in backend logs
-	@docker-compose logs backend --tail 1000 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | head -20 || echo "✅ No errors found in backend"
-
-check-errors-frontend: ## Check for errors in frontend logs
-	@docker-compose logs frontend --tail 1000 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | head -20 || echo "✅ No errors found in frontend"
-
-check-errors-postgres: ## Check for errors in postgres logs
-	@docker-compose logs postgres --tail 500 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | head -20 || echo "✅ No errors found in postgres"
-
-check-errors-redis: ## Check for errors in redis logs
-	@docker-compose logs redis --tail 500 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | head -20 || echo "✅ No errors found in redis"
-
-check-errors: check-errors-backend check-errors-frontend check-errors-postgres check-errors-redis ## Check for errors in all service logs
-
-check-logs-backend: ## Show recent backend logs
-	@docker-compose logs backend --tail 500
-
-check-logs-frontend: ## Show recent frontend logs
-	@docker-compose logs frontend --tail 500
-
-check-logs-postgres: ## Show recent postgres logs
-	@docker-compose logs postgres --tail 200
-
-check-logs-redis: ## Show recent redis logs
-	@docker-compose logs redis --tail 200
-
-check-logs: check-logs-backend check-logs-frontend check-logs-postgres check-logs-redis ## Show recent logs from all services
-
-check-all-errors: ## Comprehensive error check across all services
-	@echo "🔍 Checking for errors in all services..."
-	@docker-compose logs backend --tail 1000 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | head -30 || echo "✅ No errors found"
-
-check-all-errors-frontend: ## Comprehensive error check in frontend
-	@docker-compose logs frontend --tail 1000 | grep -iE "(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback|TRACEBACK|failed|Failed|FAILED|critical|Critical|CRITICAL|fatal|Fatal|FATAL)" | grep -v "warning" | grep -v "WARNING" | head -30 || echo "✅ No errors found"
-
-db-shell: ## Open PostgreSQL shell
-	docker-compose exec postgres psql -U agentic_pm -d agentic_pm_db
-
-db-migrate: ## Run database migrations
-	@echo "🔄 Running database migrations..."
-	@docker-compose exec -T postgres psql -U agentic_pm -d agentic_pm_db -f /docker-entrypoint-initdb.d/migrations/20251124000003_user_api_keys.sql 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
-	@docker-compose exec -T postgres psql -U agentic_pm -d agentic_pm_db -f /docker-entrypoint-initdb.d/migrations/20251124000004_product_scoring.sql 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
-	@docker-compose exec -T postgres psql -U agentic_pm -d agentic_pm_db -f /docker-entrypoint-initdb.d/migrations/20251125000001_user_management_tenants.sql 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
-	@echo "✅ Migrations complete"
-
-db-seed: ## Seed database with sample data
-	@echo "🌱 Seeding database with sample data..."
-	@docker-compose exec -T postgres psql -U agentic_pm -d agentic_pm_db -f /docker-entrypoint-initdb.d/seed_sample_data.sql 2>&1 | grep -v "NOTICE" || true
-	@echo "✅ Database seeded"
-
-db-setup: db-migrate db-seed ## Run migrations and seed database
-
-agno-init: ## Initialize Agno framework (for docker-compose)
-	@echo "🤖 Initializing Agno framework..."
-	@max_attempts=30; \
-	attempt=0; \
-	while [ $$attempt -lt $$max_attempts ]; do \
-		if curl -f http://localhost:8000/health > /dev/null 2>&1; then \
-			echo "✅ Backend is ready, initializing Agno..."; \
-			curl -X POST http://localhost:8000/api/agents/initialize \
-				-H "Content-Type: application/json" \
-				-d '{"enable_rag": true}' \
-				-s | python3 -m json.tool 2>/dev/null || echo "⚠️  Agno initialization endpoint may not be available"; \
-			break; \
-		fi; \
-		attempt=$$((attempt + 1)); \
-		echo "   Waiting for backend... ($$attempt/$$max_attempts)"; \
-		sleep 2; \
-	done; \
-	if [ $$attempt -ge $$max_attempts ]; then \
-		echo "⚠️  Backend not ready after $$max_attempts attempts"; \
-	fi
-	@echo "✅ Agno initialization complete"
-
-kind-agno-init: ## Initialize Agno framework in kind cluster
-	@echo "🤖 Initializing Agno framework in kind cluster..."
-	@max_attempts=30; \
-	attempt=0; \
-	BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
-	if [ -z "$$BACKEND_POD" ]; then \
-		echo "⚠️  Backend pod not found"; \
-		exit 1; \
-	fi; \
-	while [ $$attempt -lt $$max_attempts ]; do \
-		if kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) -- \
-			curl -f http://localhost:8000/health > /dev/null 2>&1; then \
-			echo "✅ Backend is ready, initializing Agno..."; \
-			kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) -- \
-				curl -X POST http://localhost:8000/api/agents/initialize \
-					-H "Content-Type: application/json" \
-					-d '{"enable_rag": true}' \
-					-s | head -20 || echo "⚠️  Agno initialization endpoint may not be available"; \
-			break; \
-		fi; \
-		attempt=$$((attempt + 1)); \
-		echo "   Waiting for backend... ($$attempt/$$max_attempts)"; \
-		sleep 2; \
-	done; \
-	if [ $$attempt -ge $$max_attempts ]; then \
-		echo "⚠️  Backend not ready after $$max_attempts attempts"; \
-	fi
-	@echo "✅ Agno initialization complete"
-
-eks-agno-init: ## Initialize Agno framework in EKS cluster
-	@echo "🤖 Initializing Agno framework in EKS cluster..."
-	@max_attempts=30; \
-	attempt=0; \
-	BACKEND_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
-	if [ -z "$$BACKEND_POD" ]; then \
-		echo "⚠️  Backend pod not found"; \
-		exit 1; \
-	fi; \
-	while [ $$attempt -lt $$max_attempts ]; do \
-		if kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD -- \
-			curl -f http://localhost:8000/health > /dev/null 2>&1; then \
-			echo "✅ Backend is ready, initializing Agno..."; \
-			kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD -- \
-				curl -X POST http://localhost:8000/api/agents/initialize \
-					-H "Content-Type: application/json" \
-					-d '{"enable_rag": true}' \
-					-s | head -20 || echo "⚠️  Agno initialization endpoint may not be available"; \
-			break; \
-		fi; \
-		attempt=$$((attempt + 1)); \
-		echo "   Waiting for backend... ($$attempt/$$max_attempts)"; \
-		sleep 2; \
-	done; \
-	if [ $$attempt -ge $$max_attempts ]; then \
-		echo "⚠️  Backend not ready after $$max_attempts attempts"; \
-	fi
-	@echo "✅ Agno initialization complete"
-
-setup: db-setup agno-init ## Complete setup: migrations, seed, and Agno init
-
-db-backup: ## Backup database to backups/ directory with timestamp
-	@echo "📦 Creating database backup..."
-	@mkdir -p backups
-	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
-	BACKUP_FILE="backups/ideaforge_db_backup_$$TIMESTAMP.sql"; \
-	echo "   Backup file: $$BACKUP_FILE"; \
-	if docker-compose exec -T postgres pg_dump -U agentic_pm -d agentic_pm_db --clean --if-exists > $$BACKUP_FILE 2>&1; then \
-		if [ -s $$BACKUP_FILE ]; then \
-			echo "✅ Database backup created: $$BACKUP_FILE"; \
-			ls -lh $$BACKUP_FILE; \
-			ln -sf $$(basename $$BACKUP_FILE) backups/latest_backup.sql; \
-			echo "   Latest backup: backups/latest_backup.sql"; \
-		else \
-			echo "⚠️  First attempt failed, trying alternative method..."; \
-			rm -f $$BACKUP_FILE; \
-			if docker-compose exec -T postgres pg_dump -U agentic_pm agentic_pm_db > $$BACKUP_FILE 2>&1; then \
-				if [ -s $$BACKUP_FILE ]; then \
-					echo "✅ Database backup created: $$BACKUP_FILE"; \
-					ls -lh $$BACKUP_FILE; \
-					ln -sf $$(basename $$BACKUP_FILE) backups/latest_backup.sql; \
-					echo "   Latest backup: backups/latest_backup.sql"; \
-				else \
-					echo "❌ Backup file is empty"; \
-					exit 1; \
-				fi; \
-			else \
-				echo "❌ Database backup failed"; \
-				exit 1; \
-			fi; \
-		fi; \
-	else \
-		echo "❌ Database backup failed"; \
-		exit 1; \
-	fi
-
-db-restore: ## Restore database from backup file (use: make db-restore BACKUP=backups/backup_file.sql)
-	@if [ -z "$(BACKUP)" ]; then \
-		echo "❌ Please specify backup file: make db-restore BACKUP=backups/backup_file.sql"; \
-		exit 1; \
-	fi
-	@if [ ! -f "$(BACKUP)" ]; then \
-		echo "❌ Backup file not found: $(BACKUP)"; \
-		exit 1; \
-	fi
-	@echo "📦 Restoring database from: $(BACKUP)"
-	@echo "⚠️  WARNING: This will overwrite existing data!"
-	@read -p "Are you sure? (yes/no): " confirm && [ "$$confirm" = "yes" ] || exit 1
-	@docker-compose exec -T postgres psql -U agentic_pm -d agentic_pm_db < $(BACKUP)
-	@echo "✅ Database restored from $(BACKUP)"
-
-db-list-backups: ## List available database backups
-	@echo "📦 Available database backups:"
-	@ls -lh backups/*.sql 2>/dev/null | awk '{print $$9, "("$$5")"}' || echo "   No backups found"
-
-migrate-to-kind: db-backup ## Migrate database from docker-compose to kind cluster
-	@echo "🔄 Migrating database from docker-compose to kind cluster..."
-	@if [ ! -f backups/latest_backup.sql ]; then \
-		echo "❌ No backup found. Creating backup now..."; \
-		$(MAKE) db-backup; \
-	fi
-	@BACKUP_FILE=backups/latest_backup.sql; \
-	if [ ! -f $$BACKUP_FILE ]; then \
-		echo "❌ Backup file not found: $$BACKUP_FILE"; \
-		exit 1; \
-	fi
-	@echo "📦 Backup file: $$BACKUP_FILE"
-	@echo "⏳ Waiting for kind cluster postgres to be ready..."
-	@kubectl wait --for=condition=ready pod -l app=postgres -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=300s || \
-		(echo "❌ Postgres pod not ready in kind cluster" && exit 1)
-	@echo "📥 Copying backup to postgres pod..."
-	@kubectl cp $$BACKUP_FILE $(K8S_NAMESPACE)/$$(kubectl get pod -n $(K8S_NAMESPACE) -l app=postgres --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}'):/tmp/backup.sql --context kind-$(KIND_CLUSTER_NAME)
-	@echo "🔄 Restoring database in kind cluster..."
-	@kubectl exec -n $(K8S_NAMESPACE) -i $$(kubectl get pod -n $(K8S_NAMESPACE) -l app=postgres --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}') --context kind-$(KIND_CLUSTER_NAME) -- \
-		psql -U agentic_pm -d agentic_pm_db < $$BACKUP_FILE || \
-		kubectl exec -n $(K8S_NAMESPACE) $$(kubectl get pod -n $(K8S_NAMESPACE) -l app=postgres --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}') --context kind-$(KIND_CLUSTER_NAME) -- \
-		sh -c "cat /tmp/backup.sql | psql -U agentic_pm -d agentic_pm_db"
-	@echo "✅ Database migration complete!"
-	@echo "   Data from docker-compose has been restored to kind cluster"
-	@echo ""
-	@echo "📊 Verifying data in kind cluster..."
-	@kubectl exec -n $(K8S_NAMESPACE) $$(kubectl get pod -n $(K8S_NAMESPACE) -l app=postgres --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}') --context kind-$(KIND_CLUSTER_NAME) -- \
-		psql -U agentic_pm -d agentic_pm_db -c "SELECT COUNT(*) as total_products FROM products; SELECT COUNT(*) as total_users FROM user_profiles; SELECT COUNT(*) as total_tenants FROM tenants;" 2>&1 | grep -E "total_|-[[:space:]]*[0-9]" || true
-
-teardown-docker-compose: db-backup down-clean ## Tear down docker-compose (backup DB, stop containers, preserve config files)
-	@echo "🛑 Tearing down docker-compose deployment..."
-	@echo "✅ Docker-compose containers stopped and removed"
-	@echo "✅ Configuration files preserved"
-	@echo "✅ Database backup created in backups/ directory"
-	@echo ""
-	@echo "💡 To restore and use docker-compose again:"
-	@echo "   make up"
-	@echo "   make db-restore BACKUP=backups/latest_backup.sql"
-
-shell-backend: ## Open shell in backend container
-	docker-compose exec backend /bin/bash
-
-shell-frontend: ## Open shell in frontend container
-	docker-compose exec frontend /bin/sh
+build-no-cache: ## Build Docker images without cache
+	@echo "🔨 Building Docker images (no cache) with tag: $(GIT_SHA)"
+	@docker build -f Dockerfile.backend --no-cache --build-arg GIT_SHA=$(GIT_SHA) --build-arg VERSION=$(VERSION) -t ideaforge-ai-backend:$(GIT_SHA) .
+	@docker build -f Dockerfile.frontend --no-cache --build-arg GIT_SHA=$(GIT_SHA) --build-arg VERSION=$(VERSION) -t ideaforge-ai-frontend:$(GIT_SHA) .
+	@echo "✅ Build complete"
 
 # ============================================================================
 # Kubernetes Deployment Targets (Kind & EKS)
@@ -552,15 +202,6 @@ kind-update-images: ## Update image references in deployments for kind using lat
 	\
 	echo "✅ Image references updated: backend=$${BACKEND_IMAGE}, frontend=$${FRONTEND_IMAGE}"
 
-rebuild-and-deploy: build-apps ## Rebuild apps and deploy to docker-compose
-	@echo "🚀 Rebuilding and deploying to docker-compose..."
-	@GIT_SHA=$(GIT_SHA) VERSION=$(VERSION) docker-compose up -d backend frontend
-	@echo "⏳ Waiting for services to restart..."
-	@sleep 5
-	@echo "✅ Deployment complete!"
-	@echo "   Frontend: http://localhost:3001"
-	@echo "   Backend:  http://localhost:8000"
-
 rebuild-and-deploy-kind: build-apps kind-load-images kind-update-images ## Rebuild apps and deploy to kind cluster
 	@echo "🚀 Rebuilding and deploying to kind cluster..."
 	@if ! kubectl cluster-info --context kind-$(KIND_CLUSTER_NAME) &>/dev/null; then \
@@ -622,20 +263,21 @@ kind-create-db-configmaps: ## Create ConfigMaps for database migrations and seed
 	@echo "✅ ConfigMaps created"
 
 kind-load-secrets: ## Load secrets from .env file for kind deployment
-	@if [ ! -f .env ]; then \
-		echo "⚠️  .env file not found. Creating from .env.example..."; \
-		if [ -f .env.example ]; then \
-			cp .env.example .env; \
-			echo "   Created .env from .env.example - please fill in your API keys!"; \
+	@if [ ! -f .env ] && [ ! -f env.kind ]; then \
+		echo "⚠️  .env or env.kind file not found. Creating from env.kind.example..."; \
+		if [ -f env.kind.example ]; then \
+			cp env.kind.example env.kind; \
+			echo "   Created env.kind from env.kind.example - please fill in your API keys!"; \
 			echo "   Required keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, V0_API_KEY, GITHUB_TOKEN, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"; \
 			exit 1; \
 		else \
-			echo "   .env.example not found. Please create .env manually."; \
+			echo "   env.kind.example not found. Please create env.kind manually."; \
 			exit 1; \
 		fi; \
 	fi
-	@echo "📦 Loading secrets from .env file to Kubernetes..."
-	@bash $(K8S_DIR)/push-env-secret.sh .env $(K8S_NAMESPACE) kind-$(KIND_CLUSTER_NAME)
+	@ENV_FILE=$$([ -f env.kind ] && echo "env.kind" || echo ".env"); \
+	echo "📦 Loading secrets from $$ENV_FILE file to Kubernetes..."; \
+	bash $(K8S_DIR)/push-env-secret.sh $$ENV_FILE $(K8S_NAMESPACE) kind-$(KIND_CLUSTER_NAME)
 	@echo "✅ Secrets pushed to Kubernetes secret: ideaforge-ai-secrets"
 
 kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manifests to kind (assumes cluster exists and images are loaded)
@@ -1022,6 +664,70 @@ verify-kind-complete: ## Complete verification: pods, replicasets, image tags, s
 	@echo ""
 	@echo "✅ Verification complete"
 
+kind-agno-init: ## Initialize Agno framework in kind cluster
+	@echo "🤖 Initializing Agno framework in kind cluster..."
+	@max_attempts=30; \
+	attempt=0; \
+	BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "⚠️  Backend pod not found"; \
+		exit 1; \
+	fi; \
+	while [ $$attempt -lt $$max_attempts ]; do \
+		if kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) -- \
+			curl -f http://localhost:8000/health > /dev/null 2>&1; then \
+			echo "✅ Backend is ready, initializing Agno..."; \
+			kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) -- \
+				curl -X POST http://localhost:8000/api/agents/initialize \
+					-H "Content-Type: application/json" \
+					-d '{"enable_rag": true}' \
+					-s | head -20 || echo "⚠️  Agno initialization endpoint may not be available"; \
+			break; \
+		fi; \
+		attempt=$$((attempt + 1)); \
+		echo "   Waiting for backend... ($$attempt/$$max_attempts)"; \
+		sleep 2; \
+	done; \
+	if [ $$attempt -ge $$max_attempts ]; then \
+		echo "⚠️  Backend not ready after $$max_attempts attempts"; \
+	fi
+	@echo "✅ Agno initialization complete"
+
+kind-update-db-configmaps: ## Update database ConfigMaps in Kind with latest seed file
+	@echo "📦 Updating database ConfigMaps in Kind cluster..."
+	@K8S_NAMESPACE=$(K8S_NAMESPACE) bash $(K8S_DIR)/create-db-configmaps.sh
+	@echo "✅ ConfigMaps updated"
+
+kind-seed-database: ## Run database seeding job in Kind cluster (can be invoked separately)
+	@echo "🌱 Running database seeding job in Kind cluster..."
+	@if ! kubectl get namespace $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) &>/dev/null; then \
+		echo "❌ Namespace $(K8S_NAMESPACE) does not exist"; \
+		echo "   Please deploy the application first: make kind-deploy"; \
+		exit 1; \
+	fi
+	@kubectl delete job db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
+	@kubectl apply -f $(K8S_DIR)/kind/db-seed-job.yaml --context kind-$(KIND_CLUSTER_NAME)
+	@echo "⏳ Waiting for database seeding job to complete..."
+	@kubectl wait --for=condition=complete job/db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=120s || \
+		(echo "⚠️  Database seeding job did not complete, checking logs..." && \
+		 kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=50 && \
+		 exit 1)
+	@echo "✅ Database seeding complete"
+	@echo "📊 Verifying seeded data..."
+	@kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=20 | grep -E "tenants|demo_users|products" || true
+
+kind-add-demo-accounts: ## Add demo accounts to existing Kind database (legacy method, use kind-seed-database instead)
+	@echo "👥 Adding demo accounts to Kind database..."
+	@POSTGRES_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$POSTGRES_POD" ]; then \
+		echo "❌ PostgreSQL pod not found in namespace $(K8S_NAMESPACE)"; \
+		exit 1; \
+	fi; \
+	echo "   Using PostgreSQL pod: $$POSTGRES_POD"; \
+	kubectl cp $(K8S_DIR)/add-demo-accounts.sql $(K8S_NAMESPACE)/$$POSTGRES_POD:/tmp/add-demo-accounts.sql --context kind-$(KIND_CLUSTER_NAME); \
+	kubectl exec -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) $$POSTGRES_POD -- psql -U agentic_pm -d agentic_pm_db -f /tmp/add-demo-accounts.sql; \
+	echo "✅ Demo accounts added successfully"
+
 eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespace (use EKS_NAMESPACE=your-namespace). Uses GitHub PAT from .env or EKS_GITHUB_TOKEN env var.
 	@echo "🔐 Setting up GitHub Container Registry secret..."
 	@echo "ℹ️  Note: GitHub Personal Access Token (PAT) can be used for GHCR authentication"
@@ -1047,17 +753,18 @@ eks-setup-ghcr-secret: ## Setup GitHub Container Registry secret in EKS namespac
 	if [ -n "$$EKS_GITHUB_TOKEN" ]; then \
 		GITHUB_TOKEN="$$EKS_GITHUB_TOKEN"; \
 		echo "   Using GITHUB_TOKEN from EKS_GITHUB_TOKEN environment variable"; \
-	elif [ -f .env ]; then \
-		GITHUB_TOKEN=$$(grep "^GITHUB_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs || echo ""); \
+	elif [ -f .env ] || [ -f env.eks ]; then \
+		ENV_FILE=$$([ -f env.eks ] && echo "env.eks" || echo ".env"); \
+		GITHUB_TOKEN=$$(grep "^GITHUB_TOKEN=" $$ENV_FILE 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'" | xargs || echo ""); \
 		if [ -n "$$GITHUB_TOKEN" ]; then \
-			echo "   Using GITHUB_TOKEN from .env file"; \
+			echo "   Using GITHUB_TOKEN from $$ENV_FILE file"; \
 		fi; \
 	fi; \
 	if [ -z "$$GITHUB_TOKEN" ]; then \
 		echo "❌ GITHUB_TOKEN (GitHub PAT) is required"; \
 		echo "   Options:"; \
 		echo "   1. Export: export EKS_GITHUB_TOKEN=ghp_your_pat_token_here"; \
-		echo "   2. Add to .env: GITHUB_TOKEN=ghp_your_pat_token_here"; \
+		echo "   2. Add to env.eks: GITHUB_TOKEN=ghp_your_pat_token_here"; \
 		echo ""; \
 		echo "   Create PAT at: https://github.com/settings/tokens"; \
 		echo "   Required scope: read:packages"; \
@@ -1108,20 +815,21 @@ eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates 
 	@echo "✅ EKS manifests prepared for namespace: $(EKS_NAMESPACE)"
 
 eks-load-secrets: ## Load secrets from .env file for EKS deployment (use EKS_NAMESPACE=your-namespace)
-	@if [ ! -f .env ]; then \
-		echo "⚠️  .env file not found. Creating from .env.example..."; \
-		if [ -f .env.example ]; then \
-			cp .env.example .env; \
-			echo "   Created .env from .env.example - please fill in your API keys!"; \
+	@if [ ! -f .env ] && [ ! -f env.eks ]; then \
+		echo "⚠️  .env or env.eks file not found. Creating from env.eks.example..."; \
+		if [ -f env.eks.example ]; then \
+			cp env.eks.example env.eks; \
+			echo "   Created env.eks from env.eks.example - please fill in your API keys!"; \
 			echo "   Required keys: OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, V0_API_KEY, GITHUB_TOKEN, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"; \
 			exit 1; \
 		else \
-			echo "   .env.example not found. Please create .env manually."; \
+			echo "   env.eks.example not found. Please create env.eks manually."; \
 			exit 1; \
 		fi; \
 	fi
-	@echo "📦 Loading secrets from .env file to Kubernetes..."
-	@bash $(K8S_DIR)/push-env-secret.sh .env $(EKS_NAMESPACE)
+	@ENV_FILE=$$([ -f env.eks ] && echo "env.eks" || echo ".env"); \
+	echo "📦 Loading secrets from $$ENV_FILE file to Kubernetes..."; \
+	bash $(K8S_DIR)/push-env-secret.sh $$ENV_FILE $(EKS_NAMESPACE)
 	@echo "✅ Secrets pushed to Kubernetes secret: ideaforge-ai-secrets in namespace: $(EKS_NAMESPACE)"
 
 eks-deploy-full: eks-setup-ghcr-secret eks-prepare-namespace eks-load-secrets eks-deploy ## Full EKS deployment with GHCR setup (use EKS_NAMESPACE=your-namespace, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag)
@@ -1224,39 +932,20 @@ eks-test: ## Test service-to-service interactions in EKS cluster (use EKS_NAMESP
 	fi
 	@echo ""
 	@echo "2️⃣  Testing Backend -> Redis..."
-	@BACKEND_POD=$$(kubectl get cluster-info &> /dev/null; then \
-		echo "✅ kubectl is configured"; \
-	else \
-		echo "❌ kubectl is not configured or EKS cluster is not accessible"; \
-		echo "   Configure kubectl: aws eks update-kubeconfig --name $(EKS_CLUSTER_NAME) --region $(EKS_REGION)"; \
-		exit 1; \
+	@BACKEND_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -n "$$BACKEND_POD" ]; then \
+		kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD -- \
+			sh -c "nc -z redis 6379 && echo '✅ Redis reachable' || echo '❌ Redis not reachable'"; \
 	fi
-	@echo "📦 Applying Kubernetes manifests..."
-	@kubectl apply -f $(K8S_DIR)/namespace.yaml
-	@kubectl apply -f $(K8S_DIR)/configmap.yaml
-	@if [ -f $(K8S_DIR)/secrets.yaml ]; then \
-		echo "⚠️  Using secrets.yaml - ensure it's updated with production values!"; \
-		kubectl apply -f $(K8S_DIR)/secrets.yaml; \
-	else \
-		echo "❌ secrets.yaml not found. Please create it with production secrets."; \
-		exit 1; \
+	@echo ""
+	@echo "3️⃣  Testing Backend Health Endpoint..."
+	@BACKEND_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -n "$$BACKEND_POD" ]; then \
+		kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD -- \
+			curl -s http://localhost:8000/health | head -20 || echo "❌ Health check failed"; \
 	fi
-	@kubectl apply -f $(K8S_DIR)/postgres.yaml
-	@kubectl apply -f $(K8S_DIR)/redis.yaml
-	@echo "⏳ Waiting for database services to be ready..."
-	@kubectl wait --for=condition=ready pod -l app=postgres -n $(K8S_NAMESPACE) --timeout=300s || true
-	@kubectl wait --for=condition=ready pod -l app=redis -n $(K8S_NAMESPACE) --timeout=120s || true
-	@kubectl apply -f $(K8S_DIR)/backend.yaml
-	@kubectl apply -f $(K8S_DIR)/frontend.yaml
-	@echo "⏳ Waiting for application pods to be ready..."
-	@sleep 10
-	@kubectl wait --for=condition=ready pod -l app=backend -n $(K8S_NAMESPACE) --timeout=300s || true
-	@kubectl wait --for=condition=ready pod -l app=frontend -n $(K8S_NAMESPACE) --timeout=300s || true
-	@kubectl apply -f $(K8S_DIR)/ingress.yaml
 	@echo ""
-	@echo "✅ EKS deployment complete!"
-	@echo ""
-	@$(MAKE) eks-status
+	@echo "✅ Service-to-service tests complete!"
 
 eks-update-db-configmaps: ## Update database ConfigMaps in EKS with latest seed file (use EKS_NAMESPACE=your-namespace)
 	@if [ -z "$(EKS_NAMESPACE)" ]; then \
@@ -1288,37 +977,31 @@ eks-add-demo-accounts: ## Add demo accounts to existing EKS database (use EKS_NA
 	kubectl exec -n $(EKS_NAMESPACE) $$POSTGRES_POD -- psql -U agentic_pm -d agentic_pm_db -f /tmp/add-demo-accounts.sql; \
 	echo "✅ Demo accounts added successfully"
 
-kind-update-db-configmaps: ## Update database ConfigMaps in Kind with latest seed file
-	@echo "📦 Updating database ConfigMaps in Kind cluster..."
-	@K8S_NAMESPACE=$(K8S_NAMESPACE) bash $(K8S_DIR)/create-db-configmaps.sh
-	@echo "✅ ConfigMaps updated"
-
-kind-seed-database: ## Run database seeding job in Kind cluster (can be invoked separately)
-	@echo "🌱 Running database seeding job in Kind cluster..."
-	@if ! kubectl get namespace $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) &>/dev/null; then \
-		echo "❌ Namespace $(K8S_NAMESPACE) does not exist"; \
-		echo "   Please deploy the application first: make kind-deploy"; \
-		exit 1; \
-	fi
-	@kubectl delete job db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
-	@kubectl apply -f $(K8S_DIR)/kind/db-seed-job.yaml --context kind-$(KIND_CLUSTER_NAME)
-	@echo "⏳ Waiting for database seeding job to complete..."
-	@kubectl wait --for=condition=complete job/db-seed -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=120s || \
-		(echo "⚠️  Database seeding job did not complete, checking logs..." && \
-		 kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=50 && \
-		 exit 1)
-	@echo "✅ Database seeding complete"
-	@echo "📊 Verifying seeded data..."
-	@kubectl logs -n $(K8S_NAMESPACE) job/db-seed --context kind-$(KIND_CLUSTER_NAME) --tail=20 | grep -E "tenants|demo_users|products" || true
-
-kind-add-demo-accounts: ## Add demo accounts to existing Kind database (legacy method, use kind-seed-database instead)
-	@echo "👥 Adding demo accounts to Kind database..."
-	@POSTGRES_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
-	if [ -z "$$POSTGRES_POD" ]; then \
-		echo "❌ PostgreSQL pod not found in namespace $(K8S_NAMESPACE)"; \
+eks-agno-init: ## Initialize Agno framework in EKS cluster
+	@echo "🤖 Initializing Agno framework in EKS cluster..."
+	@max_attempts=30; \
+	attempt=0; \
+	BACKEND_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "⚠️  Backend pod not found"; \
 		exit 1; \
 	fi; \
-	echo "   Using PostgreSQL pod: $$POSTGRES_POD"; \
-	kubectl cp $(K8S_DIR)/add-demo-accounts.sql $(K8S_NAMESPACE)/$$POSTGRES_POD:/tmp/add-demo-accounts.sql --context kind-$(KIND_CLUSTER_NAME); \
-	kubectl exec -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) $$POSTGRES_POD -- psql -U agentic_pm -d agentic_pm_db -f /tmp/add-demo-accounts.sql; \
-	echo "✅ Demo accounts added successfully"
+	while [ $$attempt -lt $$max_attempts ]; do \
+		if kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD -- \
+			curl -f http://localhost:8000/health > /dev/null 2>&1; then \
+			echo "✅ Backend is ready, initializing Agno..."; \
+			kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD -- \
+				curl -X POST http://localhost:8000/api/agents/initialize \
+					-H "Content-Type: application/json" \
+					-d '{"enable_rag": true}' \
+					-s | head -20 || echo "⚠️  Agno initialization endpoint may not be available"; \
+			break; \
+		fi; \
+		attempt=$$((attempt + 1)); \
+		echo "   Waiting for backend... ($$attempt/$$max_attempts)"; \
+		sleep 2; \
+	done; \
+	if [ $$attempt -ge $$max_attempts ]; then \
+		echo "⚠️  Backend not ready after $$max_attempts attempts"; \
+	fi
+	@echo "✅ Agno initialization complete"

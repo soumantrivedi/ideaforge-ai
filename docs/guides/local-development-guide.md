@@ -1,6 +1,6 @@
 # Local Development Guide
 
-Complete step-by-step guide for setting up and running IdeaForge AI locally using Kind cluster (recommended) or Docker Compose.
+Complete step-by-step guide for setting up and running IdeaForge AI locally using Kind cluster.
 
 ## Prerequisites
 
@@ -33,9 +33,9 @@ Complete step-by-step guide for setting up and running IdeaForge AI locally usin
 - V0 API Key (optional, for design prototypes): https://v0.app/chat/settings/api
 - GitHub Token (optional, for integrations): https://github.com/settings/tokens
 
-## Option 1: Kind Cluster (Recommended for Local Development)
+## Kind Cluster Setup
 
-Kind cluster provides a production-like Kubernetes environment locally, making it ideal for testing Kubernetes deployments.
+Kind cluster provides a production-like Kubernetes environment locally, making it ideal for testing Kubernetes deployments and matching production EKS setup.
 
 ### Step 1: Clone Repository
 
@@ -345,41 +345,6 @@ kubectl logs -n ideaforge-ai -l app=postgres --context kind-ideaforge-ai
 # Restart database setup job
 kubectl delete job db-setup -n ideaforge-ai --context kind-ideaforge-ai
 kubectl apply -f k8s/db-setup-job.yaml --context kind-ideaforge-ai
-```
-
-### Docker Compose Issues
-
-**Problem: Port already in use**
-```bash
-# Find process using port
-lsof -i :3001  # Frontend
-lsof -i :8000  # Backend
-
-# Stop conflicting service or change ports in docker-compose.yml
-```
-
-**Problem: Database connection errors**
-```bash
-# Check PostgreSQL container
-docker-compose ps postgres
-
-# Check PostgreSQL logs
-docker-compose logs postgres
-
-# Restart PostgreSQL
-docker-compose restart postgres
-```
-
-**Problem: Backend not responding**
-```bash
-# Check backend logs
-docker-compose logs backend
-
-# Restart backend
-docker-compose restart backend
-
-# Check health endpoint
-curl http://localhost:8000/health
 ```
 
 ### API Key Issues

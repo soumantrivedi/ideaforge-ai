@@ -15,6 +15,7 @@ env:
   # - McK-Internal/ideaforge-ai (for mck-internal remote)
   # Final image paths: ghcr.io/soumantrivedi/ideaforge-ai/backend, etc.
   IMAGE_NAME_BACKEND: ${{ github.repository }}/backend
+  IMAGE_NAME_BACKEND_BASE: ${{ github.repository }}/backend-base
   IMAGE_NAME_FRONTEND: ${{ github.repository }}/frontend
 
 jobs:
@@ -69,8 +70,57 @@ jobs:
           echo "vite_api_url=$VITE_API_URL" >> $GITHUB_OUTPUT
           echo "VITE_API_URL set to: $VITE_API_URL"
 
-  build-backend:
+  build-backend-base:
     needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for backend-base
+        id: meta-backend-base
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND_BASE }}
+          tags: |
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.is-default-branch }}
+            type=sha,format=short,prefix=base-
+
+      - name: Build and push backend-base image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.base.backend
+          push: ${{ needs.prepare.outputs.is-default-branch }}  # Only push on main branch
+          tags: ${{ steps.meta-backend-base.outputs.tags }}
+          labels: ${{ steps.meta-backend-base.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output backend-base image info
+        run: |
+          if [ "${{ needs.prepare.outputs.is-default-branch }}" == "true" ]; then
+            echo "✅ Backend-base image built and pushed:"
+          else
+            echo "✅ Backend-base image built (not pushed - only main branch pushes):"
+          fi
+          echo "   Tags: ${{ steps.meta-backend-base.outputs.tags }}"
+
+  build-backend:
+    needs: [prepare, build-backend-base]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -110,6 +160,7 @@ jobs:
           build-args: |
             GIT_SHA=${{ needs.prepare.outputs.git-sha }}
             VERSION=${{ needs.prepare.outputs.version }}
+            BASE_IMAGE_TAG=latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -179,7 +230,7 @@ jobs:
           echo "   Tags: ${{ steps.meta-frontend.outputs.tags }}"
 
   prepare-release-notes:
-    needs: [prepare, build-backend, build-frontend]
+    needs: [prepare, build-backend-base, build-backend, build-frontend]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -267,7 +318,7 @@ jobs:
           echo "   File: release-notes.md"
 
   summary:
-    needs: [prepare, build-backend, build-frontend, prepare-release-notes]
+    needs: [prepare, build-backend-base, build-backend, build-frontend, prepare-release-notes]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -278,6 +329,7 @@ jobs:
           echo "### ✅ Completed Jobs" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Prepare**: Metadata and build args prepared" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Build Backend Base**: Base image built and pushed" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Build Backend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Build Frontend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Release Notes**: Release notes prepared" >> $GITHUB_STEP_SUMMARY

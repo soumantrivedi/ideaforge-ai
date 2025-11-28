@@ -8,7 +8,7 @@ Multi-agent platform for full-stack product management. Specialized agents colla
 
 ## 🚀 Quick Start
 
-### Local Development (Kind Cluster - Recommended)
+### Local Development (Kind Cluster)
 
 For complete step-by-step instructions, see [Local Development Guide](docs/guides/local-development-guide.md).
 
@@ -24,24 +24,6 @@ make kind-deploy-full
 # 3. Access application
 # Frontend: http://localhost:8080/
 # Backend API: http://localhost:8080/api/
-```
-
-### Docker Compose (Alternative)
-
-For Docker Compose setup, see [Local Development Guide](docs/guides/local-development-guide.md#option-2-docker-compose-simpler-faster-startup).
-
-```bash
-# 1. Setup environment
-cp env.example .env
-# Edit .env with your API keys
-
-# 2. Build and start
-make build
-make up
-
-# 3. Access application
-# Frontend: http://localhost:3001
-# Backend: http://localhost:8000
 ```
 
 ### Production (EKS)
@@ -73,11 +55,10 @@ make eks-deploy-full \
 - [Complete Application Guide](docs/architecture/03-complete-application-guide.md)
 
 ### Deployment
-- [Docker Compose Deployment](docs/deployment/DEPLOYMENT_GUIDE.md)
-- [Kind Cluster Deployment](docs/deployment/kind-access.md)
-- [EKS Production Deployment](docs/deployment/eks.md)
-- [EKS Ingress Setup](docs/deployment/eks-ingress.md)
-- [Database Backups](docs/deployment/backups.md)
+- [Kind Cluster Deployment](docs/deployment/kind-access.md) - Local development
+- [EKS Production Deployment](docs/deployment/eks.md) - Production deployment
+- [EKS Ingress Setup](docs/deployment/eks-ingress.md) - Ingress configuration
+- [Database Backups](docs/deployment/backups.md) - Backup and restore
 
 ### Configuration
 - [Environment Variables](docs/configuration/environment-variables.md)
@@ -111,26 +92,16 @@ make eks-deploy-full \
 
 | Target | Description |
 |--------|-------------|
-| `make build` | Build Docker images with current git SHA |
 | `make build-apps` | Build only backend and frontend images |
 | `make build-no-cache` | Build Docker images without cache |
-| `make up` | Start all services (docker-compose) |
-| `make down` | Stop all services (preserves data) |
-| `make restart` | Restart all services |
-| `make logs SERVICE=backend` | View logs for a service |
-| `make health` | Check health of all services |
 
 ### Database
 
 | Target | Description |
 |--------|-------------|
-| `make db-migrate` | Run database migrations |
-| `make db-seed` | Seed database with sample data |
-| `make db-setup` | Run migrations and seed database |
-| `make db-backup` | Backup database to backups/ directory |
-| `make db-restore BACKUP=file.sql` | Restore database from backup |
+| `make db-backup` | Backup database from Kind cluster |
+| `make db-restore BACKUP=file.sql` | Restore database to Kind cluster |
 | `make db-list-backups` | List available database backups |
-| `make db-shell` | Open PostgreSQL shell |
 
 ### Kind Cluster (Local Development)
 
@@ -171,12 +142,8 @@ make eks-deploy-full \
 |--------|-------------|
 | `make help` | Show all available make targets |
 | `make version` | Show current version information |
-| `make check-errors` | Check for errors in all service logs |
-| `make check-logs` | Show recent logs from all services |
-| `make shell-backend` | Open shell in backend container |
-| `make shell-frontend` | Open shell in frontend container |
-| `make clean-all` | Complete cleanup (backup DB first) |
-| `make rebuild-safe` | Safe rebuild: backup DB, rebuild images, restore if needed |
+| `make kind-logs` | Show logs from Kind cluster |
+| `make kind-status` | Show status of Kind cluster |
 
 ---
 
@@ -205,10 +172,8 @@ make eks-deploy-full \
 │   ├── configuration/   # Configuration guides
 │   ├── guides/          # User guides
 │   └── troubleshooting/ # Troubleshooting guides
-├── env.example          # Common environment variables
-├── env.kind.example     # Kind-specific variables
-├── env.eks.example      # EKS-specific variables
-└── env.docker-compose.example  # Docker Compose variables
+├── env.kind.example     # Kind-specific variables (local development)
+└── env.eks.example      # EKS-specific variables (production)
 ```
 
 ---
@@ -245,10 +210,9 @@ curl http://localhost:8000/health | jq '.services'
 
 | Symptom | Solution |
 |---------|----------|
-| Multi-agent call hangs | Check backend logs: `make logs SERVICE=backend` |
+| Multi-agent call hangs | Check backend logs: `make kind-logs` |
 | Provider marked invalid | Use Settings → **Verify Key** again; check network access |
-| Database errors | Ensure Postgres is running: `make ps` |
-| Port conflict | Update `docker-compose.yml` or stop conflicting service |
+| Database errors | Check PostgreSQL pod: `kubectl get pods -n ideaforge-ai -l app=postgres` |
 | Kind cluster issues | Check cluster status: `make kind-status` |
 | EKS deployment fails | Verify namespace exists and kubectl is configured |
 
@@ -260,7 +224,7 @@ See [Troubleshooting Guide](docs/troubleshooting/common-issues.md) for more deta
 
 1. Fork & clone the repository
 2. Create a feature branch
-3. Run `make build && make up` locally
+3. Run `make build-apps && make kind-deploy-full` locally
 4. Submit a PR with updated docs/tests where applicable
 
 ---

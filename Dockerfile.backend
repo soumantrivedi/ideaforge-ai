@@ -1,4 +1,14 @@
-FROM python:3.11-slim
+# Backend Dockerfile
+# Uses base backend image for faster builds (system dependencies and Python packages pre-installed)
+# Base image is built separately and pushed to GHCR
+
+# Build argument to specify base image
+ARG BASE_IMAGE_TAG=latest
+ARG BASE_IMAGE_REGISTRY=ghcr.io/soumantrivedi/ideaforge-ai
+
+# Use base image from GHCR (will fail if not available, but that's expected in CI/CD)
+# For local development, use local base image: ideaforge-ai-backend-base:latest
+FROM ${BASE_IMAGE_REGISTRY}/backend-base:${BASE_IMAGE_TAG}
 
 WORKDIR /app
 
@@ -9,30 +19,6 @@ ARG VERSION=unknown
 # Set environment variables
 ENV GIT_SHA=${GIT_SHA}
 ENV VERSION=${VERSION}
-ENV PIP_NO_CACHE_DIR=1
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-
-# Install system dependencies in a single layer
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    git \
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
-# Upgrade pip to latest version (cached layer)
-RUN pip install --upgrade pip setuptools wheel
-
-# Copy only requirements first for better layer caching
-# This layer will only rebuild if requirements.txt changes
-COPY backend/requirements.txt /tmp/requirements.txt
-
-# Install Python dependencies with cache mount for faster builds
-# Use pip cache mount to speed up repeated builds
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r /tmp/requirements.txt && \
-    rm /tmp/requirements.txt
 
 # Copy application code (this layer changes frequently)
 COPY backend ./backend
