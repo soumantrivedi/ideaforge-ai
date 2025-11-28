@@ -1372,8 +1372,15 @@ export function PhaseFormModal({
     setIsCheckingStatus({ ...isCheckingStatus, v0: true });
 
     try {
+      // Build URL with optional projectId query parameter if available
+      // V0 API doesn't know about product_id, so we pass projectId directly if we have it
+      let checkStatusUrl = `${API_URL}/api/design/check-status/${productId}`;
+      if (v0PrototypeStatus?.project_id) {
+        checkStatusUrl += `?projectId=${encodeURIComponent(v0PrototypeStatus.project_id)}`;
+      }
+      
       // Use new check-status endpoint
-      const response = await fetch(`${API_URL}/api/design/check-status/${productId}`, {
+      const response = await fetch(checkStatusUrl, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,

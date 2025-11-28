@@ -1388,11 +1388,17 @@ async def create_design_project(
 @router.get("/check-status/{product_id}")
 async def check_v0_project_status(
     product_id: str,
+    projectId: Optional[str] = None,  # Optional: if provided, use directly instead of looking up from database
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Check status of V0 project by project_id.
+    Check status of V0 project.
+    
+    Can be called in two ways:
+    1. With projectId query parameter: Checks status directly using V0 API (no database lookup needed)
+    2. Without projectId: Looks up projectId from database using product_id, then checks V0 API
+    
     Can be called multiple times (for "Check Status" button).
     Returns latest chat status from the project.
     """
@@ -1400,65 +1406,99 @@ async def check_v0_project_status(
         from backend.services.api_key_loader import load_user_api_keys_from_db
         from sqlalchemy import text
         
-        # Get project_id from database
-        # First try with user_id filter, then without (for shared products or cross-user access)
-        query = text("""
-            SELECT v0_project_id, v0_chat_id, project_status, project_url
-            FROM design_mockups
-            WHERE product_id = :product_id 
-              AND user_id = :user_id 
-              AND provider = 'v0'
-            ORDER BY created_at DESC
-            LIMIT 1
-        """)
+        v0_project_id = None
+        v0_chat_id = None
+        current_status = None
+        current_url = None
         
-        result = await db.execute(query, {
-            "product_id": product_id,
-            "user_id": str(current_user["id"])
-        })
-        row = result.fetchone()
-        
-        # If not found with user_id filter, try without user_id filter (for shared products)
-        if not row:
-            logger.info("check_status_no_user_match", 
-                       product_id=product_id, 
+        # If projectId is provided directly, use it (V0 API doesn't know about product_id)
+        if projectId:
+            logger.info("check_status_using_projectId", 
+                       product_id=product_id,
+                       projectId=projectId,
                        user_id=str(current_user["id"]),
-                       message="No record found with user_id filter, trying without user_id")
-            query_no_user = text("""
+                       message="Using projectId directly from query parameter")
+            v0_project_id = projectId
+            # Try to get additional info from database if available, but don't require it
+            try:
+                query_by_project = text("""
+                    SELECT v0_chat_id, project_status, project_url
+                    FROM design_mockups
+                    WHERE v0_project_id = :v0_project_id 
+                      AND provider = 'v0'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                result_by_project = await db.execute(query_by_project, {
+                    "v0_project_id": projectId
+                })
+                row_by_project = result_by_project.fetchone()
+                if row_by_project:
+                    v0_chat_id, current_status, current_url = row_by_project
+            except Exception as db_lookup_error:
+                logger.debug("check_status_db_lookup_optional", 
+                           error=str(db_lookup_error),
+                           message="Optional database lookup failed, continuing with direct V0 API call")
+        else:
+            # Get project_id from database (original behavior)
+            # First try with user_id filter, then without (for shared products or cross-user access)
+            query = text("""
                 SELECT v0_project_id, v0_chat_id, project_status, project_url
                 FROM design_mockups
                 WHERE product_id = :product_id 
+                  AND user_id = :user_id 
                   AND provider = 'v0'
                 ORDER BY created_at DESC
                 LIMIT 1
             """)
-            result_no_user = await db.execute(query_no_user, {
-                "product_id": product_id
+            
+            result = await db.execute(query, {
+                "product_id": product_id,
+                "user_id": str(current_user["id"])
             })
-            row = result_no_user.fetchone()
-        
-        if not row:
-            logger.warning("check_status_no_record", 
-                          product_id=product_id, 
-                          user_id=str(current_user["id"]),
-                          message="No V0 project record found in database")
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No V0 project found for product_id: {product_id}. Please create a project first using /api/design/create-project"
-            )
-        
-        v0_project_id, v0_chat_id, current_status, current_url = row
-        
-        if not v0_project_id:
-            logger.warning("check_status_no_project_id", 
-                          product_id=product_id, 
-                          user_id=str(current_user["id"]),
-                          v0_chat_id=v0_chat_id,
-                          message="Record found but v0_project_id is NULL")
-            raise HTTPException(
-                status_code=404, 
-                detail="No V0 project_id found in database. Project may not have been created yet. Please create a project first using /api/design/create-project"
-            )
+            row = result.fetchone()
+            
+            # If not found with user_id filter, try without user_id filter (for shared products)
+            if not row:
+                logger.info("check_status_no_user_match", 
+                           product_id=product_id, 
+                           user_id=str(current_user["id"]),
+                           message="No record found with user_id filter, trying without user_id")
+                query_no_user = text("""
+                    SELECT v0_project_id, v0_chat_id, project_status, project_url
+                    FROM design_mockups
+                    WHERE product_id = :product_id 
+                      AND provider = 'v0'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                result_no_user = await db.execute(query_no_user, {
+                    "product_id": product_id
+                })
+                row = result_no_user.fetchone()
+            
+            if not row:
+                logger.warning("check_status_no_record", 
+                              product_id=product_id, 
+                              user_id=str(current_user["id"]),
+                              message="No V0 project record found in database")
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"No V0 project found for product_id: {product_id}. Please provide projectId query parameter or create a project first using /api/design/create-project"
+                )
+            
+            v0_project_id, v0_chat_id, current_status, current_url = row
+            
+            if not v0_project_id:
+                logger.warning("check_status_no_project_id", 
+                              product_id=product_id, 
+                              user_id=str(current_user["id"]),
+                              v0_chat_id=v0_chat_id,
+                              message="Record found but v0_project_id is NULL")
+                raise HTTPException(
+                    status_code=404, 
+                    detail="No V0 project_id found in database. Please provide projectId query parameter or create a project first using /api/design/create-project"
+                )
         
         # Load user's V0 API key
         user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
