@@ -91,34 +91,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check if base image needs rebuild
-        id: check-base-files
-        run: |
-          # Check if this is a manual workflow dispatch (always rebuild)
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "needs-rebuild=true" >> $GITHUB_OUTPUT
-            echo "Manual workflow dispatch - will rebuild base image"
-            exit 0
-          fi
-          
-          # Check if base image files changed
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            # For PRs, check changed files
-            BASE_FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E "(Dockerfile\.base\.backend|backend/requirements\.txt)" || true)
-          else
-            # For pushes, check last commit
-            BASE_FILES_CHANGED=$(git diff --name-only HEAD~1 HEAD | grep -E "(Dockerfile\.base\.backend|backend/requirements\.txt)" || true)
-          fi
-          
-          if [ -n "$BASE_FILES_CHANGED" ]; then
-            echo "needs-rebuild=true" >> $GITHUB_OUTPUT
-            echo "Base image files changed - will rebuild:"
-            echo "$BASE_FILES_CHANGED"
-          else
-            echo "needs-rebuild=false" >> $GITHUB_OUTPUT
-            echo "No base image file changes detected - will use existing base image"
-          fi
-
       - name: Extract metadata for backend-base
         id: meta-backend-base
         uses: docker/metadata-action@v5
@@ -129,7 +101,6 @@ jobs:
             type=sha,format=short,prefix=base-
 
       - name: Build and push backend-base image
-        if: steps.check-base-files.outputs.needs-rebuild == 'true' || needs.prepare.outputs.is-default-branch == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -140,29 +111,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Ensure base image exists in GHCR (pull if needed)
-        if: steps.check-base-files.outputs.needs-rebuild != 'true' && needs.prepare.outputs.is-default-branch == 'true'
-        run: |
-          echo "📥 Ensuring base image exists in GHCR..."
-          BASE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND_BASE }}:latest"
-          if docker pull "$BASE_IMAGE" 2>/dev/null; then
-            echo "✅ Base image found in GHCR: $BASE_IMAGE"
-          else
-            echo "⚠️  Base image not found in GHCR, building it now..."
-            docker build -f Dockerfile.base.backend -t "$BASE_IMAGE" .
-            docker push "$BASE_IMAGE"
-            echo "✅ Base image built and pushed: $BASE_IMAGE"
-          fi
-
       - name: Output backend-base image info
         run: |
           BASE_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND_BASE }}:latest"
           if [ "${{ needs.prepare.outputs.is-default-branch }}" == "true" ]; then
-            echo "✅ Backend-base image available: $BASE_IMAGE"
+            echo "✅ Backend-base image built and pushed:"
+            echo "   Image: $BASE_IMAGE"
+            echo "   Tags: ${{ steps.meta-backend-base.outputs.tags }}"
           else
             echo "✅ Backend-base image built (not pushed - only main branch pushes):"
+            echo "   Tags: ${{ steps.meta-backend-base.outputs.tags }}"
           fi
-          echo "   Image: $BASE_IMAGE"
 
   build-backend:
     needs: [prepare, build-backend-base]
