@@ -1131,28 +1131,78 @@ async def create_design_project(
                     )
                     
                     # Store projectId in database
+                    # Check if record exists first, then insert or update
                     try:
-                        insert_query = text("""
-                            INSERT INTO design_mockups 
-                            (product_id, phase_submission_id, user_id, provider, prompt, 
-                             v0_project_id, project_status, metadata)
-                            VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, 
-                                    :v0_project_id, 'in_progress', CAST(:metadata AS jsonb))
-                            ON CONFLICT DO NOTHING
-                            RETURNING id
+                        # First check if a record exists
+                        check_query = text("""
+                            SELECT id, v0_project_id
+                            FROM design_mockups
+                            WHERE product_id = :product_id 
+                              AND user_id = :user_id 
+                              AND provider = 'v0'
+                              AND (phase_submission_id = :phase_submission_id OR (:phase_submission_id IS NULL AND phase_submission_id IS NULL))
+                            ORDER BY created_at DESC
+                            LIMIT 1
                         """)
-                        await db.execute(insert_query, {
+                        check_result = await db.execute(check_query, {
                             "product_id": request.product_id,
-                            "phase_submission_id": request.phase_submission_id,
                             "user_id": str(current_user["id"]),
-                            "provider": "v0",
-                            "prompt": request.prompt or "",
-                            "v0_project_id": result.get("projectId"),
-                            "metadata": json.dumps({"project_created": True, "project_url": result.get("project_url")})
+                            "phase_submission_id": request.phase_submission_id
                         })
+                        existing_row = check_result.fetchone()
+                        
+                        if existing_row:
+                            # Update existing record
+                            existing_id, existing_v0_project_id = existing_row
+                            update_query = text("""
+                                UPDATE design_mockups
+                                SET v0_project_id = COALESCE(:v0_project_id, v0_project_id),
+                                    project_status = COALESCE(:project_status, project_status),
+                                    metadata = COALESCE(CAST(:metadata AS jsonb), metadata),
+                                    updated_at = now()
+                                WHERE id = :id
+                            """)
+                            await db.execute(update_query, {
+                                "id": existing_id,
+                                "v0_project_id": result.get("projectId"),
+                                "project_status": "in_progress",
+                                "metadata": json.dumps({"project_created": True, "project_url": result.get("project_url")})
+                            })
+                            logger.info("v0_project_updated", 
+                                       product_id=request.product_id,
+                                       user_id=str(current_user["id"]),
+                                       v0_project_id=result.get("projectId"),
+                                       existing_id=str(existing_id))
+                        else:
+                            # Insert new record
+                            insert_query = text("""
+                                INSERT INTO design_mockups 
+                                (product_id, phase_submission_id, user_id, provider, prompt, 
+                                 v0_project_id, project_status, metadata)
+                                VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, 
+                                        :v0_project_id, 'in_progress', CAST(:metadata AS jsonb))
+                                RETURNING id
+                            """)
+                            insert_result = await db.execute(insert_query, {
+                                "product_id": request.product_id,
+                                "phase_submission_id": request.phase_submission_id,
+                                "user_id": str(current_user["id"]),
+                                "provider": "v0",
+                                "prompt": request.prompt or "",
+                                "v0_project_id": result.get("projectId"),
+                                "metadata": json.dumps({"project_created": True, "project_url": result.get("project_url")})
+                            })
+                            logger.info("v0_project_stored", 
+                                       product_id=request.product_id,
+                                       user_id=str(current_user["id"]),
+                                       v0_project_id=result.get("projectId"))
+                        
                         await db.commit()
                     except Exception as db_error:
-                        logger.warning("failed_to_store_project", error=str(db_error))
+                        logger.warning("failed_to_store_project", 
+                                     error=str(db_error),
+                                     product_id=request.product_id,
+                                     user_id=str(current_user["id"]))
                         await db.rollback()
                     
                     return {
@@ -1351,6 +1401,7 @@ async def check_v0_project_status(
         from sqlalchemy import text
         
         # Get project_id from database
+        # First try with user_id filter, then without (for shared products or cross-user access)
         query = text("""
             SELECT v0_project_id, v0_chat_id, project_status, project_url
             FROM design_mockups
@@ -1367,13 +1418,47 @@ async def check_v0_project_status(
         })
         row = result.fetchone()
         
+        # If not found with user_id filter, try without user_id filter (for shared products)
         if not row:
-            raise HTTPException(status_code=404, detail="No V0 project found for this product")
+            logger.info("check_status_no_user_match", 
+                       product_id=product_id, 
+                       user_id=str(current_user["id"]),
+                       message="No record found with user_id filter, trying without user_id")
+            query_no_user = text("""
+                SELECT v0_project_id, v0_chat_id, project_status, project_url
+                FROM design_mockups
+                WHERE product_id = :product_id 
+                  AND provider = 'v0'
+                ORDER BY created_at DESC
+                LIMIT 1
+            """)
+            result_no_user = await db.execute(query_no_user, {
+                "product_id": product_id
+            })
+            row = result_no_user.fetchone()
+        
+        if not row:
+            logger.warning("check_status_no_record", 
+                          product_id=product_id, 
+                          user_id=str(current_user["id"]),
+                          message="No V0 project record found in database")
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No V0 project found for product_id: {product_id}. Please create a project first using /api/design/create-project"
+            )
         
         v0_project_id, v0_chat_id, current_status, current_url = row
         
         if not v0_project_id:
-            raise HTTPException(status_code=404, detail="No V0 project_id found. Project may not have been created yet.")
+            logger.warning("check_status_no_project_id", 
+                          product_id=product_id, 
+                          user_id=str(current_user["id"]),
+                          v0_chat_id=v0_chat_id,
+                          message="Record found but v0_project_id is NULL")
+            raise HTTPException(
+                status_code=404, 
+                detail="No V0 project_id found in database. Project may not have been created yet. Please create a project first using /api/design/create-project"
+            )
         
         # Load user's V0 API key
         user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
