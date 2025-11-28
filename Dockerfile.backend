@@ -3,12 +3,12 @@
 # Base image is built separately and pushed to GHCR
 
 # Build argument to specify base image
-ARG BASE_IMAGE_TAG=latest
-ARG BASE_IMAGE_REGISTRY=ghcr.io/soumantrivedi/ideaforge-ai
+# For local development: BASE_IMAGE should be ideaforge-ai-backend-base:latest
+# For CI/CD: BASE_IMAGE should be ghcr.io/soumantrivedi/ideaforge-ai/backend-base:latest
+ARG BASE_IMAGE=ghcr.io/soumantrivedi/ideaforge-ai/backend-base:latest
 
-# Use base image from GHCR (will fail if not available, but that's expected in CI/CD)
-# For local development, use local base image: ideaforge-ai-backend-base:latest
-FROM ${BASE_IMAGE_REGISTRY}/backend-base:${BASE_IMAGE_TAG}
+# Use the specified base image
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 

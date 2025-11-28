@@ -72,12 +72,11 @@ build-backend-base-push: build-backend-base ## Build and push backend base image
 
 build-apps: build-backend-base ## Build only backend and frontend images (uses base image, rebuilds base only if needed)
 	@echo "🔨 Building application images (backend + frontend) with tag: $(GIT_SHA)"
-	@echo "   Using base image: ideaforge-ai-backend-base:latest"
+	@echo "   Using local base image: ideaforge-ai-backend-base:latest"
 	@docker build -f Dockerfile.backend \
 		--build-arg GIT_SHA=$(GIT_SHA) \
 		--build-arg VERSION=$(VERSION) \
-		--build-arg BASE_IMAGE_TAG=latest \
-		--build-arg BASE_IMAGE_REGISTRY=ideaforge-ai \
+		--build-arg BASE_IMAGE=ideaforge-ai-backend-base:latest \
 		-t ideaforge-ai-backend:$(GIT_SHA) .
 	@docker build -f Dockerfile.frontend --build-arg GIT_SHA=$(GIT_SHA) --build-arg VERSION=$(VERSION) -t ideaforge-ai-frontend:$(GIT_SHA) .
 	@echo "✅ Application images built: ideaforge-ai-backend:$(GIT_SHA) and ideaforge-ai-frontend:$(GIT_SHA)"

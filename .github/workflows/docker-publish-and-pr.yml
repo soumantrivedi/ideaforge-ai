@@ -201,7 +201,7 @@ jobs:
           build-args: |
             GIT_SHA=${{ needs.prepare.outputs.git-sha }}
             VERSION=${{ needs.prepare.outputs.version }}
-            BASE_IMAGE_TAG=latest
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND_BASE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
