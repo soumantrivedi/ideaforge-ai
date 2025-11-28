@@ -33,12 +33,11 @@ interface ReviewResult {
 
 export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, token, conversationHistory }: ExportPRDModalProps) {
   const [showChatExport, setShowChatExport] = useState(false);
-  const [format, setFormat] = useState<'html' | 'markdown'>('html');
+  const [exportType, setExportType] = useState<'html' | 'pdf' | 'confluence'>('html');
   const [overrideMissing, setOverrideMissing] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [reviewResult, setReviewResult] = useState<ReviewResult | null>(null);
-  const [showConfluence, setShowConfluence] = useState(false);
   const [confluenceSpaceKey, setConfluenceSpaceKey] = useState('');
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{ url?: string; page_id?: string; title?: string } | null>(null);
@@ -88,6 +87,12 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
   const handleExport = async () => {
     if (!token || !productId) return;
 
+    // Handle Confluence publish separately
+    if (exportType === 'confluence') {
+      handlePublishToConfluence();
+      return;
+    }
+
     setIsExporting(true);
 
     try {
@@ -99,24 +104,43 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
         },
         credentials: 'include',
         body: JSON.stringify({
-          format,
+          format: 'html', // Always get HTML from backend
           override_missing: overrideMissing,
         }),
       });
 
       if (response.ok) {
-        if (format === 'markdown') {
-          const text = await response.text();
-          const blob = new Blob([text], { type: 'text/markdown' });
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `PRD_${productId}_${new Date().toISOString().split('T')[0]}.md`;
-          document.body.appendChild(a);
-          a.click();
-          window.URL.revokeObjectURL(url);
-          document.body.removeChild(a);
+        if (exportType === 'pdf') {
+          // For PDF, get HTML and convert to PDF using browser print
+          const htmlBlob = await response.blob();
+          const htmlText = await htmlBlob.text();
+          
+          // Create a new window with the HTML content
+          const printWindow = window.open('', '_blank');
+          if (printWindow) {
+            printWindow.document.write(htmlText);
+            printWindow.document.close();
+            // Wait for content to load, then trigger print
+            printWindow.onload = () => {
+              setTimeout(() => {
+                printWindow.print();
+              }, 250);
+            };
+          } else {
+            // Fallback: download HTML if popup blocked
+            const blob = new Blob([htmlText], { type: 'text/html' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `PRD_${productId}_${new Date().toISOString().split('T')[0]}.html`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+            alert('Popup blocked. HTML file downloaded instead. You can print it to PDF from your browser.');
+          }
         } else {
+          // HTML export
           const blob = await response.blob();
           const url = window.URL.createObjectURL(blob);
           const a = document.createElement('a');
@@ -131,7 +155,9 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
         if (onExportComplete) {
           onExportComplete();
         }
-        onClose();
+        if (exportType !== 'pdf') {
+          onClose();
+        }
       } else {
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Failed to export PRD');
@@ -335,27 +361,40 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
           {/* Export Options */}
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Export Format</label>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Export Options</label>
+              <div className="grid grid-cols-3 gap-3">
+                <label className="flex flex-col items-center gap-2 p-4 border-2 rounded-lg cursor-pointer transition hover:bg-gray-50 border-gray-200 hover:border-blue-300">
                   <input
                     type="radio"
                     value="html"
-                    checked={format === 'html'}
-                    onChange={(e) => setFormat(e.target.value as 'html' | 'markdown')}
+                    checked={exportType === 'html'}
+                    onChange={(e) => setExportType(e.target.value as 'html' | 'pdf' | 'confluence')}
                     className="w-4 h-4 text-blue-600"
                   />
-                  <span>HTML</span>
+                  <FileText className="w-6 h-6 text-blue-600" />
+                  <span className="text-sm font-medium">HTML</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="flex flex-col items-center gap-2 p-4 border-2 rounded-lg cursor-pointer transition hover:bg-gray-50 border-gray-200 hover:border-red-300">
                   <input
                     type="radio"
-                    value="markdown"
-                    checked={format === 'markdown'}
-                    onChange={(e) => setFormat(e.target.value as 'html' | 'markdown')}
-                    className="w-4 h-4 text-blue-600"
+                    value="pdf"
+                    checked={exportType === 'pdf'}
+                    onChange={(e) => setExportType(e.target.value as 'html' | 'pdf' | 'confluence')}
+                    className="w-4 h-4 text-red-600"
                   />
-                  <span>Markdown</span>
+                  <FileText className="w-6 h-6 text-red-600" />
+                  <span className="text-sm font-medium">PDF</span>
+                </label>
+                <label className="flex flex-col items-center gap-2 p-4 border-2 rounded-lg cursor-pointer transition hover:bg-gray-50 border-gray-200 hover:border-green-300">
+                  <input
+                    type="radio"
+                    value="confluence"
+                    checked={exportType === 'confluence'}
+                    onChange={(e) => setExportType(e.target.value as 'html' | 'pdf' | 'confluence')}
+                    className="w-4 h-4 text-green-600"
+                  />
+                  <BookOpen className="w-6 h-6 text-green-600" />
+                  <span className="text-sm font-medium">Confluence</span>
                 </label>
               </div>
             </div>
@@ -377,23 +416,84 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
             )}
 
             {/* Export Button */}
-            <button
-              onClick={handleExport}
-              disabled={isExporting}
-              className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {isExporting ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Exporting...</span>
-                </>
-              ) : (
-                <>
-                  <Download className="w-5 h-5" />
-                  <span>Export PRD ({format.toUpperCase()})</span>
-                </>
-              )}
-            </button>
+            {exportType === 'confluence' ? (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Confluence Space Key
+                  </label>
+                  <input
+                    type="text"
+                    value={confluenceSpaceKey}
+                    onChange={(e) => setConfluenceSpaceKey(e.target.value)}
+                    placeholder="e.g., IDEA"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Enter the space key where the PRD should be published
+                  </p>
+                </div>
+                {publishResult ? (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-green-700 mb-2">
+                      <CheckCircle className="w-5 h-5" />
+                      <span className="font-medium">Published successfully!</span>
+                    </div>
+                    {publishResult.url && (
+                      <a
+                        href={publishResult.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        View in Confluence
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleExport}
+                    disabled={isPublishing || !confluenceSpaceKey.trim()}
+                    className="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    {isPublishing ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span>Publishing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <BookOpen className="w-5 h-5" />
+                        <span>Publish to Confluence</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={handleExport}
+                disabled={isExporting}
+                className={`w-full text-white py-3 px-4 rounded-lg font-medium transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 ${
+                  exportType === 'pdf' 
+                    ? 'bg-red-600 hover:bg-red-700' 
+                    : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                {isExporting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Exporting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-5 h-5" />
+                    <span>Export as {exportType.toUpperCase()}</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
           {/* Chat Export */}
@@ -439,79 +539,6 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
             </div>
           )}
 
-          {/* Confluence Publishing */}
-          <div className="border-t border-gray-200 pt-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <BookOpen className="w-5 h-5" />
-                Publish to Confluence
-              </h3>
-              <button
-                onClick={() => setShowConfluence(!showConfluence)}
-                className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-              >
-                {showConfluence ? 'Hide' : 'Show'}
-              </button>
-            </div>
-
-            {showConfluence && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Confluence Space Key
-                  </label>
-                  <input
-                    type="text"
-                    value={confluenceSpaceKey}
-                    onChange={(e) => setConfluenceSpaceKey(e.target.value)}
-                    placeholder="e.g., IDEA"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Enter the space key where the PRD should be published
-                  </p>
-                </div>
-
-                {publishResult ? (
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <div className="flex items-center gap-2 text-green-700 mb-2">
-                      <CheckCircle className="w-5 h-5" />
-                      <span className="font-medium">Published successfully!</span>
-                    </div>
-                    {publishResult.url && (
-                      <a
-                        href={publishResult.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                        View in Confluence
-                      </a>
-                    )}
-                  </div>
-                ) : (
-                  <button
-                    onClick={handlePublishToConfluence}
-                    disabled={isPublishing || !confluenceSpaceKey.trim()}
-                    className="w-full bg-green-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-green-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    {isPublishing ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        <span>Publishing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <BookOpen className="w-5 h-5" />
-                        <span>Publish to Confluence</span>
-                      </>
-                    )}
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>
