@@ -27,6 +27,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       vite-api-url: ${{ steps.frontend-args.outputs.vite_api_url }}
       is-default-branch: ${{ steps.branch-check.outputs.is-default }}
+      needs-base-rebuild: ${{ steps.check-base-files.outputs.needs-rebuild }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -70,9 +71,38 @@ jobs:
           echo "vite_api_url=$VITE_API_URL" >> $GITHUB_OUTPUT
           echo "VITE_API_URL set to: $VITE_API_URL"
 
+      - name: Check if base image needs rebuild
+        id: check-base-files
+        run: |
+          # Check if this is a manual workflow dispatch (always rebuild)
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "needs-rebuild=true" >> $GITHUB_OUTPUT
+            echo "Manual workflow dispatch - will rebuild base image"
+            exit 0
+          fi
+          
+          # Check if base image files changed
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            # For PRs, check changed files
+            BASE_FILES_CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E "(Dockerfile\.base\.backend|backend/requirements\.txt)" || true)
+          else
+            # For pushes, check last commit
+            BASE_FILES_CHANGED=$(git diff --name-only HEAD~1 HEAD | grep -E "(Dockerfile\.base\.backend|backend/requirements\.txt)" || true)
+          fi
+          
+          if [ -n "$BASE_FILES_CHANGED" ]; then
+            echo "needs-rebuild=true" >> $GITHUB_OUTPUT
+            echo "Base image files changed - will rebuild:"
+            echo "$BASE_FILES_CHANGED"
+          else
+            echo "needs-rebuild=false" >> $GITHUB_OUTPUT
+            echo "No base image file changes detected - skipping base image rebuild"
+          fi
+
   build-backend-base:
     needs: prepare
     runs-on: ubuntu-latest
+    if: needs.prepare.outputs.needs-base-rebuild == 'true' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       packages: write
@@ -119,9 +149,20 @@ jobs:
           fi
           echo "   Tags: ${{ steps.meta-backend-base.outputs.tags }}"
 
-  build-backend:
-    needs: [prepare, build-backend-base]
+  check-backend-base:
+    needs: prepare
     runs-on: ubuntu-latest
+    if: needs.prepare.outputs.needs-base-rebuild != 'true' && github.event_name != 'workflow_dispatch'
+    steps:
+      - name: Skip base image build
+        run: |
+          echo "⏭️  Skipping base image build - no relevant file changes detected"
+          echo "Base image will be reused from previous build"
+
+  build-backend:
+    needs: [prepare, build-backend-base, check-backend-base]
+    runs-on: ubuntu-latest
+    if: always() && (needs.build-backend-base.result == 'success' || needs.build-backend-base.result == 'skipped') && (needs.check-backend-base.result == 'success' || needs.check-backend-base.result == 'skipped')
     permissions:
       contents: read
       packages: write
@@ -230,7 +271,7 @@ jobs:
           echo "   Tags: ${{ steps.meta-frontend.outputs.tags }}"
 
   prepare-release-notes:
-    needs: [prepare, build-backend-base, build-backend, build-frontend]
+    needs: [prepare, build-backend-base, check-backend-base, build-backend, build-frontend]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -318,7 +359,7 @@ jobs:
           echo "   File: release-notes.md"
 
   summary:
-    needs: [prepare, build-backend-base, build-backend, build-frontend, prepare-release-notes]
+    needs: [prepare, build-backend-base, check-backend-base, build-backend, build-frontend, prepare-release-notes]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -329,7 +370,11 @@ jobs:
           echo "### ✅ Completed Jobs" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Prepare**: Metadata and build args prepared" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ **Build Backend Base**: Base image built and pushed" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.build-backend-base.result }}" == "success" ]; then
+            echo "- ✅ **Build Backend Base**: Base image built and pushed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⏭️  **Build Backend Base**: Skipped (no file changes)" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- ✅ **Build Backend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Build Frontend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Release Notes**: Release notes prepared" >> $GITHUB_STEP_SUMMARY

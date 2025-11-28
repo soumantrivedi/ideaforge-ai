@@ -28,10 +28,35 @@ version: ## Show current version information
 	@echo "Version: $(VERSION)"
 	@echo "Image Tag: $(IMAGE_TAG)"
 
-build-backend-base: ## Build backend base image (contains system dependencies and Python packages)
-	@echo "🔨 Building backend base image..."
-	@docker build -f Dockerfile.base.backend -t ideaforge-ai-backend-base:latest .
-	@echo "✅ Backend base image built: ideaforge-ai-backend-base:latest"
+build-backend-base: ## Build backend base image only if Dockerfile.base.backend or requirements.txt changed
+	@echo "🔍 Checking if base image needs rebuild..."
+	@if [ ! -f Dockerfile.base.backend ] || [ ! -f backend/requirements.txt ]; then \
+		echo "⚠️  Required files not found. Building base image..."; \
+		docker build -f Dockerfile.base.backend -t ideaforge-ai-backend-base:latest .; \
+		echo "✅ Backend base image built: ideaforge-ai-backend-base:latest"; \
+		exit 0; \
+	fi
+	@BASE_IMAGE_EXISTS=$$(docker images -q ideaforge-ai-backend-base:latest 2>/dev/null); \
+	if [ -z "$$BASE_IMAGE_EXISTS" ]; then \
+		echo "📦 Base image not found. Building..."; \
+		docker build -f Dockerfile.base.backend -t ideaforge-ai-backend-base:latest .; \
+		echo "✅ Backend base image built: ideaforge-ai-backend-base:latest"; \
+	else \
+		DOCKERFILE_TIME=$$(stat -f %m Dockerfile.base.backend 2>/dev/null || stat -c %Y Dockerfile.base.backend 2>/dev/null); \
+		REQUIREMENTS_TIME=$$(stat -f %m backend/requirements.txt 2>/dev/null || stat -c %Y backend/requirements.txt 2>/dev/null); \
+		IMAGE_TIME=$$(docker inspect -f '{{ .Created }}' ideaforge-ai-backend-base:latest 2>/dev/null | xargs -I {} date -d {} +%s 2>/dev/null || docker inspect -f '{{ .Created }}' ideaforge-ai-backend-base:latest 2>/dev/null | xargs -I {} date -j -f "%Y-%m-%dT%H:%M:%S" {} +%s 2>/dev/null || echo "0"); \
+		if [ -z "$$IMAGE_TIME" ] || [ "$$IMAGE_TIME" = "0" ]; then \
+			echo "📦 Cannot determine image age. Rebuilding to be safe..."; \
+			docker build -f Dockerfile.base.backend -t ideaforge-ai-backend-base:latest .; \
+			echo "✅ Backend base image built: ideaforge-ai-backend-base:latest"; \
+		elif [ "$$DOCKERFILE_TIME" -gt "$$IMAGE_TIME" ] || [ "$$REQUIREMENTS_TIME" -gt "$$IMAGE_TIME" ]; then \
+			echo "📝 Base image files changed. Rebuilding..."; \
+			docker build -f Dockerfile.base.backend -t ideaforge-ai-backend-base:latest .; \
+			echo "✅ Backend base image rebuilt: ideaforge-ai-backend-base:latest"; \
+		else \
+			echo "✅ Base image is up to date. Skipping rebuild."; \
+		fi \
+	fi
 
 build-backend-base-push: build-backend-base ## Build and push backend base image to GHCR
 	@echo "📤 Pushing backend base image to GHCR..."
@@ -45,9 +70,9 @@ build-backend-base-push: build-backend-base ## Build and push backend base image
 	@docker push ghcr.io/soumantrivedi/ideaforge-ai/backend-base:latest
 	@echo "✅ Backend base image pushed to GHCR"
 
-build-apps: build-backend-base ## Build only backend and frontend images (uses base image)
+build-apps: build-backend-base ## Build only backend and frontend images (uses base image, rebuilds base only if needed)
 	@echo "🔨 Building application images (backend + frontend) with tag: $(GIT_SHA)"
-	@echo "   Using local base image: ideaforge-ai-backend-base:latest"
+	@echo "   Using base image: ideaforge-ai-backend-base:latest"
 	@docker build -f Dockerfile.backend \
 		--build-arg GIT_SHA=$(GIT_SHA) \
 		--build-arg VERSION=$(VERSION) \
