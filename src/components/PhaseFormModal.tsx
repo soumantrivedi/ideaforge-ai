@@ -1223,6 +1223,7 @@ export function PhaseFormModal({
       }
       
       // For V0, use new two-step workflow: create-project then submit-chat
+      // This ensures immediate projectId return without waiting for generation
       if (provider === 'v0') {
         // Step 1: Create/get project (returns projectId immediately)
         const createProjectResponse = await fetch(`${API_URL}/api/design/create-project`, {
