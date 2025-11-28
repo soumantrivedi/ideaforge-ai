@@ -260,14 +260,13 @@ async def generate_design_mockup(
             raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")
         
         # Save mockup to database (with error handling for missing table)
+        # Rollback any previous failed transaction first
         try:
-            insert_query = text("""
-                INSERT INTO design_mockups 
-                (product_id, phase_submission_id, user_id, provider, prompt, image_url, thumbnail_url, project_url, metadata)
-                VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, :image_url, :thumbnail_url, :project_url, CAST(:metadata AS jsonb))
-                RETURNING id, created_at
-            """)
-            
+            await db.rollback()
+        except:
+            pass  # Ignore if no transaction to rollback
+        
+        try:
             # Extract URLs and V0-specific fields from result
             import json
             # Handle different result formats for V0 vs Lovable
@@ -281,10 +280,17 @@ async def generate_design_mockup(
             else:  # V0
                 image_url = result.get("image_url") or result.get("thumbnail_url") or ""
                 thumbnail_url = result.get("thumbnail_url") or image_url
-                project_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
+                base_project_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
+                
+                # For V0 prototypes, the design is usually at project_url/design
+                if base_project_url and "vusercontent.net" in base_project_url and not base_project_url.endswith("/design"):
+                    project_url = f"{base_project_url.rstrip('/')}/design"
+                else:
+                    project_url = base_project_url
+                
                 v0_chat_id = result.get("chat_id")
                 v0_project_id = result.get("project_id")
-                project_status = result.get("project_status", "in_progress")
+                project_status = result.get("project_status", "submitted")  # Default to "submitted" for new requests
             
             # Convert metadata to JSON string
             metadata_json = json.dumps(result) if isinstance(result, dict) else json.dumps({"result": str(result)})
@@ -317,6 +323,12 @@ async def generate_design_mockup(
                         "metadata": metadata_json
                     })
                 else:
+                    insert_query = text("""
+                        INSERT INTO design_mockups 
+                        (product_id, phase_submission_id, user_id, provider, prompt, image_url, thumbnail_url, project_url, metadata)
+                        VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, :image_url, :thumbnail_url, :project_url, CAST(:metadata AS jsonb))
+                        RETURNING id, created_at
+                    """)
                     insert_result = await db.execute(insert_query, {
                         "product_id": request.product_id,
                         "phase_submission_id": request.phase_submission_id,
@@ -332,6 +344,13 @@ async def generate_design_mockup(
                 # Fallback if V0 tracking columns don't exist
                 if "column" in str(col_error).lower() and ("v0_chat_id" in str(col_error) or "project_status" in str(col_error)):
                     logger.warning("v0_tracking_columns_not_found_in_generate_mockup", error=str(col_error))
+                    await db.rollback()
+                    insert_query = text("""
+                        INSERT INTO design_mockups 
+                        (product_id, phase_submission_id, user_id, provider, prompt, image_url, thumbnail_url, project_url, metadata)
+                        VALUES (:product_id, :phase_submission_id, :user_id, :provider, :prompt, :image_url, :thumbnail_url, :project_url, CAST(:metadata AS jsonb))
+                        RETURNING id, created_at
+                    """)
                     insert_result = await db.execute(insert_query, {
                         "product_id": request.product_id,
                         "phase_submission_id": request.phase_submission_id,
@@ -344,6 +363,7 @@ async def generate_design_mockup(
                         "metadata": metadata_json
                     })
                 else:
+                    await db.rollback()
                     raise
             
             await db.commit()
@@ -352,22 +372,31 @@ async def generate_design_mockup(
             
             # No background polling - user can check status manually
         except Exception as db_error:
+            await db.rollback()
             # If table doesn't exist, log but don't fail
             if "does not exist" in str(db_error) or "relation" in str(db_error).lower():
                 logger.warning("design_mockups_table_not_found", error=str(db_error))
                 mockup_id = None
             else:
-                await db.rollback()
-                raise
+                logger.error("error_saving_design_mockup", error=str(db_error), error_type=type(db_error).__name__)
+                raise HTTPException(status_code=500, detail=f"Failed to save design mockup: {str(db_error)}")
         
         # Return comprehensive project details for chatbot response
         # For V0, always return "submitted" status - user can check status separately
+        base_response_url = result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or ""
+        
+        # For V0 prototypes, the design is usually at project_url/design
+        if request.provider == "v0" and base_response_url and "vusercontent.net" in base_response_url and not base_response_url.endswith("/design"):
+            response_project_url = f"{base_response_url.rstrip('/')}/design"
+        else:
+            response_project_url = base_response_url
+        
         response_data = {
             "id": mockup_id,
             "provider": request.provider,
             "image_url": result.get("image_url") or result.get("thumbnail_url") or "",
             "thumbnail_url": result.get("thumbnail_url") or result.get("image_url") or "",
-            "project_url": result.get("project_url") or result.get("demo_url") or result.get("web_url") or result.get("url") or "",
+            "project_url": response_project_url,
             "thumbnails": result.get("thumbnails", []),  # For Lovable multi-thumbnail support
             "code": result.get("code", ""),  # Generated code for V0
             "created_at": None,
@@ -678,7 +707,13 @@ async def check_project_status(
                             # Update status if we have URLs
                             if demo_url or web_url or (files and len(files) > 0):
                                 new_status = "completed"
-                                new_project_url = demo_url or web_url
+                                base_project_url = demo_url or web_url
+                                
+                                # For V0 prototypes, the design is usually at project_url/design
+                                if base_project_url and "vusercontent.net" in base_project_url and not base_project_url.endswith("/design"):
+                                    new_project_url = f"{base_project_url.rstrip('/')}/design"
+                                else:
+                                    new_project_url = base_project_url
                                 
                                 # Update database
                                 update_query = text("""

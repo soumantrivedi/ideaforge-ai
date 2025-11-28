@@ -713,7 +713,14 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                 
                 # Return immediately with project details - no polling
                 # Even if prototype isn't ready, we have chat_id and can check status later
-                initial_project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                # For V0 prototypes, the design is usually at project_url/design
+                base_project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                if base_project_url and "vusercontent.net" in base_project_url and not base_project_url.endswith("/design"):
+                    # Append /design to vusercontent.net URLs
+                    initial_project_url = f"{base_project_url.rstrip('/')}/design"
+                else:
+                    initial_project_url = base_project_url
+                
                 initial_status = "completed" if (demo_url or web_url or files) else "in_progress"
                 project_name = result.get("name") or f"V0 Project {chat_id[:8] if chat_id else 'N/A'}"
                 
@@ -794,7 +801,14 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
             if poll_result.get("ready"):
                 final_web_url = poll_result.get("web_url")
                 final_demo_url = poll_result.get("demo_url")
-                final_project_url = final_demo_url or final_web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                base_final_url = final_demo_url or final_web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                
+                # For V0 prototypes, the design is usually at project_url/design
+                if base_final_url and "vusercontent.net" in base_final_url and not base_final_url.endswith("/design"):
+                    final_project_url = f"{base_final_url.rstrip('/')}/design"
+                else:
+                    final_project_url = base_final_url
+                
                 final_status = "completed"
                 
                 logger.info("v0_background_polling_completed",
@@ -804,7 +818,14 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
                            poll_count=poll_result.get("poll_count", 0),
                            elapsed_seconds=poll_result.get("elapsed_seconds", 0))
             else:
-                final_project_url = poll_result.get("web_url") or poll_result.get("demo_url") or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                base_final_url = poll_result.get("web_url") or poll_result.get("demo_url") or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                
+                # For V0 prototypes, the design is usually at project_url/design
+                if base_final_url and "vusercontent.net" in base_final_url and not base_final_url.endswith("/design"):
+                    final_project_url = f"{base_final_url.rstrip('/')}/design"
+                else:
+                    final_project_url = base_final_url
+                
                 final_status = "timeout" if poll_result.get("timeout") else "in_progress"
                 
                 logger.warning("v0_background_polling_timeout",

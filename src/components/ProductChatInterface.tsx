@@ -82,7 +82,8 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
           return updatedMessages;
         });
 
-        // Auto-send follow-up question asking if user wants to process the content
+        // Add follow-up question as assistant message asking if user wants to process the content
+        // DO NOT auto-send - wait for user confirmation
         if (customEvent.detail.allFieldsCompleted && customEvent.detail.phaseName) {
           const phaseName = customEvent.detail.phaseName;
           // Map phase names to processing questions
@@ -97,13 +98,36 @@ export function ProductChatInterface({ productId, sessionId }: ProductChatInterf
 
           const followUpQuestion = processingQuestions[phaseName] || `Do you want me to process this ${phaseName} phase content?`;
           
-          // Wait a moment for the UI to update, then auto-send the follow-up question
-          // Use a ref to access the latest handleSendMessage
+          // Add the question as an assistant message (not auto-send as user message)
+          // This way it appears in chat but doesn't trigger processing until user confirms
           setTimeout(() => {
-            if (token && productId) {
-              handleSendMessage(followUpQuestion);
-            }
-          }, 800);
+            const assistantMessage: MultiAgentMessage = {
+              role: 'assistant',
+              content: followUpQuestion,
+              timestamp: new Date().toISOString(),
+            };
+            
+            setMessages((prev) => {
+              // Avoid duplicates by checking last message
+              const lastMessage = prev[prev.length - 1];
+              if (lastMessage && lastMessage.content === assistantMessage.content) {
+                console.log('ProductChatInterface: Duplicate assistant question detected, skipping');
+                return prev;
+              }
+              console.log('ProductChatInterface: Adding assistant follow-up question', {
+                totalMessages: prev.length + 1
+              });
+              const updatedMessages = [...prev, assistantMessage];
+              // Save to sessionStorage
+              saveChatSession(productId, {
+                messages: updatedMessages,
+                agentInteractions: agentInteractions,
+                activeAgents: activeAgents,
+                coordinationMode: coordinationMode,
+              });
+              return updatedMessages;
+            });
+          }, 500);
         }
       } else {
         console.warn('ProductChatInterface: Invalid phaseFormGenerated event', {
