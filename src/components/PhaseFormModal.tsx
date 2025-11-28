@@ -1266,7 +1266,7 @@ export function PhaseFormModal({
             phase_submission_id: selectedSubmissionId,
             provider: 'v0',
             prompt: prompt,
-            project_id: projectIdValue, // Use projectId from Step 1
+            projectId: projectIdValue, // Use projectId (camelCase) to match V0 API format
           }),
         });
 

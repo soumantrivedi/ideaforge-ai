@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from typing import List, Dict, Any, Optional
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import structlog
 import asyncio
 
@@ -66,7 +66,10 @@ class SubmitChatRequest(BaseModel):
     phase_submission_id: Optional[str] = None
     provider: str  # "v0" or "lovable"
     prompt: str
-    project_id: str  # Required - projectId from create-project response
+    project_id: str = Field(..., alias="projectId")  # Required - accepts both project_id (snake_case) and projectId (camelCase)
+    
+    class Config:
+        populate_by_name = True  # Allow both field name and alias
 
 
 @router.post("/generate-prompt")
@@ -330,44 +333,107 @@ async def poll_v0_status_background(
 @router.post("/generate-mockup")
 async def generate_design_mockup(
     request: GenerateDesignRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Generate a design mockup using V0 or Lovable API. Returns immediately with project details. Starts background polling for V0."""
+    """
+    Generate a design mockup using V0 or Lovable API.
+    
+    For V0: Delegates to create-project and submit-chat endpoints (new workflow).
+    For Lovable: Uses the original generate-mockup flow.
+    
+    DEPRECATED for V0: Use /create-project and /submit-chat endpoints instead.
+    """
     try:
         from backend.services.api_key_loader import load_user_api_keys_from_db
         
         # Load user-specific API keys
         user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
         
-        # Generate mockup using appropriate agent
+        # For V0, delegate to the new two-step workflow
         if request.provider == "v0":
             v0_key = user_keys.get("v0") or settings.v0_api_key
             if not v0_key:
                 raise HTTPException(status_code=400, detail="V0 API key is not configured. Please configure it in Settings.")
             
-            # Use AgnoV0Agent for immediate response - returns immediately after submission
-            from backend.agents import AGNO_AVAILABLE
-            if AGNO_AVAILABLE:
-                agno_v0_agent = AgnoV0Agent()
-                agno_v0_agent.set_v0_api_key(v0_key)
-                # Use create_v0_project_with_api - returns immediately after creating chat
-                # No timeout waiting - user can check status separately
-                result = await agno_v0_agent.create_v0_project_with_api(
-                    v0_prompt=request.prompt,
-                    v0_api_key=v0_key,
-                    user_id=str(current_user["id"]),
-                    product_id=request.product_id,
-                    db=db,
-                    create_new=False  # Check for existing prototypes
+            # Step 1: Create/get project
+            agno_v0_agent = AgnoV0Agent()
+            agno_v0_agent.set_v0_api_key(v0_key.strip())
+            project_result = await agno_v0_agent.get_or_create_v0_project(
+                v0_api_key=v0_key.strip(),
+                user_id=str(current_user["id"]),
+                product_id=request.product_id,
+                db=db,
+                create_new=False
+            )
+            
+            project_id = project_result.get("projectId")
+            if not project_id:
+                raise HTTPException(status_code=500, detail="Failed to get projectId from create-project")
+            
+            # Step 2: Submit chat to project
+            chat_result = await agno_v0_agent.submit_chat_to_v0_project(
+                v0_prompt=request.prompt,
+                project_id=project_id,
+                v0_api_key=v0_key.strip(),
+                user_id=str(current_user["id"]),
+                product_id=request.product_id
+            )
+            
+            # Store in database
+            async with db.begin():
+                await db.execute(
+                    text("""
+                        INSERT INTO design_mockups 
+                        (product_id, phase_submission_id, user_id, provider, v0_project_id, v0_chat_id, project_status, metadata, created_at)
+                        VALUES (:product_id, :phase_submission_id, :user_id, :provider, :v0_project_id, :v0_chat_id, :project_status, :metadata, NOW())
+                        ON CONFLICT (product_id, phase_submission_id, user_id, provider)
+                        DO UPDATE SET
+                            v0_project_id = EXCLUDED.v0_project_id,
+                            v0_chat_id = EXCLUDED.v0_chat_id,
+                            project_status = EXCLUDED.project_status,
+                            metadata = EXCLUDED.metadata,
+                            updated_at = NOW()
+                    """),
+                    {
+                        "product_id": request.product_id,
+                        "phase_submission_id": request.phase_submission_id,
+                        "user_id": str(current_user["id"]),
+                        "provider": "v0",
+                        "v0_project_id": project_id,
+                        "v0_chat_id": chat_result.get("chat_id"),
+                        "project_status": "in_progress",
+                        "metadata": {
+                            "prompt": request.prompt,
+                            "project_url": project_result.get("project_url"),
+                        }
+                    }
                 )
-            else:
-                # Fallback to legacy agent
-                result = await v0_agent.generate_design_mockup(
-                    v0_prompt=request.prompt,
-                    v0_api_key=v0_key,
-                    user_id=str(current_user["id"])
-                )
+            
+            # Start background status checking
+            background_tasks.add_task(
+                check_v0_status_background,
+                v0_key.strip(),
+                project_id,
+                request.product_id,
+                str(current_user["id"]),
+                db
+            )
+            
+            return {
+                "id": None,
+                "provider": "v0",
+                "projectId": project_id,
+                "v0_project_id": project_id,
+                "project_url": project_result.get("project_url"),
+                "project_status": "in_progress",
+                "v0_chat_id": chat_result.get("chat_id"),
+                "message": "V0 prototype request submitted. Use /check-status to monitor progress.",
+                "status": "submitted"
+            }
+        
+        # For Lovable, use the original flow
         elif request.provider == "lovable":
             # Use Lovable Link Generator (no API key needed)
             # Based on: https://docs.lovable.dev/integrations/build-with-url
