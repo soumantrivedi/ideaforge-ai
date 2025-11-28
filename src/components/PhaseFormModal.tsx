@@ -6,6 +6,7 @@ import { DesignMockupGallery } from './DesignMockupGallery';
 import { ThumbnailSelector } from './ThumbnailSelector';
 import { useAuth } from '../contexts/AuthContext';
 import { getValidatedApiUrl } from '../lib/runtime-config';
+import { ErrorModal } from './ErrorModal';
 
 const API_URL = getValidatedApiUrl();
 
@@ -45,6 +46,20 @@ export function PhaseFormModal({
     message?: string;
   } | null>(null);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<string | undefined>();
+  const [errorModal, setErrorModal] = useState<{
+    isOpen: boolean;
+    error: {
+      title: string;
+      message: string;
+      type?: 'quota' | 'rate_limit' | 'auth' | 'server' | 'network' | 'generic';
+      actionUrl?: string;
+      actionText?: string;
+      onAction?: () => void;
+    };
+  }>({
+    isOpen: false,
+    error: { title: '', message: '' }
+  });
   const [mockupRefreshTrigger, setMockupRefreshTrigger] = useState(0);
   const [lovableThumbnails, setLovableThumbnails] = useState<any[]>([]);
   const [showThumbnailSelector, setShowThumbnailSelector] = useState(false);
@@ -932,8 +947,92 @@ export function PhaseFormModal({
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to generate prompt: ${response.status} - ${errorText}`);
+        let errorText = '';
+        let errorDetails: any = null;
+        
+        try {
+          errorText = await response.text();
+          try {
+            errorDetails = JSON.parse(errorText);
+          } catch {
+            // Not JSON, use as is
+          }
+        } catch (e) {
+          errorText = 'Unknown error occurred';
+        }
+
+        // Parse error details
+        const errorMessage = errorDetails?.detail || errorText || 'Unknown error';
+        const statusCode = response.status;
+
+        // Determine error type and create user-friendly message
+        let errorType: 'quota' | 'rate_limit' | 'auth' | 'server' | 'network' | 'generic' = 'generic';
+        let title = 'Error Generating Prompt';
+        let message = errorMessage;
+        let actionUrl: string | undefined;
+        let actionText: string | undefined;
+        let onAction: (() => void) | undefined;
+
+        // Check for quota/rate limit errors
+        const errorLower = errorMessage.toLowerCase();
+        if (errorLower.includes('quota') || errorLower.includes('exceeded') || errorLower.includes('insufficient_quota') || statusCode === 429) {
+          errorType = 'quota';
+          title = 'API Quota Exceeded';
+          message = errorMessage.includes('OpenAI') 
+            ? 'Your OpenAI API quota has been exceeded. Please check your billing details or try using another AI provider (Anthropic Claude or Google Gemini).'
+            : errorMessage.includes('Anthropic') || errorMessage.includes('Claude')
+            ? 'Your Anthropic Claude API quota has been exceeded. Please check your billing details or try using another AI provider (OpenAI or Google Gemini).'
+            : errorMessage;
+          actionUrl = errorMessage.includes('OpenAI') 
+            ? 'https://platform.openai.com/account/billing'
+            : errorMessage.includes('Anthropic') || errorMessage.includes('Claude')
+            ? 'https://console.anthropic.com/settings/billing'
+            : undefined;
+          actionText = 'Check Billing';
+          onAction = onNavigateToSettings ? () => {
+            setErrorModal({ isOpen: false, error: { title: '', message: '' } });
+            onNavigateToSettings();
+          } : undefined;
+        } else if (errorLower.includes('rate limit') || statusCode === 429) {
+          errorType = 'rate_limit';
+          title = 'Rate Limit Exceeded';
+          message = 'Too many requests. Please wait a moment and try again.';
+        } else if (statusCode === 401 || errorLower.includes('authentication') || errorLower.includes('unauthorized') || errorLower.includes('api key')) {
+          errorType = 'auth';
+          title = 'Authentication Error';
+          message = errorMessage.includes('API key') 
+            ? 'Your API key is invalid or expired. Please check your API keys in Settings.'
+            : errorMessage;
+          onAction = onNavigateToSettings ? () => {
+            setErrorModal({ isOpen: false, error: { title: '', message: '' } });
+            onNavigateToSettings();
+          } : undefined;
+          actionText = 'Go to Settings';
+        } else if (statusCode >= 500 && statusCode < 600) {
+          errorType = 'server';
+          title = 'Server Error';
+          message = errorMessage || 'An internal server error occurred. Please try again later or contact support if the problem persists.';
+        } else if (statusCode === 0 || errorLower.includes('network') || errorLower.includes('fetch')) {
+          errorType = 'network';
+          title = 'Network Error';
+          message = 'Unable to connect to the server. Please check your internet connection and try again.';
+        } else {
+          title = 'Error Generating Prompt';
+          message = errorMessage || `An error occurred (${statusCode}). Please try again.`;
+        }
+
+        setErrorModal({
+          isOpen: true,
+          error: {
+            title,
+            message,
+            type: errorType,
+            actionUrl,
+            actionText,
+            onAction
+          }
+        });
+        return;
       }
 
       const result = await response.json();
@@ -950,7 +1049,19 @@ export function PhaseFormModal({
       });
     } catch (error) {
       console.error(`Error generating ${provider} prompt:`, error);
-      alert(`Failed to generate ${provider} prompt: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      // Check if error modal is already showing (from response parsing)
+      if (!errorModal.isOpen) {
+        setErrorModal({
+          isOpen: true,
+          error: {
+            title: 'Error Generating Prompt',
+            message: errorMessage,
+            type: 'generic'
+          }
+        });
+      }
     } finally {
       setIsGeneratingPrompt({ ...isGeneratingPrompt, [provider]: false });
     }
@@ -2158,6 +2269,13 @@ export function PhaseFormModal({
           provider="lovable"
         />
       )}
+      
+      {/* Error Modal */}
+      <ErrorModal
+        isOpen={errorModal.isOpen}
+        onClose={() => setErrorModal({ isOpen: false, error: { title: '', message: '' } })}
+        error={errorModal.error}
+      />
     </div>
   </div>
 );
