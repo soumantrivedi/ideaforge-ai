@@ -1222,9 +1222,10 @@ export function PhaseFormModal({
         }
       }
       
-      // For V0, use new create-project endpoint (project-based workflow)
+      // For V0, use new two-step workflow: create-project then submit-chat
       if (provider === 'v0') {
-        const response = await fetch(`${API_URL}/api/design/create-project`, {
+        // Step 1: Create/get project (returns projectId immediately)
+        const createProjectResponse = await fetch(`${API_URL}/api/design/create-project`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -1234,39 +1235,58 @@ export function PhaseFormModal({
             product_id: productId,
             phase_submission_id: selectedSubmissionId,
             provider: 'v0',
-            prompt,
+            prompt: prompt, // Prompt is optional for create-project, but we pass it for storage
             create_new: false, // Reuse existing project if available
             use_multi_agent: false, // Can be enabled later if needed
           }),
         });
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Failed to create V0 project: ${response.status} - ${errorText}`);
+        if (!createProjectResponse.ok) {
+          const errorText = await createProjectResponse.text();
+          throw new Error(`Failed to create V0 project: ${createProjectResponse.status} - ${errorText}`);
         }
 
-        const result = await response.json();
+        const projectResult = await createProjectResponse.json();
+        const projectIdValue = projectResult.projectId || projectResult.v0_project_id;
         
-        // Update status based on response
-        const projectStatus = result.project_status || 'in_progress';
-        const isCompleted = projectStatus === 'completed' || result.is_existing;
-        const projectId = result.v0_project_id;
+        if (!projectIdValue) {
+          throw new Error('Failed to get projectId from create-project response');
+        }
         
-        // Use projectId (camelCase) from API response, fallback to v0_project_id
-        const projectIdValue = result.projectId || result.v0_project_id;
+        // Step 2: Submit chat to project (doesn't wait for response)
+        const submitChatResponse = await fetch(`${API_URL}/api/design/submit-chat`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            product_id: productId,
+            phase_submission_id: selectedSubmissionId,
+            provider: 'v0',
+            prompt: prompt,
+            project_id: projectIdValue, // Use projectId from Step 1
+          }),
+        });
+
+        if (!submitChatResponse.ok) {
+          const errorText = await submitChatResponse.text();
+          throw new Error(`Failed to submit chat: ${submitChatResponse.status} - ${errorText}`);
+        }
+
+        const chatResult = await submitChatResponse.json();
         
+        // Update status - chat is submitted, status is in_progress
         setV0PrototypeStatus({
-          status: isCompleted ? 'completed' : 'in_progress',
-          project_url: result.project_url,
-          project_id: projectIdValue, // Store projectId
+          status: 'in_progress',
+          project_url: projectResult.project_url,
+          project_id: projectIdValue,
           last_prompt: prompt, // Store last submitted prompt
-          message: projectIdValue 
-            ? `V0 project created! Project ID: ${projectIdValue}. Use "Check Status" to see when prototype is ready.`
-            : 'V0 prototype request submitted. Use "Check Status" to see when it\'s ready.'
+          message: `V0 chat submitted! Project ID: ${projectIdValue}. Use "Check Status" to see when prototype is ready.`
         });
         
         // Show success message
-        const v0Message = `V0 prototype request submitted!\n\n**Project ID:** ${result.v0_project_id || 'N/A'}\n**Prompt Used:**\n${prompt}\n\nUse "Check Status" to see when your prototype is ready.`;
+        const v0Message = `V0 prototype request submitted!\n\n**Project ID:** ${projectIdValue}\n**Prompt Used:**\n${prompt}\n\nUse "Check Status" to see when your prototype is ready.`;
         
         window.dispatchEvent(new CustomEvent('phaseFormGenerated', {
           detail: {
