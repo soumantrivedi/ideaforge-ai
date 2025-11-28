@@ -404,7 +404,13 @@ jobs:
           echo "### ✅ Completed Jobs" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Prepare**: Metadata and build args prepared" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ **Build Backend Base**: Base image built and available" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.build-backend-base.result }}" == "success" ]; then
+            echo "- ✅ **Build Backend Base**: Base image built and pushed" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.ensure-base-image-exists.result }}" == "success" ]; then
+            echo "- ⏭️  **Build Backend Base**: Skipped (using existing base image from GHCR)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️  **Build Backend Base**: Skipped or failed" >> $GITHUB_STEP_SUMMARY
+          fi
           echo "- ✅ **Build Backend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Build Frontend**: Image built and pushed" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ **Release Notes**: Release notes prepared" >> $GITHUB_STEP_SUMMARY
