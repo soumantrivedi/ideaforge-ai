@@ -55,10 +55,18 @@ class CreateProjectRequest(BaseModel):
     product_id: str
     phase_submission_id: Optional[str] = None
     provider: str  # "v0" or "lovable"
-    prompt: str
-    use_multi_agent: bool = True  # Use multi-agent to enhance prompt
+    prompt: Optional[str] = None  # Optional for create-project (only needed for storage)
+    use_multi_agent: bool = False  # Not used in create-project (prompt enhancement happens in submit-chat)
     context: Optional[Dict[str, Any]] = None
-    create_new: bool = False  # If False, reuse existing prototype; if True, create new one
+    create_new: bool = False  # If False, reuse existing project; if True, create new one
+
+
+class SubmitChatRequest(BaseModel):
+    product_id: str
+    phase_submission_id: Optional[str] = None
+    provider: str  # "v0" or "lovable"
+    prompt: str
+    project_id: str  # Required - projectId from create-project response
 
 
 @router.post("/generate-prompt")
