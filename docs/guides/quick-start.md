@@ -1,16 +1,18 @@
 # Quick Start Guide
 
-Everything you need to get IdeaForge AI running locally in under 10 minutes.
+Everything you need to get IdeaForge AI running locally in under 10 minutes.
 
 ## 1. Prerequisites
 
-- Docker 20.10+ and Docker Compose v2
-- GNU Make (macOS/Linux include it; Windows users can run via WSL or use the raw `docker-compose` commands)
+- **Docker Desktop** 20.10+ (must be running)
+- **GNU Make** (macOS/Linux include it; Windows users can run via WSL)
+- **kubectl** and **kind** installed
 - At least one API key (OpenAI, Anthropic Claude, or Google Gemini)
 
 ```bash
 docker --version
-docker-compose --version
+kubectl version --client
+kind version
 ```
 
 ## 2. Clone & Configure
@@ -19,90 +21,186 @@ docker-compose --version
 git clone <repo> ideaforge-ai
 cd ideaforge-ai
 
-# copy defaults and edit if needed
-cp .env.example .env
+# Copy environment template for Kind cluster
+cp env.kind.example env.kind
+
+# Edit env.kind with your API keys (at least one required)
+nano env.kind  # or use your preferred editor
 ```
 
-Environment variables:
-- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY` are optional but you must supply at least one to use the agents.
-- Database credentials already match the in-container Postgres service (`postgresql+asyncpg://agentic_pm:devpassword@postgres:5432/agentic_pm_db`).
+**Required Environment Variables:**
+- At least one of: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`
+- Optional: `V0_API_KEY`, `GITHUB_TOKEN`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`, `ATLASSIAN_CLOUD_ID`
 
-## 3. Launch the stack
+**Important:** The `kind-load-secrets` make target automatically loads all variables from `env.kind` (or `.env` if `env.kind` doesn't exist) into Kubernetes secrets. This ensures all API keys and configuration are available to the application.
+
+## 3. Build & Deploy
+
+### Option A: Full Automated Deployment (Recommended)
 
 ```bash
-make build     # builds backend/frontend/postgres images
-make up        # starts backend, frontend, Postgres, Redis
-make health    # shows health info + docker-compose ps
+# Build application images
+make build-apps
+
+# Complete deployment (creates cluster, installs ingress, loads secrets, deploys, runs migrations)
+make kind-deploy-full
 ```
 
-Services:
-- Frontend: http://localhost:3001
-- Backend API: http://localhost:8000
-- API docs: http://localhost:8000/docs
+This single command handles everything:
+1. ✅ Creates Kind cluster
+2. ✅ Sets up NGINX ingress controller
+3. ✅ Builds Docker images
+4. ✅ Loads images into Kind cluster
+5. ✅ **Loads secrets from env.kind file** (via `kind-load-secrets`)
+6. ✅ Creates ConfigMaps for database migrations
+7. ✅ Deploys all services
+8. ✅ **Runs database migrations** (via `db-setup` job)
+9. ✅ Seeds database with demo accounts
+10. ✅ Initializes Agno framework
+11. ✅ Verifies access
 
-## 4. Configure & Verify API Keys
+### Option B: Step-by-Step Deployment
 
-1. Open the UI at **http://localhost:3001** → **Settings**.
-2. Enter one or more provider keys.
-3. Use the **Verify Key** button. The UI calls `/api/providers/verify` and shows success/failure inline.
-4. Click **Save Configuration** to push keys to the backend registry.
+```bash
+# 1. Build images
+make build-apps
 
-👉 Keys are stored in the browser for client-side SDK calls and registered with the backend so every agent immediately uses the correct provider.
+# 2. Create Kind cluster
+make kind-create
 
-## 5. First interactions
+# 3. Setup ingress
+make kind-setup-ingress
+
+# 4. Load images into cluster
+make kind-load-images
+
+# 5. Load secrets from env.kind (REQUIRED for API keys and configuration)
+make kind-load-secrets
+
+# 6. Deploy application (includes DB migrations and seeding)
+make kind-deploy-internal
+```
+
+**Services:**
+- Frontend: http://localhost:8080/ (or check ingress port with `make kind-show-access-info`)
+- Backend API: http://localhost:8080/api/
+- API docs: http://localhost:8080/api/docs
+- Health: http://localhost:8080/health
+
+## 4. Verify Deployment
+
+```bash
+# Check pod status
+make kind-status
+
+# Check logs for errors
+make kind-logs
+
+# Verify all services are running
+kubectl get pods -n ideaforge-ai --context kind-ideaforge-ai
+
+# Verify secrets are loaded
+kubectl get secret ideaforge-ai-secrets -n ideaforge-ai --context kind-ideaforge-ai
+```
+
+## 5. Configure & Verify API Keys
+
+1. Open the UI at **http://localhost:8080/** → **Settings**.
+2. Enter one or more provider keys (or they're already loaded from `env.kind` via `kind-load-secrets`).
+3. Use the **Verify Key** button to test each key.
+4. Click **Save Configuration** to register keys with the backend.
+
+👉 **Note:** If you used `make kind-load-secrets`, API keys are already loaded into Kubernetes secrets and available to the backend. The UI allows you to verify and manage them.
+
+## 6. First Interactions
 
 ### Test an agent
 ```bash
-curl -X POST http://localhost:8000/api/agents/process \
+curl -X POST http://localhost:8080/api/multi-agent/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
   -d '{
-    "user_id": "00000000-0000-0000-0000-000000000001",
-    "agent_type": "ideation",
-    "messages": [{ "role": "user", "content": "Generate feature ideas for a team productivity app" }]
+    "query": "Generate feature ideas for a team productivity app",
+    "primary_agent": "ideation",
+    "product_id": "<product-id>"
   }'
 ```
 
 ### Run the multi-agent workflow
 ```bash
-curl -X POST http://localhost:8000/api/multi-agent/process \
+curl -X POST http://localhost:8080/api/multi-agent/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
   -d '{
-    "user_id": "00000000-0000-0000-0000-000000000001",
     "query": "Create a PRD outline for an AI onboarding copilot",
     "coordination_mode": "collaborative",
     "primary_agent": "ideation",
-    "supporting_agents": ["research", "analysis"]
+    "supporting_agents": ["research", "analysis", "strategy"]
   }'
 ```
 
 Then switch back to the UI and iterate via the Product Lifecycle wizard.
 
-## 6. Helpful commands
+## 7. Helpful Commands
 
 ```bash
-make logs SERVICE=backend   # follow backend logs
-make restart                # bounce all services
-make down                   # stop everything
-make rebuild                # rebuild images without cache and restart
+make kind-status          # Show cluster status
+make kind-logs            # Show logs from all pods
+make kind-verify-access   # Verify application is accessible
+make kind-show-access-info # Show access URLs and information
+make kind-restart         # Restart all deployments
+make kind-cleanup         # Clean up deployment (keeps cluster)
+make kind-delete          # Delete the entire cluster
 ```
 
-Common docker-compose equivalents are still available if you prefer to run commands manually.
-
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Try This |
 |---------|----------|
-| `/api/multi-agent/process` hangs | `docker-compose logs backend` – look for provider connection errors |
-| “Connection error” from agents   | Ensure the backend container has outbound HTTPS access (corporate proxies often block it) |
-| Database errors                  | `docker-compose ps postgres` should show “healthy”; volume `postgres-data` stores all state |
-| Keys show “invalid” in UI        | Use the **Verify Key** button; the backend endpoint returns the exact provider error |
-| Ports already in use             | Edit `docker-compose.yml` or stop conflicting processes (`lsof -i :3001`) |
+| Pods not starting | Check `kubectl get pods -n ideaforge-ai --context kind-ideaforge-ai` and `kubectl describe pod <pod-name>` |
+| "Secrets not found" | Run `make kind-load-secrets` to load secrets from `env.kind` |
+| Database migration errors | Check `kubectl logs -n ideaforge-ai job/db-setup --context kind-ideaforge-ai` |
+| Agno agents not initialized | Verify API keys are loaded: `kubectl get secret ideaforge-ai-secrets -n ideaforge-ai --context kind-ideaforge-ai` |
+| "Connection error" from agents | Ensure API keys are valid and loaded via `make kind-load-secrets` |
+| Ports already in use | Check ingress port: `kubectl get ingress -n ideaforge-ai --context kind-ideaforge-ai` |
+| Database connection errors | Verify PostgreSQL pod is running: `kubectl get pods -n ideaforge-ai -l app=postgres --context kind-ideaforge-ai` |
 
-## 8. Next steps
+## 9. Production Deployment (EKS)
 
-1. Review `docs/01-high-level-architecture.md` for system diagrams.
-2. Deploy using `docs/guides/deployment-guide.md`.
-3. Explore RAG/document workflows via `docs/guides/product-lifecycle.md`.
-4. Customize or extend agents in `backend/agents/`.
+For production deployment to EKS:
+
+```bash
+# 1. Setup environment
+cp env.eks.example env.eks
+# Edit env.eks with production configuration
+
+# 2. Configure kubectl for EKS
+aws eks update-kubeconfig --name ideaforge-ai --region us-east-1
+
+# 3. Create namespace (REQUIRED - must exist before deployment)
+kubectl create namespace <your-namespace>
+
+# 4. Full deployment (handles secrets, migrations, everything)
+make eks-deploy-full \
+  EKS_NAMESPACE=<your-namespace> \
+  BACKEND_IMAGE_TAG=$(git rev-parse --short HEAD) \
+  FRONTEND_IMAGE_TAG=$(git rev-parse --short HEAD)
+```
+
+The `eks-deploy-full` target handles:
+- ✅ GHCR secret setup (for pulling images)
+- ✅ Namespace preparation
+- ✅ **Secrets loading** (via `eks-load-secrets` from `env.eks`)
+- ✅ **Database migrations** (via `db-setup` job)
+- ✅ Full deployment
+- ✅ Agno framework initialization
+
+## 10. Next Steps
+
+1. Review [Local Development Guide](local-development-guide.md) for detailed setup.
+2. Review [EKS Production Deployment Guide](../deployment/PRODUCTION_DEPLOYMENT_GUIDE.md) for production setup.
+3. Explore [Multi-Agent System](multi-agent-system.md) to understand agent collaboration.
+4. Review [Product Lifecycle](product-lifecycle.md) for lifecycle management.
+5. Customize or extend agents in `backend/agents/`.
 
 Happy building! 🎉

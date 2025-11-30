@@ -126,6 +126,7 @@ Your output should:
             role="export",
             system_prompt=system_prompt,
             enable_rag=enable_rag,
+            model_tier="standard",  # Use standard model for export (important quality)
             capabilities=[
                 "prd generation",
                 "document export",

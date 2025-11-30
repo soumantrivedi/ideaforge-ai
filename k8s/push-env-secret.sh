@@ -35,11 +35,22 @@ fi
 echo "🔐 Creating/updating Kubernetes secret: ideaforge-ai-secrets from $ENV_FILE"
 # Create a temporary file with cleaned values (strip surrounding quotes)
 TEMP_ENV=$(mktemp)
-grep -v '^#' "$ENV_FILE" | grep -v '^$' | while IFS='=' read -r key value; do
-    # Remove surrounding quotes if present
-    cleaned_value=$(echo "$value" | sed 's/^"\(.*\)"$/\1/')
-    echo "${key}=${cleaned_value}"
-done > "$TEMP_ENV"
+# Process .env file line by line, avoiding subshell issues
+while IFS='=' read -r key value || [ -n "$key" ]; do
+    # Skip empty lines and comments
+    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+    
+    # Remove leading/trailing whitespace from key
+    key=$(echo "$key" | xargs)
+    
+    # Remove surrounding quotes if present from value
+    cleaned_value=$(echo "$value" | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/")
+    
+    # Only write non-empty keys
+    if [ -n "$key" ]; then
+        echo "${key}=${cleaned_value}" >> "$TEMP_ENV"
+    fi
+done < "$ENV_FILE"
 
 $KUBECTL_CMD create secret generic ideaforge-ai-secrets \
     --from-env-file="$TEMP_ENV" \

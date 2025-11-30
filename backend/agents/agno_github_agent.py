@@ -40,6 +40,7 @@ Always provide clear, structured responses with source information.
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="github_knowledge_base",
+            model_tier="fast",  # Use fast model for GitHub operations
             capabilities=[
                 "github repository access",
                 "file content retrieval",

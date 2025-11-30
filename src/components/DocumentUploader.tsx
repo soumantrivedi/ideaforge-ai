@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Upload, File, Link, Github, BookOpen, X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Upload, File, Link, BookOpen, X, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 import { getValidatedApiUrl } from '../lib/runtime-config';
@@ -10,7 +10,7 @@ interface DocumentUploaderProps {
   onUploadComplete?: (documentId: string) => void;
 }
 
-type UploadSource = 'local' | 'github' | 'confluence';
+type UploadSource = 'local' | 'confluence';
 
 interface UploadStatus {
   status: 'idle' | 'uploading' | 'success' | 'error';
@@ -20,7 +20,6 @@ interface UploadStatus {
 export function DocumentUploader({ productId, onUploadComplete }: DocumentUploaderProps) {
   const [uploadSource, setUploadSource] = useState<UploadSource>('local');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [githubUrl, setGithubUrl] = useState('');
   const [confluenceUrl, setConfluenceUrl] = useState('');
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>({ status: 'idle' });
   const [isUploading, setIsUploading] = useState(false);
@@ -85,50 +84,6 @@ export function DocumentUploader({ productId, onUploadComplete }: DocumentUpload
     }
   };
 
-  const handleGithubUpload = async () => {
-    if (!githubUrl.trim() || !token) {
-      setUploadStatus({ status: 'error', message: 'Please enter a GitHub URL.' });
-      return;
-    }
-
-    setIsUploading(true);
-    setUploadStatus({ status: 'uploading', message: 'Fetching from GitHub...' });
-
-    try {
-      const response = await fetch(`${API_URL}/api/documents/upload-from-github`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          github_url: githubUrl.trim(),
-          product_id: productId,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.detail || 'Failed to fetch from GitHub');
-      }
-
-      const result = await response.json();
-      setUploadStatus({ status: 'success', message: 'Document fetched from GitHub successfully!' });
-      setGithubUrl('');
-      
-      if (onUploadComplete) {
-        onUploadComplete(result.document_id);
-      }
-    } catch (error) {
-      setUploadStatus({
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Failed to fetch from GitHub'
-      });
-    } finally {
-      setIsUploading(false);
-    }
-  };
 
   const handleConfluenceUpload = async () => {
     if (!confluenceUrl.trim() || !token) {
@@ -187,7 +142,7 @@ export function DocumentUploader({ productId, onUploadComplete }: DocumentUpload
 
       {/* Source Selection */}
       <div className="mb-6">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 gap-3">
           <button
             onClick={() => setUploadSource('local')}
             className={`p-4 rounded-lg border-2 transition ${
@@ -198,17 +153,6 @@ export function DocumentUploader({ productId, onUploadComplete }: DocumentUpload
           >
             <File className="w-6 h-6 mx-auto mb-2 text-gray-600" />
             <p className="text-sm font-medium">Local File</p>
-          </button>
-          <button
-            onClick={() => setUploadSource('github')}
-            className={`p-4 rounded-lg border-2 transition ${
-              uploadSource === 'github'
-                ? 'border-blue-500 bg-blue-50'
-                : 'border-gray-200 hover:border-gray-300'
-            }`}
-          >
-            <Github className="w-6 h-6 mx-auto mb-2 text-gray-600" />
-            <p className="text-sm font-medium">GitHub URL</p>
           </button>
           <button
             onClick={() => setUploadSource('confluence')}
@@ -275,41 +219,6 @@ export function DocumentUploader({ productId, onUploadComplete }: DocumentUpload
                 <>
                   <Upload className="w-4 h-4" />
                   Upload File
-                </>
-              )}
-            </button>
-          </div>
-        )}
-
-        {uploadSource === 'github' && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              GitHub URL
-            </label>
-            <input
-              type="url"
-              value={githubUrl}
-              onChange={(e) => setGithubUrl(e.target.value)}
-              placeholder="https://github.com/owner/repo/blob/branch/path/to/file.md"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Enter a GitHub file URL to fetch and add to knowledge base
-            </p>
-            <button
-              onClick={handleGithubUpload}
-              disabled={!githubUrl.trim() || isUploading}
-              className="mt-3 w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-            >
-              {isUploading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Fetching...
-                </>
-              ) : (
-                <>
-                  <Github className="w-4 h-4" />
-                  Fetch from GitHub
                 </>
               )}
             </button>

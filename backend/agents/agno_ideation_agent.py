@@ -42,6 +42,7 @@ Your output should:
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="ideation_knowledge_base",
+            model_tier="fast",  # Use fast model for ideation (50-70% latency reduction)
             capabilities=[
                 "ideation",
                 "brainstorming",

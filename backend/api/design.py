@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 import structlog
 import asyncio
+import json
 
 from backend.database import get_db
 from backend.api.auth import get_current_user
@@ -197,8 +198,38 @@ async def generate_design_prompt(
         elif request.provider == "lovable":
             # Use Agno Lovable agent for prompt generation
             agno_lovable_agent = AgnoLovableAgent()
+            
+            # Get all phase submissions for comprehensive context
+            phase_submissions_query = text("""
+                SELECT ps.form_data, ps.generated_content, plp.phase_name, plp.phase_order
+                FROM phase_submissions ps
+                JOIN product_lifecycle_phases plp ON ps.phase_id = plp.id
+                WHERE ps.product_id = :product_id
+                ORDER BY plp.phase_order ASC
+            """)
+            phase_result = await db.execute(phase_submissions_query, {"product_id": request.product_id})
+            phase_rows = phase_result.fetchall()
+            
+            # Build all phases data
+            all_phases_data = []
+            current_phase_data = None
+            for row in phase_rows:
+                phase_item = {
+                    "phase_name": row[2],
+                    "form_data": row[0] or {},
+                    "generated_content": row[1] or "",
+                    "phase_order": row[3]
+                }
+                all_phases_data.append(phase_item)
+                # If this is the Design phase, mark it as current
+                if row[2] and "design" in row[2].lower():
+                    current_phase_data = phase_item
+            
+            # Generate optimized prompt with all context
             prompt = await agno_lovable_agent.generate_lovable_prompt(
-                product_context=product_context
+                product_context=product_context,
+                phase_data=current_phase_data,
+                all_phases_data=all_phases_data
             )
         else:
             raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")
@@ -1770,3 +1801,5 @@ async def check_v0_status_background(
                project_id=project_id,
                product_id=product_id,
                total_checks=check_num)
+
+

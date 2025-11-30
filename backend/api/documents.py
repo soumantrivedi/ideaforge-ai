@@ -214,14 +214,27 @@ async def upload_from_confluence(
         elif not page_id.isdigit():
             raise HTTPException(status_code=400, detail="Invalid Confluence URL or page ID")
         
+        # Load user API keys to pass credentials via context
+        from backend.services.api_key_loader import load_user_api_keys_from_db
+        user_keys = await load_user_api_keys_from_db(db, str(current_user["id"]))
+        
+        # Prepare context with Atlassian credentials
+        context = {
+            "atlassian_email": user_keys.get("atlassian_email") or user_keys.get("ATLASSIAN_EMAIL"),
+            "atlassian_token": user_keys.get("atlassian_api_token") or user_keys.get("ATLASSIAN_API_TOKEN"),
+            "user_keys": user_keys
+        }
+        
         # Initialize Atlassian agent
         atlassian_agent = AgnoAtlassianAgent(enable_rag=True)
         
-        # Fetch content from Confluence
+        # Fetch content from Confluence with credentials in context
         fetched_data = await atlassian_agent.fetch_confluence_page(
             page_id=page_id,
             user_id=str(current_user["id"]),
-            product_id=request.product_id
+            product_id=request.product_id,
+            confluence_url=request.confluence_url,
+            context=context
         )
         
         if not fetched_data.get("success"):

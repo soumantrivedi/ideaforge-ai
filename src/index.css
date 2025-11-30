@@ -1,3 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* Smooth streaming animations - reduce visual jerkiness */
+.chat-message-content {
+  transition: opacity 0.1s ease-out, transform 0.1s ease-out;
+  will-change: contents;
+}
+
+.chat-message-content * {
+  transition: opacity 0.05s ease-out;
+}
+
+/* Smooth scroll behavior during streaming */
+.overflow-y-auto {
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -77,9 +95,10 @@
 body {
   background-color: var(--bg-secondary);
   color: var(--text-primary);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1;
 }
 
 /* Ensure all text has proper contrast */
@@ -113,4 +132,64 @@ input:focus, textarea:focus, select:focus {
 /* Buttons */
 button {
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Enhanced Chat Message Styling - ChatGPT/Claude-like */
+.chat-message-content {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.chat-message-content h1,
+.chat-message-content h2,
+.chat-message-content h3,
+.chat-message-content h4,
+.chat-message-content h5,
+.chat-message-content h6 {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.chat-message-content p {
+  margin-bottom: 1.25rem;
+  line-height: 1.75;
+}
+
+.chat-message-content ul,
+.chat-message-content ol {
+  margin-top: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.chat-message-content li {
+  margin-bottom: 0.5rem;
+  line-height: 1.75;
+}
+
+.chat-message-content code {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  font-size: 0.875em;
+}
+
+.chat-message-content pre {
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+  border-radius: 0.5rem;
+}
+
+.chat-message-content blockquote {
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding-left: 1.25rem;
+  border-left-width: 4px;
+}
+
+.chat-message-content a {
+  color: #2563eb;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.chat-message-content a:hover {
+  color: #1d4ed8;
 }

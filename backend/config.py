@@ -3,9 +3,23 @@ from typing import Optional
 import os
 
 
+def _get_database_url() -> str:
+    """Construct DATABASE_URL from individual components if not set or contains placeholder."""
+    database_url = os.getenv("DATABASE_URL", "")
+    if not database_url or "$(POSTGRES_PASSWORD)" in database_url:
+        # Construct from individual environment variables
+        postgres_host = os.getenv("POSTGRES_HOST", "postgres")
+        postgres_port = os.getenv("POSTGRES_PORT", "5432")
+        postgres_user = os.getenv("POSTGRES_USER", "agentic_pm")
+        postgres_password = os.getenv("POSTGRES_PASSWORD", "devpassword")
+        postgres_db = os.getenv("POSTGRES_DB", "agentic_pm_db")
+        return f"postgresql://{postgres_user}:{postgres_password}@{postgres_host}:{postgres_port}/{postgres_db}"
+    return database_url
+
+
 class Settings(BaseSettings):
     # Database Configuration
-    database_url: str = os.getenv("DATABASE_URL", "postgresql://user:password@postgres:5432/agentic_pm_db")
+    database_url: str = _get_database_url()
 
     # AI Provider API Keys (strip whitespace to ensure proper detection)
     openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY", "").strip() or None

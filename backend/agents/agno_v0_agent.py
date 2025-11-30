@@ -73,6 +73,7 @@ Your output should:
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="v0_knowledge_base",
+            model_tier="fast",  # Use fast model for V0 prompt generation
             tools=[],  # Tools will be added after initialization
             capabilities=[
                 "v0 prompt generation",
@@ -271,8 +272,8 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
     
     def _clean_v0_prompt(self, prompt: str) -> str:
         """
-        Clean V0 prompt by removing instructional headers/footers.
-        Removes text like "Below is a V0-ready prompt..." and similar metadata.
+        Clean V0 prompt by removing instructional headers/footers and notes.
+        Removes text like "Below is a V0-ready prompt...", "Notes:", instructions, etc.
         """
         if not prompt:
             return prompt
@@ -280,6 +281,7 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
         lines = prompt.split('\n')
         cleaned_lines = []
         skip_until_content = True
+        in_notes_section = False
         
         # Patterns that indicate we should skip lines
         skip_patterns = [
@@ -295,10 +297,34 @@ The prompt should be ready to paste directly into V0 for generating prototypes."
             "shadcn/ui",
             "---",
             "===",
+            "notes:",
+            "note:",
+            "instructions:",
+            "this prompt follows",
+            "guidelines:",
+            "if you want",
+            "tell me and i will",
+            "encoded version",
+            "url-encoded",
         ]
         
         for line in lines:
             line_lower = line.lower().strip()
+            
+            # Check for notes section start
+            if "notes:" in line_lower or "note:" in line_lower:
+                in_notes_section = True
+                continue
+            
+            # Skip everything in notes section
+            if in_notes_section:
+                # Check if we've exited notes section (new major section)
+                if line_lower and (line_lower.startswith("#") or len(line_lower) > 50):
+                    # Might be a new section, but be conservative
+                    if not any(note_word in line_lower for note_word in ["note", "instruction", "guideline", "follow"]):
+                        in_notes_section = False
+                else:
+                    continue
             
             # Skip empty lines at the start
             if skip_until_content and not line_lower:

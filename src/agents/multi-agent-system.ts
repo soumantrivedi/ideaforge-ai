@@ -21,6 +21,13 @@ export interface MultiAgentMessage extends ChatAgentMessage {
   isInternal?: boolean;
   targetAgent?: string;
   interactions?: AgentInteraction[];
+  metadata?: {
+    system_context?: string;
+    system_prompt?: string;
+    user_prompt?: string;
+    rag_context?: string;
+    [key: string]: any;
+  };
 }
 
 export interface AgentCapability {

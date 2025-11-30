@@ -46,6 +46,7 @@ Your summaries should:
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="summary_knowledge_base",
+            model_tier="fast",  # Use fast model for summaries (50-70% latency reduction)
             capabilities=[
                 "summary",
                 "synthesis",

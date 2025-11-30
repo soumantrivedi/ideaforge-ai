@@ -166,15 +166,18 @@ async def login(
         row = result.fetchone()
         
         if not row:
+            logger.warning("login_failed", email=request.email.lower(), reason="user_not_found")
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
         user_id, email, full_name, password_hash, tenant_id, is_active, tenant_name = row
         
         if not is_active:
+            logger.warning("login_failed", email=request.email.lower(), user_id=str(user_id), reason="account_inactive")
             raise HTTPException(status_code=403, detail="User account is inactive")
         
         # Verify password
         if not password_hash or not verify_password(request.password, password_hash):
+            logger.warning("login_failed", email=request.email.lower(), user_id=str(user_id), reason="invalid_password")
             raise HTTPException(status_code=401, detail="Invalid email or password")
         
         # Generate token
@@ -182,34 +185,47 @@ async def login(
         expires_at = datetime.utcnow() + timedelta(days=7)
         
         # Store token in Redis or fallback storage
-        token_storage = await get_token_storage()
-        token_data = {
-            "user_id": str(user_id),
-            "email": email,
-            "tenant_id": str(tenant_id),
-            "expires_at": expires_at.isoformat(),
-        }
-        expires_in_seconds = int((expires_at - datetime.utcnow()).total_seconds())
-        await token_storage.store_token(token, token_data, expires_in_seconds)
+        try:
+            token_storage = await get_token_storage()
+            token_data = {
+                "user_id": str(user_id),
+                "email": email,
+                "tenant_id": str(tenant_id),
+                "expires_at": expires_at.isoformat(),
+            }
+            expires_in_seconds = int((expires_at - datetime.utcnow()).total_seconds())
+            await token_storage.store_token(token, token_data, expires_in_seconds)
+        except Exception as e:
+            logger.error("token_storage_failed", error=str(e), user_id=str(user_id))
+            raise HTTPException(status_code=500, detail="Failed to create session. Please try again.")
         
         # Update last login
-        update_query = text("""
-            UPDATE user_profiles
-            SET last_login_at = now()
-            WHERE id = :user_id
-        """)
-        await db.execute(update_query, {"user_id": user_id})
-        await db.commit()
+        try:
+            update_query = text("""
+                UPDATE user_profiles
+                SET last_login_at = now()
+                WHERE id = :user_id
+            """)
+            await db.execute(update_query, {"user_id": user_id})
+            await db.commit()
+        except Exception as e:
+            logger.warning("last_login_update_failed", error=str(e), user_id=str(user_id))
+            # Don't fail login if last_login update fails
+            await db.rollback()
         
         # Set cookie
-        response.set_cookie(
-            key="session_token",
-            value=token,
-            httponly=True,
-            secure=False,  # Set to True in production with HTTPS
-            samesite="lax",
-            max_age=7 * 24 * 60 * 60,  # 7 days
-        )
+        try:
+            response.set_cookie(
+                key="session_token",
+                value=token,
+                httponly=True,
+                secure=False,  # Set to True in production with HTTPS
+                samesite="lax",
+                max_age=7 * 24 * 60 * 60,  # 7 days
+            )
+        except Exception as e:
+            logger.warning("cookie_set_failed", error=str(e), user_id=str(user_id))
+            # Don't fail login if cookie setting fails
         
         return LoginResponse(
             user_id=str(user_id),

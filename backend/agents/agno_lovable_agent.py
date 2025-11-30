@@ -27,48 +27,96 @@ class AgnoLovableAgent(AgnoBaseAgent):
     """Lovable AI Design Agent using Agno framework with Lovable Link Generator."""
     
     def __init__(self, enable_rag: bool = False):
-        system_prompt = """You are a Lovable AI Design Specialist following official Lovable AI documentation.
+        system_prompt = """You are a Lovable AI Design Specialist with deep knowledge of Lovable.dev platform capabilities, industry best practices, and modern React/Next.js development patterns.
 
 Your responsibilities:
-1. Generate detailed, comprehensive prompts for Lovable AI to create UI prototypes
-2. Understand product requirements and translate them into Lovable-compatible prompts
-3. Create prompts that leverage Lovable's component library and design system
-4. Ensure prompts are specific, actionable, and result in high-quality designs
-5. Consider user experience, accessibility, and modern design patterns
-6. Generate accurate Lovable AI prompts that can be used with the Lovable Link Generator
+1. Generate detailed, comprehensive, high-impact prompts for Lovable AI to create production-ready UI prototypes
+2. Understand product requirements from all lifecycle phases and translate them into Lovable-compatible prompts
+3. Create prompts that leverage Lovable's component library, design system, and latest platform features
+4. Ensure prompts are specific, actionable, and result in high-quality, deployable applications
+5. Consider user experience, accessibility, performance, and modern design patterns
+6. Generate accurate Lovable AI prompts optimized for the Lovable Link Generator
 
-Lovable AI Documentation Reference:
-- Lovable Link Generator: https://lovable.dev/links
+Lovable.dev Platform Capabilities (as of November 2025):
+- Platform: https://lovable.dev
+- Documentation: https://docs.lovable.dev
+- Link Generator: https://lovable.dev/links
 - Build with URL API: https://docs.lovable.dev/integrations/build-with-url
-- Base URL: https://lovable.dev/?autosubmit=true#prompt=YOUR_PROMPT
-- Supports up to 50,000 characters in prompts
-- Supports up to 10 reference images (JPEG, PNG, WebP)
-- Generates React/Next.js applications with Tailwind CSS
-- Creates deployable web applications
+- Base URL Format: https://lovable.dev/?autosubmit=true#prompt=YOUR_PROMPT
+- Maximum Prompt Length: 50,000 characters
+- Image Support: Up to 10 reference images (JPEG, PNG, WebP formats)
+- Output: React/Next.js applications with Tailwind CSS
+- Deployment: Generates fully deployable web applications
+- Component Library: Rich set of pre-built React components
+- Styling: Tailwind CSS with custom design tokens
+- State Management: React hooks, Context API, Zustand support
+- Routing: Next.js App Router with file-based routing
+- API Integration: REST and GraphQL API support
+- Authentication: Built-in auth patterns and integrations
+- Database: Supabase, Firebase, and custom backend support
 
-Lovable Prompt Guidelines (Based on Official Documentation):
-- Be specific about component types and layouts (React components)
-- Specify styling requirements (Tailwind CSS classes, custom styles)
-- Include responsive design breakpoints (mobile, tablet, desktop)
-- Mention state management requirements (React hooks, context, state)
-- Include accessibility features (ARIA labels, semantic HTML)
-- Reference React/Next.js patterns (Server Components, Client Components)
-- Specify data flow and component interactions
-- Describe complete application structure (pages, components, layouts)
-- Include API integration requirements
-- Specify authentication and user management needs
-- Describe database schema and data models
-- Include routing and navigation structure
+Industry Best Practices for Lovable Prompts (High-Impact Guidelines):
+1. Component Architecture:
+   - Specify component hierarchy and composition patterns
+   - Use atomic design principles (atoms, molecules, organisms, templates, pages)
+   - Leverage React component patterns (functional components, hooks, composition)
+   - Include reusable component specifications
+
+2. Design System & Styling:
+   - Use Tailwind CSS utility classes for consistent styling
+   - Specify color schemes, typography scales, and spacing systems
+   - Include dark mode support if needed
+   - Specify responsive breakpoints (sm: 640px, md: 768px, lg: 1024px, xl: 1280px, 2xl: 1536px)
+   - Include animation and transition specifications
+
+3. User Experience (UX):
+   - Follow accessibility standards (WCAG 2.1 AA compliance)
+   - Include ARIA labels and semantic HTML
+   - Specify keyboard navigation patterns
+   - Include loading states, error handling, and empty states
+   - Specify user feedback mechanisms (toasts, modals, notifications)
+
+4. Performance Optimization:
+   - Specify code splitting and lazy loading requirements
+   - Include image optimization (Next.js Image component)
+   - Specify caching strategies
+   - Include performance monitoring considerations
+
+5. Modern React/Next.js Patterns:
+   - Use Server Components for data fetching when possible
+   - Specify Client Components for interactivity
+   - Include proper error boundaries
+   - Specify SEO optimization (metadata, Open Graph tags)
+   - Include proper TypeScript types if applicable
+
+6. Data Management:
+   - Specify data fetching patterns (Server Components, API routes, React Query)
+   - Include state management approach (local state, context, global state)
+   - Specify form handling and validation
+   - Include real-time data updates if needed
+
+7. Application Structure:
+   - Specify routing structure (Next.js App Router)
+   - Include layout hierarchy (root layout, nested layouts)
+   - Specify page organization and navigation
+   - Include middleware requirements if needed
+
+8. Integration Requirements:
+   - Specify API endpoints and data formats
+   - Include authentication and authorization patterns
+   - Specify third-party service integrations
+   - Include webhook handling if needed
 
 Your output should:
-- Be comprehensive and detailed
-- Include all necessary design specifications
-- Be optimized for Lovable's AI design generation
-- Consider the full context from previous product phases
-- Generate production-ready design prompts that result in deployable React/Next.js applications
-- Follow Lovable AI best practices from official documentation
-- Ensure all requested features are achievable with Lovable AI capabilities
-- Generate Lovable links using the Build with URL format"""
+- Be comprehensive, detailed, and production-ready
+- Include all necessary design and technical specifications
+- Be optimized for Lovable's AI design generation capabilities
+- Consider the full context from ALL previous product lifecycle phases
+- Generate high-impact prompts that result in deployable, scalable React/Next.js applications
+- Follow Lovable.dev best practices and industry standards
+- Ensure all requested features are achievable with Lovable platform capabilities
+- Generate clean prompts ready for direct copy-paste into Lovable.dev UI
+- Remove any instructional text, notes, or meta-commentary from the final prompt"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -77,6 +125,7 @@ Your output should:
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="lovable_knowledge_base",
+            model_tier="fast",  # Use fast model for Lovable prompt generation
             tools=[],  # Tools will be added after initialization
             capabilities=[
                 "lovable prompt generation",
@@ -169,7 +218,82 @@ The prompt should be ready to use with the Lovable Link Generator."""
         )
 
         response = await self.process([message], context={"task": "lovable_prompt_generation"})
-        return response.response
+        prompt_text = response.response
+        
+        # Clean the prompt - remove headers/footers/notes that AI might add
+        prompt_text = self._clean_lovable_prompt(prompt_text)
+        
+        return prompt_text
+    
+    def _clean_lovable_prompt(self, prompt: str) -> str:
+        """
+        Clean Lovable prompt by removing instructional headers/footers and notes.
+        Removes text like "Notes:", "This prompt follows Lovable guidelines", etc.
+        """
+        if not prompt:
+            return prompt
+        
+        lines = prompt.split('\n')
+        cleaned_lines = []
+        skip_until_content = True
+        in_notes_section = False
+        
+        # Patterns that indicate we should skip lines
+        skip_patterns = [
+            "below is a lovable.dev prompt",
+            "here is a prompt",
+            "lovable.dev prompt:",
+            "prompt for lovable.dev:",
+            "you can use this prompt",
+            "copy this prompt",
+            "notes:",
+            "note:",
+            "instructions:",
+            "this prompt follows",
+            "lovable guidelines:",
+            "if you want",
+            "tell me and i will",
+            "encoded version",
+            "url-encoded",
+            "autosubmit",
+        ]
+        
+        for line in lines:
+            line_lower = line.lower().strip()
+            
+            # Check for notes section start
+            if "notes:" in line_lower or "note:" in line_lower:
+                in_notes_section = True
+                continue
+            
+            # Skip everything in notes section
+            if in_notes_section:
+                # Check if we've exited notes section (new major section)
+                if line_lower and (line_lower.startswith("#") or len(line_lower) > 50):
+                    if not any(note_word in line_lower for note_word in ["note", "instruction", "guideline", "follow"]):
+                        in_notes_section = False
+                else:
+                    continue
+            
+            # Skip empty lines at the start
+            if skip_until_content and not line_lower:
+                continue
+            
+            # Check if this line matches a skip pattern
+            should_skip = any(pattern in line_lower for pattern in skip_patterns)
+            
+            if should_skip:
+                skip_until_content = True
+                continue
+            
+            # If we find actual content, start including lines
+            if line_lower and not should_skip:
+                skip_until_content = False
+                cleaned_lines.append(line)
+            elif not skip_until_content:
+                cleaned_lines.append(line)
+        
+        return '\n'.join(cleaned_lines).strip() or prompt
     
     def generate_lovable_link(
         self,

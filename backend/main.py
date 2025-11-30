@@ -3,6 +3,9 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.middleware.cors import CORSMiddleware
+from backend.middleware.rate_limit import setup_rate_limiting
+from backend.services.error_handler import handle_exception, ErrorCode, create_http_exception
+from backend.services.natural_language_understanding import get_nlu
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from fastapi.openapi.utils import get_openapi
 from contextlib import asynccontextmanager
@@ -52,6 +55,10 @@ from backend.api.product_scoring import router as product_scoring_router
 from backend.api.integrations import router as integrations_router
 from backend.api.documents import router as documents_router
 from backend.api.export import router as export_router
+from backend.api.streaming import router as streaming_router
+from backend.api.metrics import router as metrics_router
+from backend.api.agent_stats import router as agent_stats_router
+from backend.api.phase_form_help import router as phase_form_help_router
 from backend.services.provider_registry import provider_registry
 from backend.services.job_service import job_service
 from fastapi import BackgroundTasks
@@ -277,38 +284,65 @@ async def lifespan(app: FastAPI):
     )
     
     # Reinitialize orchestrator on startup to ensure Agno is initialized if providers are available
-    # This uses API keys from .env file (via provider_registry which reads from Settings)
+    # This uses API keys from environment variables (Kubernetes secrets) via provider_registry which reads from Settings
+    # Settings class reads from os.getenv() which gets values from Kubernetes secrets mounted as environment variables
     global orchestrator, agno_enabled
+    
+    # Force re-check of provider registry to ensure it has latest values from environment
+    # Provider registry is initialized at module load time, but environment variables might be set after
+    # So we rebuild clients to pick up any new keys
+    provider_registry._rebuild_clients()
+    
+    # Reinitialize orchestrator with updated provider registry
     orchestrator, agno_enabled = _initialize_orchestrator()
     
-    # Log orchestrator initialization status
+    # Set orchestrator for streaming module and phase form help
+    from backend.api.streaming import set_orchestrator
+    from backend.api.phase_form_help import set_orchestrator as set_phase_form_help_orchestrator
+    set_orchestrator(orchestrator)
+    set_phase_form_help_orchestrator(orchestrator)
+    
+    # Log orchestrator initialization status with detailed provider information
     logger.info(
         "startup_orchestrator_status",
         orchestrator_type=type(orchestrator).__name__,
         agno_enabled=agno_enabled,
         has_providers=bool(configured_providers),
+        configured_providers_list=configured_providers,
         feature_agno_framework=settings.feature_agno_framework,
-        agno_available=AGNO_AVAILABLE
+        agno_available=AGNO_AVAILABLE,
+        openai_configured=provider_registry.has_openai_key(),
+        claude_configured=provider_registry.has_claude_key(),
+        gemini_configured=provider_registry.has_gemini_key(),
+        openai_key_present=bool(settings.openai_api_key),
+        anthropic_key_present=bool(settings.anthropic_api_key),
+        google_key_present=bool(settings.google_api_key)
     )
     
     # Agno agents are automatically initialized when orchestrator is created
-    # No additional initialization needed at startup if providers are in .env
+    # Log detailed status for troubleshooting
     if agno_enabled:
         logger.info(
             "agno_framework_ready_at_startup",
             providers=configured_providers,
-            message="Agno framework initialized automatically from .env file API keys"
+            message="Agno framework initialized successfully from environment variables (Kubernetes secrets)"
         )
     elif configured_providers and AGNO_AVAILABLE and settings.feature_agno_framework:
         logger.warning(
             "agno_framework_not_enabled_despite_providers",
             providers=configured_providers,
-            message="Providers available but Agno not enabled. Check feature flag and Agno availability."
+            message="Providers available but Agno not enabled. Check feature flag and Agno availability.",
+            feature_flag=settings.feature_agno_framework,
+            agno_available=AGNO_AVAILABLE
         )
     elif not configured_providers:
-        logger.info(
+        logger.warning(
             "agno_framework_waiting_for_providers",
-            message="No AI providers configured in .env. Users can configure API keys in Settings to enable Agno."
+            message="No AI providers configured in environment variables (Kubernetes secrets). Users can configure API keys in Settings to enable Agno.",
+            env_openai=bool(settings.openai_api_key),
+            env_anthropic=bool(settings.anthropic_api_key),
+            env_google=bool(settings.google_api_key),
+            suggestion="Configure OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY in Kubernetes secrets"
         )
     
     yield
@@ -328,29 +362,29 @@ app = FastAPI(
 )
 
 # Build CORS allowed origins list
-# Environment-specific defaults:
-# - docker-compose: localhost:3001 (frontend on port 3001)
-# - kind: localhost:80 (ingress) or ideaforge.local
-# - eks: external domain (set via ConfigMap)
-cors_origins = [
-    settings.frontend_url,
-    "http://localhost:3000",  # Vite dev server
-    "http://localhost:3001",  # docker-compose frontend
-    "http://localhost:5173",  # Vite HMR port
-    "http://localhost",  # For ingress access (port 80)
-    "http://localhost:80",  # Explicit port 80
-    "http://localhost:8080",  # For kind cluster with port 8080
-    "http://ideaforge.local",  # For hostname-based access
-    "http://api.ideaforge.local",  # For API hostname
-]
+# Origins are configured via:
+# 1. FRONTEND_URL environment variable (via settings.frontend_url)
+# 2. CORS_ORIGINS environment variable (comma-separated list)
+# No hardcoded URLs - all origins must be explicitly configured via environment variables
+cors_origins = []
 
-# Add environment variable origins if set
+# Add frontend URL from settings (if configured)
+if settings.frontend_url:
+    cors_origins.append(settings.frontend_url)
+
+# Add origins from CORS_ORIGINS environment variable (comma-separated)
 import os
 env_origins = os.getenv("CORS_ORIGINS", "").split(",")
 cors_origins.extend([origin.strip() for origin in env_origins if origin.strip()])
 
 # Remove duplicates and empty strings
 cors_origins = list(set([origin for origin in cors_origins if origin]))
+
+# Log configured origins (without exposing sensitive info)
+if cors_origins:
+    logger.info("cors_origins_configured", count=len(cors_origins))
+else:
+    logger.warning("cors_origins_empty", message="No CORS origins configured. Set FRONTEND_URL or CORS_ORIGINS environment variable.")
 
 app.add_middleware(
     CORSMiddleware,
@@ -361,12 +395,16 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+# Setup rate limiting (Redis-based for distributed rate limiting)
+setup_rate_limiting(app)
+
 # Include routers
 from backend.api.api_keys import router as api_keys_router
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(products_router)
 app.include_router(conversations_router)
+app.include_router(metrics_router)
 app.include_router(db_router)
 app.include_router(design_router)
 app.include_router(api_keys_router)
@@ -374,6 +412,9 @@ app.include_router(product_scoring_router)
 app.include_router(integrations_router)
 app.include_router(documents_router)
 app.include_router(export_router)
+app.include_router(streaming_router)
+app.include_router(agent_stats_router)
+app.include_router(phase_form_help_router)
 
 
 @app.get("/", tags=["health"])
@@ -656,6 +697,40 @@ async def process_multi_agent_request(
 ):
     """Process a multi-agent coordination request."""
     try:
+        # Natural Language Understanding: Check if user wants to proceed
+        nlu = get_nlu()
+        should_proceed, reason, suggested_response = nlu.should_make_ai_call(
+            user_input=request.query,
+            agent_question=None,  # Will be extracted from context
+            context=request.context
+        )
+        
+        if not should_proceed:
+            logger.info("nlu_blocked_ai_call", user_input=request.query[:50], reason=reason)
+            
+            # Use suggested response from NLU if available, otherwise provide default guidance
+            if suggested_response:
+                response_text = suggested_response
+            else:
+                # Provide helpful guidance based on context
+                response_parts = [
+                    "💡 **What you can do next:**",
+                    "",
+                    "• **Select a Product Lifecycle Phase** - Click on any phase button (Ideation, Market Research, Requirements, etc.) to get step-by-step guidance",
+                    "• **Ask a Question** - Ask me anything about your product, market, or requirements",
+                    "• **View Your Progress** - Check the 'My Progress' section to see what's been completed",
+                    "• **Export Your Work** - Use the 'Export PRD' button to download your product requirements",
+                    "• **Browse History** - View past conversations in the History section",
+                    "",
+                    "Just let me know what you'd like to work on, and I'll help you through it! 🚀"
+                ]
+                response_text = "\n".join(response_parts)
+            
+            return MultiAgentResponse(
+                response=response_text,
+                interactions=[],
+                metadata={"nlu_blocked": True, "reason": reason, "helpful_guidance": True, "intent": "negative" if "declined" in reason.lower() else "ambiguous"}
+            )
         # First, check if providers are already configured from environment variables (Kubernetes secrets)
         configured_providers = provider_registry.get_configured_providers()
         logger.info(
@@ -800,19 +875,70 @@ async def process_multi_agent_request(
             })
             
             # Save assistant response with agent interactions metadata
+            # Extract performance metrics from agent interactions
+            agent_performance_metrics = {}
+            total_processing_time = 0.0
+            total_tokens = 0
+            total_cache_hits = 0
+            total_cache_misses = 0
+            
+            agent_interactions_list = []
+            for i in (response.agent_interactions or []):
+                interaction_dict = {
+                    "from_agent": i.get('from_agent') if isinstance(i, dict) else (i.from_agent if hasattr(i, 'from_agent') else ''),
+                    "to_agent": i.get('to_agent') if isinstance(i, dict) else (i.to_agent if hasattr(i, 'to_agent') else ''),
+                    "query": i.get('query') if isinstance(i, dict) else (i.query if hasattr(i, 'query') else ''),
+                    "response": i.get('response') if isinstance(i, dict) else (i.response if hasattr(i, 'response') else ''),
+                    "metadata": i.get('metadata', {}) if isinstance(i, dict) else (i.metadata if hasattr(i, 'metadata') else {})
+                }
+                agent_interactions_list.append(interaction_dict)
+                
+                # Extract performance metrics from interaction metadata
+                interaction_meta = interaction_dict.get('metadata', {})
+                agent_name = interaction_dict.get('to_agent', '')
+                if agent_name:
+                    # Extract metrics from metadata
+                    processing_time = interaction_meta.get('processing_time', 0.0)
+                    tokens = interaction_meta.get('tokens', {})
+                    token_total = tokens.get('total', 0) if isinstance(tokens, dict) else 0
+                    cache_hit = interaction_meta.get('cache_hit', False)
+                    
+                    if agent_name not in agent_performance_metrics:
+                        agent_performance_metrics[agent_name] = {
+                            'processing_time': 0.0,
+                            'tokens': 0,
+                            'cache_hits': 0,
+                            'cache_misses': 0,
+                            'count': 0
+                        }
+                    
+                    agent_performance_metrics[agent_name]['processing_time'] += processing_time
+                    agent_performance_metrics[agent_name]['tokens'] += token_total
+                    agent_performance_metrics[agent_name]['count'] += 1
+                    if cache_hit:
+                        agent_performance_metrics[agent_name]['cache_hits'] += 1
+                    else:
+                        agent_performance_metrics[agent_name]['cache_misses'] += 1
+                    
+                    total_processing_time += processing_time
+                    total_tokens += token_total
+                    if cache_hit:
+                        total_cache_hits += 1
+                    else:
+                        total_cache_misses += 1
+            
             interaction_metadata = {
                 "primary_agent": response.primary_agent,
                 "coordination_mode": response.coordination_mode,
-                "agent_interactions": [
-                    {
-                        "from_agent": i.get('from_agent') if isinstance(i, dict) else (i.from_agent if hasattr(i, 'from_agent') else ''),
-                        "to_agent": i.get('to_agent') if isinstance(i, dict) else (i.to_agent if hasattr(i, 'to_agent') else ''),
-                        "query": i.get('query') if isinstance(i, dict) else (i.query if hasattr(i, 'query') else ''),
-                        "response": i.get('response') if isinstance(i, dict) else (i.response if hasattr(i, 'response') else ''),
-                        "metadata": i.get('metadata', {}) if isinstance(i, dict) else (i.metadata if hasattr(i, 'metadata') else {})
-                    }
-                    for i in (response.agent_interactions or [])
-                ] if response.agent_interactions else []
+                "agent_interactions": agent_interactions_list,
+                # Aggregate performance metrics for the entire multi-agent interaction
+                "performance_metrics": {
+                    "total_processing_time": round(total_processing_time, 3),
+                    "total_tokens": total_tokens,
+                    "total_cache_hits": total_cache_hits,
+                    "total_cache_misses": total_cache_misses,
+                    "agent_metrics": agent_performance_metrics
+                }
             }
             
             assistant_message_query = text("""

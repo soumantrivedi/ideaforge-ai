@@ -2,7 +2,7 @@
 Agno-based Orchestrator
 Manages agent workflows using Agno framework
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from datetime import datetime
 from uuid import UUID
 import structlog
@@ -15,6 +15,9 @@ from backend.agents.agno_research_agent import AgnoResearchAgent
 from backend.agents.agno_analysis_agent import AgnoAnalysisAgent
 from backend.agents.agno_summary_agent import AgnoSummaryAgent
 from backend.agents.agno_scoring_agent import AgnoScoringAgent
+from backend.agents.agno_strategy_agent import AgnoStrategyAgent
+from backend.agents.agno_validation_agent import AgnoValidationAgent
+from backend.agents.agno_export_agent import AgnoExportAgent
 from backend.agents.agno_github_agent import AgnoGitHubAgent
 from backend.agents.agno_atlassian_agent import AgnoAtlassianAgent
 from backend.agents.agno_v0_agent import AgnoV0Agent
@@ -49,6 +52,9 @@ class AgnoAgenticOrchestrator:
             "ideation": AgnoIdeationAgent(enable_rag=self.enable_rag),
             "summary": AgnoSummaryAgent(enable_rag=self.enable_rag),
             "scoring": AgnoScoringAgent(enable_rag=self.enable_rag),
+            "strategy": AgnoStrategyAgent(enable_rag=self.enable_rag),
+            "validation": AgnoValidationAgent(enable_rag=self.enable_rag),
+            "export": AgnoExportAgent(enable_rag=self.enable_rag),
             "github_mcp": AgnoGitHubAgent(enable_rag=self.enable_rag),
             "atlassian_mcp": AgnoAtlassianAgent(enable_rag=self.enable_rag),
             "v0": AgnoV0Agent(enable_rag=self.enable_rag),
@@ -323,4 +329,79 @@ class AgnoAgenticOrchestrator:
         if ideation_messages:
             return "\n\n".join(ideation_messages[:10])  # Last 10 ideation messages
         return ""
+    
+    async def stream_multi_agent_request(
+        self,
+        user_id: UUID,
+        request: MultiAgentRequest,
+        db: Optional[Any] = None
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Stream multi-agent coordination request.
+        Yields events as agents process the request.
+        """
+        
+        self.logger.info(
+            "streaming_multi_agent_request",
+            user_id=str(user_id),
+            coordination_mode=request.coordination_mode,
+            primary_agent=request.primary_agent,
+            supporting_agents=request.supporting_agents
+        )
+        
+        try:
+            # Add user and product context
+            enhanced_context = request.context or {}
+            enhanced_context["user_id"] = str(user_id)
+            product_id = None
+            if hasattr(request, 'product_id') and request.product_id:
+                product_id = request.product_id
+                enhanced_context["product_id"] = str(product_id)
+            
+            # Load conversation history if available
+            if product_id and db:
+                try:
+                    from sqlalchemy import text
+                    conv_query = text("""
+                        SELECT ch.message_type, ch.content, ch.agent_name, ch.created_at
+                        FROM conversation_history ch
+                        WHERE ch.product_id = :product_id
+                        ORDER BY ch.created_at DESC
+                        LIMIT 50
+                    """)
+                    conv_result = await db.execute(conv_query, {"product_id": str(product_id)})
+                    conv_rows = conv_result.fetchall()
+                    conversation_history = [
+                        {
+                            "role": row[0],
+                            "content": row[1],
+                            "agent_name": row[2],
+                            "timestamp": row[3].isoformat() if row[3] else None
+                        }
+                        for row in conv_rows
+                    ]
+                    if conversation_history:
+                        enhanced_context["conversation_history"] = conversation_history
+                        enhanced_context["ideation_from_chat"] = self._extract_ideation_from_history(conversation_history)
+                except Exception as e:
+                    self.logger.warning("failed_to_load_conversation_history_for_streaming", error=str(e))
+            
+            # Stream from coordinator
+            async for event in self.coordinator.stream_route_query(
+                query=request.query,
+                coordination_mode=request.coordination_mode,
+                primary_agent=request.primary_agent,
+                supporting_agents=request.supporting_agents,
+                context=enhanced_context,
+                db=db
+            ):
+                yield event
+            
+        except Exception as e:
+            self.logger.error("streaming_multi_agent_error", error=str(e), user_id=str(user_id))
+            yield {
+                "type": "error",
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat()
+            }
 

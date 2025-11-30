@@ -66,13 +66,32 @@ spec:
             echo "   ✅ Tables already exist ($$TABLE_COUNT tables), skipping base schema"
           fi
           
+          # Create schema_migrations table for tracking
+          echo "🔄 Creating migration tracking table..."
+          psql -h postgres -U agentic_pm -d agentic_pm_db -c "
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+              version VARCHAR(255) PRIMARY KEY,
+              applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+          " 2>&1 | grep -v "NOTICE" || true
+          
           # Run migrations
           echo "🔄 Running database migrations..."
           if [ -d /migrations ]; then
             for migration in /migrations/*.sql; do
               if [ -f "$$migration" ]; then
-                echo "   Running migration: $$(basename $$migration)"
+                MIGRATION_NAME=$$(basename $$migration)
+                echo "   Running migration: $$MIGRATION_NAME"
+                
+                # Run migration
                 psql -h postgres -U agentic_pm -d agentic_pm_db -f "$$migration" 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
+                
+                # Record migration
+                psql -h postgres -U agentic_pm -d agentic_pm_db -c "
+                  INSERT INTO schema_migrations (version, applied_at)
+                  VALUES ('$$MIGRATION_NAME', NOW())
+                  ON CONFLICT (version) DO NOTHING;
+                " 2>&1 | grep -v "NOTICE" || true
               fi
             done
           fi

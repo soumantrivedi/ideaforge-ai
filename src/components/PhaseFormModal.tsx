@@ -7,6 +7,8 @@ import { ThumbnailSelector } from './ThumbnailSelector';
 import { useAuth } from '../contexts/AuthContext';
 import { getValidatedApiUrl } from '../lib/runtime-config';
 import { ErrorModal } from './ErrorModal';
+import { ContentFormatter } from '../lib/content-formatter';
+// Using regular textarea for phase form fields (plain text, not HTML)
 
 const API_URL = getValidatedApiUrl();
 
@@ -36,9 +38,11 @@ export function PhaseFormModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentPromptIndex, setCurrentPromptIndex] = useState(0);
   const [isGeneratingAIHelp, setIsGeneratingAIHelp] = useState(false);
+  const [isStreamingAIHelp, setIsStreamingAIHelp] = useState(false);
+  const [streamingContent, setStreamingContent] = useState('');
   const [responseLength, setResponseLength] = useState<'short' | 'verbose'>('verbose');
   const [isGeneratingPrompt, setIsGeneratingPrompt] = useState<{v0: boolean, lovable: boolean}>({v0: false, lovable: false});
-  const [isGeneratingMockup, setIsGeneratingMockup] = useState<{v0: boolean, lovable: boolean}>({v0: false, lovable: false});
+  const [isGeneratingMockup, setIsGeneratingMockup] = useState<{v0: boolean}>({v0: false});
   const [isCheckingStatus, setIsCheckingStatus] = useState<{v0: boolean}>({v0: false});
   const [v0PrototypeStatus, setV0PrototypeStatus] = useState<{
     status: 'not_submitted' | 'in_progress' | 'completed';
@@ -351,6 +355,7 @@ export function PhaseFormModal({
         }
 
       // Build the message to save to chatbot - format all form data nicely
+      // Content will be rendered with markdown formatting in the chat interface
       let chatbotMessage = `## ${phase.phase_name} Phase Content\n\n`;
       
       if (isDesignPhase) {
@@ -374,14 +379,18 @@ export function PhaseFormModal({
         }
         
         if (v0Prompt.trim()) {
-          chatbotMessage += `### V0 Vercel Prompt\n${v0Prompt}\n\n`;
+          // Clean any raw HTML tags but preserve markdown formatting
+          const cleanV0Prompt = v0Prompt.replace(/<[^>]*>/g, '').trim();
+          chatbotMessage += `### V0 Vercel Prompt\n${cleanV0Prompt}\n\n`;
           if (promptScores.v0 !== null) {
             chatbotMessage += `**Score: ${promptScores.v0}/5**\n\n`;
           }
         }
         
         if (lovablePrompt.trim()) {
-          chatbotMessage += `### Lovable.dev Prompt\n${lovablePrompt}\n\n`;
+          // Clean any raw HTML tags but preserve markdown formatting
+          const cleanLovablePrompt = lovablePrompt.replace(/<[^>]*>/g, '').trim();
+          chatbotMessage += `### Lovable.dev Prompt\n${cleanLovablePrompt}\n\n`;
           if (promptScores.lovable !== null) {
             chatbotMessage += `**Score: ${promptScores.lovable}/5**\n\n`;
           }
@@ -396,7 +405,9 @@ export function PhaseFormModal({
           const fieldValue = formData[field] || '';
           if (fieldValue.trim()) {
             const prompt = phase.template_prompts?.[index] || field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-            chatbotMessage += `### ${prompt}\n${fieldValue}\n\n`;
+            // Clean any raw HTML tags but preserve markdown formatting
+            const cleanValue = fieldValue.replace(/<[^>]*>/g, '').trim();
+            chatbotMessage += `### ${prompt}\n${cleanValue}\n\n`;
           }
         });
       }
@@ -588,281 +599,72 @@ export function PhaseFormModal({
 
     const currentField = phase.required_fields[currentPromptIndex];
     const currentPrompt = phase.template_prompts[currentPromptIndex];
-    
-    // Compute design phase section flags here
-    const isDesignPhase = phase.phase_name.toLowerCase() === 'design';
-    const isV0LovablePromptsSection = isDesignPhase && currentField === 'v0_lovable_prompts';
-    const isDesignMockupsSection = isDesignPhase && currentField === 'design_mockups';
 
     setIsGeneratingAIHelp(true);
+    setIsStreamingAIHelp(true);
+    setStreamingContent('');
 
     try {
       if (!user || !user.id) {
         throw new Error('User not authenticated. Please log in to use AI help.');
       }
 
-      
-      // Fetch conversation history for context
+      // Fetch conversation history for summary
       const conversationHistory = await lifecycleService.getProductConversationHistory(productId);
       
-      // Fetch all previous phase submissions for context
-      const allSubmissions = await lifecycleService.getPhaseSubmissions(productId);
+      // Generate conversation summary (last 5 messages)
+      const { generateConversationSummary } = await import('../lib/phase-form-help-client');
+      const conversationSummary = generateConversationSummary(conversationHistory);
       
-      // Build contextualized prompt
-      const contextParts: string[] = [];
+      // Get user input if any
+      const userInput = formData[currentField]?.trim() || undefined;
       
-      // Add conversation history context
-      if (conversationHistory.length > 0) {
-        contextParts.push('## Previous Conversation Context');
-        contextParts.push('');
-        conversationHistory.slice(-10).forEach((entry, idx) => {
-          if (entry.message_type === 'user' || entry.message_type === 'agent') {
-            const role = entry.message_type === 'user' ? 'User' : (entry.agent_name || 'Agent');
-            contextParts.push(`**${role}**: ${entry.content.substring(0, 500)}${entry.content.length > 500 ? '...' : ''}`);
-            if (idx < conversationHistory.length - 1) contextParts.push('');
-          }
-        });
-        contextParts.push('');
-        contextParts.push('---');
-        contextParts.push('');
-      }
-
-      // Add previous phase submissions context
-      if (allSubmissions.length > 0) {
-        contextParts.push('## Previous Phase Information');
-        contextParts.push('');
-        allSubmissions.forEach((submission) => {
-          if (submission.form_data && Object.keys(submission.form_data).length > 0) {
-            contextParts.push(`### Phase: ${submission.phase_id}`);
-            Object.entries(submission.form_data).forEach(([key, value]) => {
-              if (value && typeof value === 'string' && value.trim()) {
-                const fieldName = key.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-                contextParts.push(`- **${fieldName}**: ${value.substring(0, 300)}${value.length > 300 ? '...' : ''}`);
-              }
-            });
-            contextParts.push('');
-          }
-        });
-        contextParts.push('---');
-        contextParts.push('');
-      }
-
-      // Add current phase context (other fields already filled)
-      const otherFieldsData: string[] = [];
-      phase.required_fields.forEach((field, idx) => {
-        if (field !== currentField && formData[field]?.trim()) {
-          const fieldName = field.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-          otherFieldsData.push(`- **${fieldName}**: ${formData[field]}`);
-        }
-      });
-
-      if (otherFieldsData.length > 0) {
-        contextParts.push('## Current Phase - Other Fields Already Filled');
-        contextParts.push('');
-        contextParts.push(...otherFieldsData);
-        contextParts.push('');
-        contextParts.push('---');
-        contextParts.push('');
-      }
-
-      // Build industry standards context
-      const industryStandardsContext = [
-        '## Industry Standards & Best Practices',
-        '',
-        'Please ensure the response follows industry standards from:',
-        '- BCS (British Computer Society) Product Management Framework',
-        '- ICAgile (International Consortium for Agile) Product Ownership',
-        '- AIPMM (Association of International Product Marketing and Management)',
-        '- Pragmatic Institute Product Management Framework',
-        '- McKinsey CodeBeyond standards',
-        '',
-        'The response should be:',
-        '- Professional and industry-standard compliant',
-        '- Well-structured and comprehensive',
-        '- Actionable and measurable',
-        '- Aligned with best practices',
-        '',
-        '---',
-        '',
-      ].join('\n');
-
-      // Build response length instruction
-      const lengthInstruction = responseLength === 'short' 
-        ? 'Please provide a concise, focused response (2-3 paragraphs maximum). Be direct and to the point while maintaining quality and relevance.'
-        : 'Please provide a comprehensive, detailed response with full context, examples, and thorough explanations. Include all relevant details and industry best practices.';
-
-      // Build the main prompt with all form data context
-      const allFormDataContext = Object.entries(formData)
-        .filter(([key, value]) => key !== currentField && value?.trim())
-        .map(([key, value]) => {
-          const fieldName = key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-          return `- **${fieldName}**: ${value.substring(0, 500)}${value.length > 500 ? '...' : ''}`;
-        });
-
-      const formDataSection = allFormDataContext.length > 0
-        ? [
-            '## Current Form Data (All Fields)',
-            '',
-            'The following information has already been provided in this form:',
-            '',
-            ...allFormDataContext,
-            '',
-            'Use this information to ensure consistency and build upon what has already been provided.',
-            '',
-            '---',
-            '',
-          ].join('\n')
-        : '';
-
-      const mainPrompt = [
-        `I'm working on the "${phase.phase_name}" phase of my product lifecycle.`,
-        '',
-        'Based on all the context provided above (previous conversations, previous phases, all form data, and knowledge base),',
-        `please help me generate a ${responseLength === 'short' ? 'concise' : 'comprehensive and detailed'} response for the following question:`,
-        '',
-        `**Question**: ${currentPrompt}`,
-        '',
-        `**Field**: ${currentField.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')}`,
-        '',
-        lengthInstruction,
-        '',
-        'Please generate a well-structured response that:',
-        '- Takes into account ALL previous information, conversations, and form data',
-        '- Leverages knowledge from the RAG knowledge base',
-        '- Is specific and relevant to the product being developed',
-        '- Provides actionable and comprehensive information',
-        '- Maintains consistency with previously provided information',
-        '- Follows industry standards and best practices',
-        '- Is professional and well-formatted',
-        '',
-        'Generate only the content for this specific field, without repeating the question or adding extra formatting.',
-      ].join('\n');
-
-      const fullPrompt = [
-        ...contextParts,
-        formDataSection,
-        industryStandardsContext,
-        mainPrompt,
-      ].join('\n');
-
-      // Call multi-agent API (API_URL already defined above)
+      // Use new single-agent phase form help endpoint
+      const { streamPhaseFormHelp } = await import('../lib/phase-form-help-client');
       
-      // Determine which agents to use based on phase and field
-      // ALWAYS include RAG agent for knowledge base context
-      let primaryAgent = 'ideation';
-      let supportingAgents: string[] = ['rag']; // RAG is always first
+      let accumulatedText = '';
       
-      // Special handling for Design phase - V0/Lovable prompts
-      if (isV0LovablePromptsSection) {
-        primaryAgent = 'strategy';
-        supportingAgents = ['rag', 'analysis', 'ideation'];
-      } else if (phase.phase_name.toLowerCase().includes('research')) {
-        primaryAgent = 'research';
-        supportingAgents = ['rag', 'analysis', 'strategy'];
-      } else if (phase.phase_name.toLowerCase().includes('requirement')) {
-        primaryAgent = 'analysis';
-        supportingAgents = ['rag', 'research'];
-      } else if (phase.phase_name.toLowerCase().includes('design')) {
-        primaryAgent = 'strategy';
-        supportingAgents = ['rag', 'analysis', 'ideation'];
-      } else if (phase.phase_name.toLowerCase().includes('development')) {
-        primaryAgent = 'prd_authoring';
-        supportingAgents = ['rag', 'analysis'];
-      } else if (phase.phase_name.toLowerCase().includes('market')) {
-        primaryAgent = 'research';
-        supportingAgents = ['rag', 'analysis'];
-      } else {
-        // Default: always include RAG
-        supportingAgents = ['rag', 'research', 'analysis'];
-      }
-
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      };
-      
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
-      const response = await fetch(`${API_URL}/api/multi-agent/process`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          user_id: user.id,
-          query: fullPrompt,
-          coordination_mode: 'enhanced_collaborative', // Always use enhanced collaborative for heavy contextualization
-          primary_agent: primaryAgent,
-          supporting_agents: supportingAgents, // RAG is always included
-          context: {
-            product_id: productId,
-            phase_id: phase.id,
-            phase_name: phase.phase_name,
-            current_field: currentField,
-            current_prompt: currentPrompt,
-            form_data: formData, // Include all form data
-            all_form_fields: phase.required_fields,
-            response_length: responseLength,
-            industry_standards: true,
+      await streamPhaseFormHelp(
+        {
+          product_id: productId,
+          phase_id: phase.id,
+          phase_name: phase.phase_name,
+          current_field: currentField,
+          current_prompt: currentPrompt,
+          user_input: userInput,
+          response_length: responseLength,
+          conversation_summary: conversationSummary || undefined,
+        },
+        token || '',
+        {
+          onChunk: (chunk: string, accumulated: string) => {
+            accumulatedText = accumulated;
+            setStreamingContent(accumulated);
+            // Update form data in real-time with plain text content (use functional update)
+            setFormData((prev) => ({
+              ...prev,
+              [currentField]: accumulated,
+            }));
           },
-        }),
-      });
-
-      if (!response.ok) {
-        let errorMessage = `Failed to generate AI help: ${response.status}`;
-        let errorDetails: any = null;
-        
-        try {
-          const errorText = await response.text();
-          try {
-            errorDetails = JSON.parse(errorText);
-            if (errorDetails.detail) {
-              // Handle Pydantic validation errors
-              if (typeof errorDetails.detail === 'object' && Array.isArray(errorDetails.detail)) {
-                const validationErrors = errorDetails.detail.map((err: any) => {
-                  const field = err.loc ? err.loc.join('.') : 'unknown';
-                  const msg = err.msg || 'validation error';
-                  return `${field}: ${msg}`;
-                }).join(', ');
-                errorMessage = `Validation error: ${validationErrors}`;
-              } else if (typeof errorDetails.detail === 'string') {
-                errorMessage = errorDetails.detail;
-              } else {
-                errorMessage = JSON.stringify(errorDetails.detail);
-              }
-            } else if (errorDetails.message) {
-              errorMessage = errorDetails.message;
-            }
-          } catch {
-            // If errorText is not JSON, use it as is
-            if (errorText.includes('No AI provider configured')) {
-              errorMessage = 'No AI provider is configured on the backend. Please go to Settings and configure at least one AI provider (OpenAI, Anthropic, or Google Gemini) before using "Help with AI".';
-            } else {
-              errorMessage = `${errorMessage} - ${errorText}`;
-            }
-          }
-        } catch (e) {
-          console.error('Error parsing error response:', e);
+          onComplete: (textContent: string, wordCount: number, agent: string) => {
+            accumulatedText = textContent;
+            setStreamingContent(''); // Clear streaming content
+            // Save plain text to formData - use functional update to ensure we have latest state
+            setFormData((prev) => ({
+              ...prev,
+              [currentField]: textContent,
+            }));
+            setIsStreamingAIHelp(false);
+            setIsGeneratingAIHelp(false);
+            console.log('Phase form help completed:', { wordCount, agent });
+          },
+          onError: (error: string) => {
+            setIsStreamingAIHelp(false);
+            setIsGeneratingAIHelp(false);
+            throw new Error(error);
+          },
         }
-        
-        console.error('AI Help API error:', {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorMessage,
-          details: errorDetails
-        });
-        
-        throw new Error(errorMessage);
-      }
-
-      const result = await response.json();
-      const generatedContent = result.response || '';
-
-      // Pre-populate the current field with generated content
-      setFormData({
-        ...formData,
-        [currentField]: generatedContent.trim(),
-      });
-
+      );
     } catch (error) {
       console.error('Error generating AI help:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
@@ -883,6 +685,8 @@ export function PhaseFormModal({
       }
     } finally {
       setIsGeneratingAIHelp(false);
+      setIsStreamingAIHelp(false);
+      setStreamingContent('');
     }
   };
 
@@ -1164,7 +968,12 @@ export function PhaseFormModal({
       console.error(`Error creating ${provider} project:`, error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       if (errorMessage.includes('API key is not configured')) {
-        alert(`${provider === 'v0' ? 'V0' : 'Lovable'} API key is not configured. Please configure it in Settings.`);
+        if (provider === 'v0') {
+          alert('V0 API key is not configured. Please configure it in Settings.');
+        } else {
+          // Lovable doesn't require API key - it uses link generator
+          // This should not be reached, but if it is, just continue
+        }
       } else {
         alert(`Failed to create ${provider} project: ${errorMessage}`);
       }
@@ -1191,35 +1000,11 @@ export function PhaseFormModal({
 
     try {
       
-      // For Lovable, generate 3 thumbnail previews first
+      // Lovable prototype generation removed - users will copy prompt and paste manually in lovable.dev
       if (provider === 'lovable') {
-        const thumbnailsResponse = await fetch(`${API_URL}/api/design/generate-thumbnails`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            product_id: productId,
-            phase_submission_id: selectedSubmissionId,
-            lovable_prompt: prompt,
-            num_previews: 3,
-          }),
-        });
-
-        if (thumbnailsResponse.ok) {
-          const thumbnailsData = await thumbnailsResponse.json();
-          const previews = thumbnailsData.previews || [];
-          
-          if (previews.length > 0) {
-            // Show thumbnail selector
-            setLovableThumbnails(previews);
-            setShowThumbnailSelector(true);
-            // Don't set loading to false here - let the ThumbnailSelector's onSelect handle it
-            // The ThumbnailSelector will handle the rest when user confirms selection
-            return; // The ThumbnailSelector will handle the rest
-          }
-        }
+        alert('Please copy the Lovable prompt above and paste it manually into lovable.dev UI.');
+        setIsGeneratingMockup({ ...isGeneratingMockup, [provider]: false });
+        return;
       }
       
       // For V0, use new two-step workflow: create-project then submit-chat
@@ -1354,7 +1139,12 @@ export function PhaseFormModal({
       console.error(`Error generating ${provider} mockup:`, error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       if (errorMessage.includes('API key is not configured')) {
-        alert(`${provider === 'v0' ? 'V0' : 'Lovable'} API key is not configured. Please configure it in Settings.`);
+        if (provider === 'v0') {
+          alert('V0 API key is not configured. Please configure it in Settings.');
+        } else {
+          // Lovable doesn't require API key - it uses link generator
+          // This should not be reached, but if it is, just continue
+        }
       } else {
         alert(`Failed to generate ${provider} mockup: ${errorMessage}`);
       }
@@ -1856,33 +1646,7 @@ export function PhaseFormModal({
                         <span className="text-purple-600 font-medium">{promptScores.lovable}/5</span>
                       )}
                     </div>
-                           <button
-                             type="button"
-                             onClick={() => handleGenerateMockup('lovable')}
-                             disabled={isGeneratingMockup.lovable || isSubmitting || !productId || !sessionId || (() => {
-                               const promptsObj = formData['v0_lovable_prompts'] ? JSON.parse(formData['v0_lovable_prompts']) : {};
-                               return !promptsObj['lovable_prompt']?.trim();
-                             })()}
-                             className="w-full px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center justify-center gap-2"
-                           >
-                             {isGeneratingMockup.lovable ? (
-                               <>
-                                 <Loader2 className="w-4 h-4 animate-spin" />
-                                 Generating Prototypes...
-                               </>
-                             ) : (
-                               <>
-                                 <Play className="w-4 h-4" />
-                                 Generate Lovable Prototype (3 Options)
-                               </>
-                             )}
-                           </button>
-                           {isGeneratingMockup.lovable && (
-                             <div className="text-xs text-purple-600 mt-2 flex items-center gap-2">
-                               <Loader2 className="w-3 h-3 animate-spin" />
-                               <span>Generating 3 design variations. Please wait and select your preferred option when ready. The selected prototype will open in your browser.</span>
-                             </div>
-                           )}
+                           {/* Lovable Prototype button removed - users will copy prompt and paste manually in lovable.dev */}
                       </div>
                     );
                   })()}
@@ -2115,21 +1879,25 @@ export function PhaseFormModal({
                 </div>
                 <textarea
                   id={currentField}
-                  value={formData[currentField] || ''}
-                  onChange={(e) =>
-                    setFormData({ ...formData, [currentField]: e.target.value })
-                  }
+                  value={isStreamingAIHelp && streamingContent ? streamingContent : (formData[currentField] || '')}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setFormData((prev) => ({ ...prev, [currentField]: value }));
+                    if (isStreamingAIHelp) {
+                      setStreamingContent(''); // Clear streaming content when user types
+                    }
+                  }}
                   className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                   rows={8}
-                  placeholder="Enter your detailed response here... or click 'Help with AI' to get AI-generated content based on your previous responses"
+                  placeholder="Enter your detailed response here... or click 'Help with AI' to get AI-generated content based on your previous responses, conversation history, and all phase data"
                   disabled={isSubmitting || isGeneratingAIHelp}
                 />
                 <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
                   <span>{formData[currentField]?.length || 0} characters</span>
-                  {isGeneratingAIHelp && (
+                  {(isGeneratingAIHelp || isStreamingAIHelp) && (
                     <span className="text-purple-600 flex items-center gap-1">
                       <Loader2 className="w-3 h-3 animate-spin" />
-                      AI is generating contextualized content...
+                      {isStreamingAIHelp ? 'AI is streaming contextualized content...' : 'AI is generating contextualized content...'}
                     </span>
                   )}
                 </div>
@@ -2392,3 +2160,4 @@ export function PhaseFormModal({
   </div>
 );
 }
+

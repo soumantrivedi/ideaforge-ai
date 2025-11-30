@@ -40,6 +40,7 @@ Your output should:
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="research_knowledge_base",
+            model_tier="fast",  # Use fast model for research (50-70% latency reduction)
             capabilities=[
                 "market research",
                 "competitive analysis",

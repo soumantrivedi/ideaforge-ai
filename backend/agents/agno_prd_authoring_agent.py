@@ -120,6 +120,7 @@ Use clear, concise language. Focus on measurable outcomes. Ensure all sections a
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="prd_knowledge_base",
+            model_tier="standard",  # Use standard model for PRD authoring (important quality)
             capabilities=[
                 "prd",
                 "product requirements",

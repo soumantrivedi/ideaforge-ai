@@ -55,7 +55,7 @@ The following API keys are **REQUIRED** for the application to function:
 2. **Load secrets to Kubernetes:**
    ```bash
    # For kind cluster
-   ./k8s/load-secrets-to-k8s.sh .env ideaforge-ai kind-ideaforge-ai
+   make kind-load-secrets
    ```
 
 3. **Or use the Makefile target:**
@@ -110,7 +110,7 @@ The following API keys are **REQUIRED** for the application to function:
 2. **Load secrets to Kubernetes:**
    ```bash
    # For EKS cluster (replace with your namespace)
-   ./k8s/load-secrets-to-k8s.sh .env your-namespace
+   make eks-load-secrets EKS_NAMESPACE=your-namespace
    ```
 
 3. **Deploy:**

@@ -1,177 +1,216 @@
 #!/bin/bash
-# EKS Production Deployment Script
-# This script handles the complete EKS deployment with verification
+# Comprehensive EKS Production Deployment Script
+# Handles: DB backup, migrations, secrets, configmaps, and verification
+# Usage: ./scripts/deploy-eks-production.sh [EKS_NAMESPACE] [BACKEND_IMAGE_TAG] [FRONTEND_IMAGE_TAG]
 
 set -e
 
 EKS_NAMESPACE=${1:-"20890-ideaforge-ai-dev-58a50"}
-BACKEND_TAG="28a283d"
-FRONTEND_TAG="28a283d"
-EKS_CLUSTER_NAME=${EKS_CLUSTER_NAME:-"ideaforge-ai"}
+BACKEND_IMAGE_TAG=${2:-"latest"}
+FRONTEND_IMAGE_TAG=${3:-"latest"}
 EKS_REGION=${EKS_REGION:-"us-east-1"}
+EKS_CLUSTER_NAME=${EKS_CLUSTER_NAME:-"ideaforge-ai"}
 
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-echo -e "${BLUE}🚀 EKS Production Deployment${NC}"
-echo "=============================="
+echo "🚀 Starting EKS Production Deployment"
+echo "======================================"
 echo "Namespace: $EKS_NAMESPACE"
-echo "Backend Tag: $BACKEND_TAG"
-echo "Frontend Tag: $FRONTEND_TAG"
-echo "Cluster: $EKS_CLUSTER_NAME"
+echo "Backend Image: ideaforge-ai-backend:$BACKEND_IMAGE_TAG"
+echo "Frontend Image: ideaforge-ai-frontend:$FRONTEND_IMAGE_TAG"
 echo "Region: $EKS_REGION"
+echo "Cluster: $EKS_CLUSTER_NAME"
 echo ""
 
-# Step 1: Check kubectl configuration
-echo -e "${YELLOW}Step 1: Checking kubectl configuration...${NC}"
-if ! kubectl cluster-info &> /dev/null; then
-    echo -e "${RED}❌ kubectl not configured${NC}"
-    echo "   Configuring kubectl for EKS..."
-    aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$EKS_REGION" || {
-        echo -e "${RED}❌ Failed to configure kubectl. Please ensure:${NC}"
-        echo "   1. AWS CLI is configured"
-        echo "   2. You have access to the EKS cluster"
-        echo "   3. Cluster name and region are correct"
+# Verify kubectl context
+echo "🔍 Verifying kubectl context..."
+CURRENT_CONTEXT=$(kubectl config current-context)
+if [[ ! "$CURRENT_CONTEXT" =~ "$EKS_CLUSTER_NAME" ]]; then
+    echo "⚠️  Warning: Current context is $CURRENT_CONTEXT"
+    echo "   Expected context to contain: $EKS_CLUSTER_NAME"
+    read -p "Continue anyway? (y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "❌ Deployment cancelled"
         exit 1
-    }
+    fi
 fi
-echo -e "${GREEN}✅ kubectl configured${NC}"
 
-# Step 2: Verify namespace exists
-echo -e "${YELLOW}Step 2: Verifying namespace exists...${NC}"
+# Verify namespace exists
+echo "🔍 Verifying namespace..."
 if ! kubectl get namespace "$EKS_NAMESPACE" &> /dev/null; then
-    echo -e "${RED}❌ Namespace $EKS_NAMESPACE does not exist${NC}"
-    echo "   Please create the namespace first or verify the namespace name"
-    exit 1
-fi
-echo -e "${GREEN}✅ Namespace exists${NC}"
-
-# Step 3: Clean up old replicasets
-echo -e "${YELLOW}Step 3: Cleaning up old replicasets...${NC}"
-OLD_RS=$(kubectl get replicasets -n "$EKS_NAMESPACE" -o json 2>/dev/null | \
-    jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' 2>/dev/null || echo "")
-
-if [ -n "$OLD_RS" ]; then
-    echo "$OLD_RS" | while read rs; do
-        if [ -n "$rs" ]; then
-            echo "   Deleting: $rs"
-            kubectl delete replicaset "$rs" -n "$EKS_NAMESPACE" --ignore-not-found=true
-        fi
-    done
-    echo -e "${GREEN}✅ Old replicasets cleaned${NC}"
+    echo "❌ Namespace $EKS_NAMESPACE does not exist"
+    echo "   Creating namespace..."
+    kubectl create namespace "$EKS_NAMESPACE"
+    echo "✅ Namespace created"
 else
-    echo -e "${GREEN}✅ No old replicasets found${NC}"
+    echo "✅ Namespace exists"
 fi
 
-# Step 4: Setup GHCR secret
-echo -e "${YELLOW}Step 4: Setting up GHCR secret...${NC}"
-make eks-setup-ghcr-secret EKS_NAMESPACE="$EKS_NAMESPACE" || {
-    echo -e "${YELLOW}⚠️  GHCR secret setup skipped (may already exist)${NC}"
-}
+# Step 1: Database Backup (if database exists)
+echo ""
+echo "📦 Step 1: Database Backup"
+echo "-------------------------"
+POSTGRES_POD=$(kubectl get pods -n "$EKS_NAMESPACE" -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+if [ -n "$POSTGRES_POD" ]; then
+    BACKUP_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_FILE="backups/eks_db_backup_${EKS_NAMESPACE}_${BACKUP_TIMESTAMP}.sql"
+    mkdir -p backups
+    
+    echo "💾 Creating database backup..."
+    kubectl exec -n "$EKS_NAMESPACE" "$POSTGRES_POD" -- pg_dump -U agentic_pm -d agentic_pm_db \
+        --clean --if-exists --create \
+        --format=plain \
+        --no-owner --no-privileges \
+        > "$BACKUP_FILE" 2>&1 || {
+        echo "⚠️  Warning: Database backup failed, but continuing..."
+    }
+    
+    if [ -f "$BACKUP_FILE" ] && [ -s "$BACKUP_FILE" ]; then
+        BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+        echo "✅ Database backup created: $BACKUP_FILE ($BACKUP_SIZE)"
+    else
+        echo "⚠️  Warning: Backup file is empty or missing"
+    fi
+else
+    echo "ℹ️  No existing PostgreSQL pod found, skipping backup (fresh install)"
+fi
 
-# Step 5: Load secrets from .env
-echo -e "${YELLOW}Step 5: Loading secrets from .env...${NC}"
-if [ -f .env ]; then
+# Step 2: Load Secrets and ConfigMaps
+echo ""
+echo "📋 Step 2: Loading Secrets and ConfigMaps"
+echo "-----------------------------------------"
+if [ -f ".env" ]; then
+    echo "📦 Loading secrets from .env file..."
     make eks-load-secrets EKS_NAMESPACE="$EKS_NAMESPACE" || {
-        echo -e "${YELLOW}⚠️  Secret loading failed, continuing...${NC}"
+        echo "⚠️  Warning: Failed to load secrets from .env"
+        echo "   Make sure .env file exists and contains API keys"
     }
 else
-    echo -e "${YELLOW}⚠️  .env file not found, skipping secret loading${NC}"
+    echo "⚠️  Warning: .env file not found"
+    echo "   Secrets must be manually configured in Kubernetes"
+    echo "   Use: kubectl create secret generic ideaforge-ai-secrets --from-literal=OPENAI_API_KEY=... -n $EKS_NAMESPACE"
 fi
 
-# Step 6: Update ConfigMaps
-echo -e "${YELLOW}Step 6: Updating ConfigMaps...${NC}"
-EKS_NAMESPACE="$EKS_NAMESPACE" bash k8s/create-db-configmaps.sh || {
-    echo -e "${YELLOW}⚠️  ConfigMap update failed, continuing...${NC}"
+# Apply ConfigMaps
+echo "📋 Applying ConfigMaps..."
+kubectl apply -f k8s/eks/configmap.yaml -n "$EKS_NAMESPACE" || {
+    echo "⚠️  Warning: Failed to apply configmap"
 }
 
-# Step 7: Update image tags in deployments
-echo -e "${YELLOW}Step 7: Updating deployment images...${NC}"
-kubectl set image deployment/backend backend=ghcr.io/soumantrivedi/ideaforge-ai/backend:$BACKEND_TAG -n "$EKS_NAMESPACE" || {
-    echo -e "${RED}❌ Failed to update backend image${NC}"
-    exit 1
-}
-kubectl set image deployment/frontend frontend=ghcr.io/soumantrivedi/ideaforge-ai/frontend:$FRONTEND_TAG -n "$EKS_NAMESPACE" || {
-    echo -e "${RED}❌ Failed to update frontend image${NC}"
-    exit 1
-}
-echo -e "${GREEN}✅ Image tags updated${NC}"
-
-# Step 8: Wait for rollout
-echo -e "${YELLOW}Step 8: Waiting for deployments to roll out...${NC}"
-kubectl rollout status deployment/backend -n "$EKS_NAMESPACE" --timeout=300s || {
-    echo -e "${YELLOW}⚠️  Backend rollout timeout, checking status...${NC}"
-    kubectl get pods -n "$EKS_NAMESPACE" -l app=backend
-}
-kubectl rollout status deployment/frontend -n "$EKS_NAMESPACE" --timeout=300s || {
-    echo -e "${YELLOW}⚠️  Frontend rollout timeout, checking status...${NC}"
-    kubectl get pods -n "$EKS_NAMESPACE" -l app=frontend
-}
-
-# Step 9: Verify deployment
-echo -e "${YELLOW}Step 9: Verifying deployment...${NC}"
+# Step 3: Database Setup and Migrations
 echo ""
-echo -e "${BLUE}Pod Status:${NC}"
-kubectl get pods -n "$EKS_NAMESPACE" -l 'app in (backend,frontend)'
+echo "🗄️  Step 3: Database Setup and Migrations"
+echo "-----------------------------------------"
 
-echo ""
-echo -e "${BLUE}Image Tags:${NC}"
-BACKEND_IMAGE=$(kubectl get deployment backend -n "$EKS_NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
-FRONTEND_IMAGE=$(kubectl get deployment frontend -n "$EKS_NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
-echo "Backend: $BACKEND_IMAGE"
-echo "Frontend: $FRONTEND_IMAGE"
+# Create ConfigMaps for migrations and seed data
+echo "📦 Creating database ConfigMaps..."
+./k8s/create-db-configmaps.sh "$EKS_NAMESPACE" || {
+    echo "⚠️  Warning: Failed to create database ConfigMaps"
+}
 
-if echo "$BACKEND_IMAGE" | grep -q "$BACKEND_TAG" && echo "$FRONTEND_IMAGE" | grep -q "$FRONTEND_TAG"; then
-    echo -e "${GREEN}✅ Image tags match expected tags${NC}"
+# Run database setup job (includes migrations)
+echo "🔄 Running database setup job..."
+kubectl delete job db-setup -n "$EKS_NAMESPACE" --ignore-not-found=true
+kubectl apply -f k8s/eks/db-setup-job.yaml -n "$EKS_NAMESPACE"
+
+echo "⏳ Waiting for database setup to complete..."
+if kubectl wait --for=condition=complete --timeout=300s job/db-setup -n "$EKS_NAMESPACE" 2>/dev/null; then
+    echo "✅ Database setup completed"
 else
-    echo -e "${YELLOW}⚠️  Image tags may not match expected tags${NC}"
+    echo "❌ Database setup job failed or timed out"
+    echo "📋 Job logs:"
+    kubectl logs -n "$EKS_NAMESPACE" job/db-setup --tail=50
+    exit 1
 fi
 
-# Step 10: Verify async endpoints
+# Step 4: Deploy Application
 echo ""
-echo -e "${YELLOW}Step 10: Verifying async endpoints...${NC}"
+echo "🚀 Step 4: Deploying Application"
+echo "--------------------------------"
+
+# Update image tags in deployment files
+echo "🔄 Updating image tags..."
+sed -i.bak "s|image:.*ideaforge-ai-backend.*|image: ideaforge-ai-backend:$BACKEND_IMAGE_TAG|g" k8s/eks/backend.yaml
+sed -i.bak "s|image:.*ideaforge-ai-frontend.*|image: ideaforge-ai-frontend:$FRONTEND_IMAGE_TAG|g" k8s/eks/frontend.yaml
+
+# Apply deployments
+echo "📦 Applying backend deployment..."
+kubectl apply -f k8s/eks/backend.yaml -n "$EKS_NAMESPACE"
+
+echo "📦 Applying frontend deployment..."
+kubectl apply -f k8s/eks/frontend.yaml -n "$EKS_NAMESPACE"
+
+# Wait for deployments
+echo "⏳ Waiting for deployments to be ready..."
+kubectl rollout status deployment/backend -n "$EKS_NAMESPACE" --timeout=300s
+kubectl rollout status deployment/frontend -n "$EKS_NAMESPACE" --timeout=300s
+
+# Step 5: Verification
+echo ""
+echo "✅ Step 5: Verification"
+echo "---------------------"
+
+# Check pods
+echo "🔍 Checking pod status..."
+kubectl get pods -n "$EKS_NAMESPACE" -l app=backend
+kubectl get pods -n "$EKS_NAMESPACE" -l app=frontend
+
+# Check API keys are loaded
+echo ""
+echo "🔍 Verifying API keys in secrets..."
+OPENAI_KEY=$(kubectl get secret ideaforge-ai-secrets -n "$EKS_NAMESPACE" -o jsonpath='{.data.OPENAI_API_KEY}' 2>/dev/null | base64 -d || echo "")
+ANTHROPIC_KEY=$(kubectl get secret ideaforge-ai-secrets -n "$EKS_NAMESPACE" -o jsonpath='{.data.ANTHROPIC_API_KEY}' 2>/dev/null | base64 -d || echo "")
+GOOGLE_KEY=$(kubectl get secret ideaforge-ai-secrets -n "$EKS_NAMESPACE" -o jsonpath='{.data.GOOGLE_API_KEY}' 2>/dev/null | base64 -d || echo "")
+
+if [ -n "$OPENAI_KEY" ] && [ "$OPENAI_KEY" != "" ]; then
+    echo "✅ OpenAI API key is configured"
+else
+    echo "⚠️  OpenAI API key is not configured"
+fi
+
+if [ -n "$ANTHROPIC_KEY" ] && [ "$ANTHROPIC_KEY" != "" ]; then
+    echo "✅ Anthropic API key is configured"
+else
+    echo "⚠️  Anthropic API key is not configured"
+fi
+
+if [ -n "$GOOGLE_KEY" ] && [ "$GOOGLE_KEY" != "" ]; then
+    echo "✅ Google API key is configured"
+else
+    echo "⚠️  Google API key is not configured"
+fi
+
+# Check backend logs for Agno initialization
+echo ""
+echo "🔍 Checking backend logs for Agno initialization..."
 BACKEND_POD=$(kubectl get pods -n "$EKS_NAMESPACE" -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 if [ -n "$BACKEND_POD" ]; then
-    echo "   Checking backend pod: $BACKEND_POD"
+    echo "📋 Recent backend logs:"
+    kubectl logs -n "$EKS_NAMESPACE" "$BACKEND_POD" --tail=30 | grep -i "agno\|provider\|orchestrator" || echo "   (No Agno-related logs found)"
     
-    # Check if job service can be imported
-    kubectl exec -n "$EKS_NAMESPACE" "$BACKEND_POD" -- \
-        python -c "from backend.services.job_service import job_service; print('✅ Job service imported')" 2>/dev/null && \
-        echo -e "${GREEN}✅ Job service available${NC}" || \
-        echo -e "${YELLOW}⚠️  Could not verify job service (may need to check logs)${NC}"
-    
-    # Check backend logs
-    echo "   Recent backend logs:"
-    kubectl logs -n "$EKS_NAMESPACE" "$BACKEND_POD" --tail=20 | grep -i "job\|async\|submit" | head -3 || echo "      (No async endpoint logs found yet)"
-else
-    echo -e "${YELLOW}⚠️  Backend pod not found${NC}"
-fi
-
-# Step 11: Check Redis
-echo ""
-echo -e "${YELLOW}Step 11: Checking Redis...${NC}"
-REDIS_POD=$(kubectl get pods -n "$EKS_NAMESPACE" -l app=redis -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-if [ -n "$REDIS_POD" ]; then
-    kubectl exec -n "$EKS_NAMESPACE" "$REDIS_POD" -- redis-cli ping 2>/dev/null && \
-        echo -e "${GREEN}✅ Redis is accessible${NC}" || \
-        echo -e "${YELLOW}⚠️  Redis ping failed${NC}"
-else
-    echo -e "${YELLOW}⚠️  Redis pod not found${NC}"
+    # Check health endpoint
+    echo ""
+    echo "🔍 Checking backend health..."
+    BACKEND_SVC=$(kubectl get svc -n "$EKS_NAMESPACE" -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    if [ -n "$BACKEND_SVC" ]; then
+        kubectl run -it --rm curl-test --image=curlimages/curl:latest --restart=Never -n "$EKS_NAMESPACE" -- \
+            curl -s http://$BACKEND_SVC:8000/health || echo "   (Health check failed)"
+    fi
 fi
 
 echo ""
-echo -e "${GREEN}✅ EKS Deployment Complete!${NC}"
+echo "✅ Deployment Complete!"
 echo ""
-echo -e "${BLUE}📊 Summary:${NC}"
-echo "===================="
-kubectl get all -n "$EKS_NAMESPACE" -l 'app in (backend,frontend,redis,postgres)' | head -20
-
+echo "📋 Summary:"
+echo "   - Namespace: $EKS_NAMESPACE"
+echo "   - Backend: ideaforge-ai-backend:$BACKEND_IMAGE_TAG"
+echo "   - Frontend: ideaforge-ai-frontend:$FRONTEND_IMAGE_TAG"
+echo "   - Database: Setup and migrations completed"
+if [ -n "$BACKUP_FILE" ] && [ -f "$BACKUP_FILE" ]; then
+    echo "   - Backup: $BACKUP_FILE"
+fi
 echo ""
-echo -e "${YELLOW}📝 Next Steps:${NC}"
-echo "1. Test async endpoint: ./scripts/verify-async-endpoints.sh $EKS_NAMESPACE"
-echo "2. Monitor logs: kubectl logs -n $EKS_NAMESPACE -l app=backend -f"
-echo "3. Check ingress: kubectl get ingress -n $EKS_NAMESPACE"
-
+echo "💡 Next steps:"
+echo "   1. Verify API keys are configured in secrets"
+echo "   2. Check backend logs for Agno initialization"
+echo "   3. Test the application endpoints"
+echo "   4. Monitor pod health: kubectl get pods -n $EKS_NAMESPACE"

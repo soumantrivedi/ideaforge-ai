@@ -1,6 +1,7 @@
-import { useState } from 'react';
-import { Plus, Trash2, Search, BookOpen, Upload } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Trash2, Search, BookOpen, Upload, X, Eye, EyeOff } from 'lucide-react';
 import type { Document } from '../lib/rag-system';
+import { ContentFormatter } from '../lib/content-formatter';
 
 interface KnowledgeBaseManagerProps {
   documents: Document[];
@@ -21,6 +22,7 @@ export function KnowledgeBaseManager({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Document[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [previewedDocId, setPreviewedDocId] = useState<string | null>(null);
 
   const handleAddDocument = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,6 +46,27 @@ export function KnowledgeBaseManager({
 
   const displayDocuments = searchQuery.trim() ? (Array.isArray(searchResults) ? searchResults : []) : (Array.isArray(documents) ? documents : []);
   const documentsCount = Array.isArray(documents) ? documents.length : 0;
+
+  // Handle keyboard shortcuts for preview
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Escape key to close preview
+      if (e.key === 'Escape' && previewedDocId) {
+        setPreviewedDocId(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [previewedDocId]);
+
+  const togglePreview = (docId: string) => {
+    if (previewedDocId === docId) {
+      setPreviewedDocId(null);
+    } else {
+      setPreviewedDocId(docId);
+    }
+  };
 
   return (
     <div className="rounded-xl border p-6" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
@@ -206,18 +229,62 @@ export function KnowledgeBaseManager({
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <h4 className="font-semibold text-gray-900 mb-2">{doc.title}</h4>
-                  <p className="text-sm text-gray-600 line-clamp-2">{doc.content}</p>
+                  <div className="flex items-center gap-2 mb-2">
+                    <h4 
+                      className="font-semibold text-gray-900 cursor-pointer hover:text-blue-600 transition"
+                      onClick={() => togglePreview(doc.id)}
+                    >
+                      {doc.title}
+                    </h4>
+                    <button
+                      onClick={() => togglePreview(doc.id)}
+                      className="p-1 text-gray-500 hover:text-blue-600 rounded transition"
+                      title={previewedDocId === doc.id ? "Hide preview (Esc)" : "Show preview"}
+                    >
+                      {previewedDocId === doc.id ? (
+                        <EyeOff className="w-4 h-4" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                  {previewedDocId === doc.id ? (
+                    <div className="relative mt-2 p-4 bg-gray-50 rounded-lg border border-gray-200 max-h-96 overflow-y-auto">
+                      <button
+                        onClick={() => setPreviewedDocId(null)}
+                        className="absolute top-2 right-2 p-1 text-gray-500 hover:text-gray-700 rounded transition"
+                        title="Close preview (Esc)"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                      <div 
+                        className="prose prose-sm max-w-none"
+                        dangerouslySetInnerHTML={{ 
+                          __html: ContentFormatter.markdownToHtml(doc.content || '') 
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-600 line-clamp-2">{doc.content}</p>
+                  )}
                   <p className="text-xs text-gray-400 mt-2">
                     {new Date(doc.created_at).toLocaleDateString()}
+                    {doc.source && (
+                      <span className="ml-2 px-2 py-0.5 bg-gray-100 rounded text-gray-600">
+                        {doc.source}
+                      </span>
+                    )}
                   </p>
                 </div>
-                <button
-                  onClick={() => onDeleteDocument(doc.id)}
-                  className="ml-4 p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-2 ml-4">
+                  <button
+                    onClick={() => onDeleteDocument(doc.id)}
+                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition"
+                    title="Delete document"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           ))

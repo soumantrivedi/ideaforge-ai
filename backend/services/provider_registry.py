@@ -27,27 +27,37 @@ class ProviderRegistry:
         self._rebuild_clients()
 
     def _rebuild_clients(self) -> None:
+        """Rebuild provider clients from current keys. Can be called to refresh clients after keys are updated."""
         # Only create clients if keys are non-empty after stripping
         self._openai_client = None
         if self._openai_key and self._openai_key.strip():
             try:
                 self._openai_client = OpenAI(api_key=self._openai_key.strip())
-            except Exception:
+            except Exception as e:
+                import structlog
+                logger = structlog.get_logger()
+                logger.warning("openai_client_creation_failed", error=str(e))
                 self._openai_client = None
         
         self._claude_client = None
         if self._claude_key and self._claude_key.strip():
             try:
                 self._claude_client = Anthropic(api_key=self._claude_key.strip())
-            except Exception:
+            except Exception as e:
+                import structlog
+                logger = structlog.get_logger()
+                logger.warning("claude_client_creation_failed", error=str(e))
                 self._claude_client = None
-
+        
         self._gemini_configured = False
         if self._gemini_key and self._gemini_key.strip():
             try:
                 genai.configure(api_key=self._gemini_key.strip())
                 self._gemini_configured = True
-            except Exception:
+            except Exception as e:
+                import structlog
+                logger = structlog.get_logger()
+                logger.warning("gemini_client_creation_failed", error=str(e))
                 self._gemini_configured = False
 
     def update_keys(

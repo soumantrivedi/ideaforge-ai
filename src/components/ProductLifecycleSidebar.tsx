@@ -262,14 +262,6 @@ export function ProductLifecycleSidebar({
         )}
       </div>
 
-      {productId && (
-        <div className="p-4 border-t border-gray-200 bg-gradient-to-r from-blue-50 to-purple-50">
-          <div className="text-xs text-gray-600 mb-2">Current Product</div>
-          <div className="text-sm font-semibold text-gray-900 truncate">
-            {productId.substring(0, 8)}...
-          </div>
-        </div>
-      )}
     </div>
   );
 }

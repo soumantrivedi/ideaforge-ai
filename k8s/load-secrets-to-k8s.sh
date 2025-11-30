@@ -1,4 +1,8 @@
 #!/bin/bash
+# DEPRECATED: This script is deprecated. Use make targets instead:
+#   - For Kind: make kind-load-secrets
+#   - For EKS: make eks-load-secrets EKS_NAMESPACE=your-namespace
+#
 # Script to load secrets from .env file into Kubernetes secrets
 # Usage: ./load-secrets-to-k8s.sh [.env-file] [namespace] [context]
 # Example: ./load-secrets-to-k8s.sh .env ideaforge-ai kind-ideaforge-ai

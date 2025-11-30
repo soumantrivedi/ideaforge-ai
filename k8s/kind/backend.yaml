@@ -28,11 +28,7 @@ spec:
           protocol: TCP
         env:
         # Database Configuration
-        - name: DATABASE_URL
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: DATABASE_URL
+        # DATABASE_URL is constructed from individual components below
         - name: POSTGRES_HOST
           valueFrom:
             configMapKeyRef:
@@ -58,6 +54,9 @@ spec:
             configMapKeyRef:
               name: ideaforge-ai-config
               key: POSTGRES_DB
+        # Construct DATABASE_URL from individual components
+        - name: DATABASE_URL
+          value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
         # Redis Configuration
         - name: REDIS_URL
           valueFrom:

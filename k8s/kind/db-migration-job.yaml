@@ -1,0 +1,160 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migration
+  namespace: ideaforge-ai
+  labels:
+    app: db-migration
+    component: database
+spec:
+  completions: 1
+  parallelism: 1
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: db-migration
+        component: database
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: db-migration
+        image: pgvector/pgvector:pg15
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "🔄 Starting database migration with backup..."
+          
+          # Wait for PostgreSQL to be ready
+          echo "⏳ Waiting for PostgreSQL to be ready..."
+          until pg_isready -h postgres -U agentic_pm -d agentic_pm_db; do
+            echo "   PostgreSQL not ready, waiting..."
+            sleep 2
+          done
+          echo "✅ PostgreSQL is ready"
+          
+          # Create backup before migration
+          BACKUP_FILE="/tmp/pre_migration_backup_$(date +%Y%m%d_%H%M%S).sql"
+          echo "💾 Creating pre-migration backup..."
+          pg_dump -h postgres -U agentic_pm -d agentic_pm_db \
+            --clean --if-exists --create \
+            --verbose \
+            --format=plain \
+            --no-owner --no-privileges \
+            > "$BACKUP_FILE" 2>&1
+          
+          if [ $? -eq 0 ]; then
+            BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+            echo "✅ Pre-migration backup created: $BACKUP_FILE ($BACKUP_SIZE)"
+          else
+            echo "⚠️  Warning: Pre-migration backup failed, but continuing..."
+          fi
+          
+          # Check current schema version (if migration tracking table exists)
+          echo "🔍 Checking current schema version..."
+          SCHEMA_VERSION=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "
+            SELECT version FROM schema_migrations ORDER BY applied_at DESC LIMIT 1;
+          " 2>/dev/null | xargs || echo "0")
+          
+          echo "   Current schema version: $SCHEMA_VERSION"
+          
+          # Run migrations
+          echo "🔄 Running database migrations..."
+          if [ -d /migrations ]; then
+            MIGRATION_COUNT=0
+            for migration in /migrations/*.sql; do
+              if [ -f "$migration" ]; then
+                MIGRATION_NAME=$(basename "$migration")
+                echo "   Running migration: $MIGRATION_NAME"
+                
+                # Check if migration already applied (if tracking table exists)
+                ALREADY_APPLIED=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "
+                  SELECT EXISTS (
+                    SELECT 1 FROM schema_migrations 
+                    WHERE version = '$MIGRATION_NAME'
+                  );
+                " 2>/dev/null | xargs || echo "false")
+                
+                if [ "$ALREADY_APPLIED" = "t" ]; then
+                  echo "   ⏭️  Migration $MIGRATION_NAME already applied, skipping"
+                else
+                  # Run migration
+                  psql -h postgres -U agentic_pm -d agentic_pm_db -f "$migration" 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
+                  
+                  # Record migration (if tracking table exists)
+                  psql -h postgres -U agentic_pm -d agentic_pm_db -c "
+                    INSERT INTO schema_migrations (version, applied_at)
+                    VALUES ('$MIGRATION_NAME', NOW())
+                    ON CONFLICT (version) DO NOTHING;
+                  " 2>/dev/null || true
+                  
+                  MIGRATION_COUNT=$((MIGRATION_COUNT + 1))
+                  echo "   ✅ Migration $MIGRATION_NAME applied"
+                fi
+              fi
+            done
+            echo "✅ Applied $MIGRATION_COUNT new migration(s)"
+          else
+            echo "⚠️  No migrations directory found"
+          fi
+          
+          # Verify migration
+          echo "📊 Verifying database schema..."
+          psql -h postgres -U agentic_pm -d agentic_pm_db -c "
+            SELECT 
+              (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public') as tables,
+              (SELECT COUNT(*) FROM schema_migrations) as migrations_applied;
+          " 2>&1 | grep -E "[0-9]+" || true
+          
+          echo "✅ Database migration complete!"
+          echo "   Backup saved at: $BACKUP_FILE"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_DB
+        volumeMounts:
+        - name: migrations
+          mountPath: /migrations
+          readOnly: true
+      volumes:
+      - name: migrations
+        configMap:
+          name: db-migrations
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres -U agentic_pm; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+

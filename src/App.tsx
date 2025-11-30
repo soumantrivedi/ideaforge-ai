@@ -2,9 +2,19 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { LoginPage } from './components/LoginPage';
 import { MainApp } from './components/MainApp';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { CommandPalette } from './components/CommandPalette';
+import { initKeyboardShortcuts } from './lib/keyboard-shortcuts';
+import { useEffect } from 'react';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
+
+  // Initialize keyboard shortcuts
+  useEffect(() => {
+    const cleanup = initKeyboardShortcuts();
+    return cleanup;
+  }, []);
 
   if (isLoading) {
     return (
@@ -21,16 +31,23 @@ function AppContent() {
     return <LoginPage onLoginSuccess={() => {}} />;
   }
 
-  return <MainApp />;
+  return (
+    <>
+      <CommandPalette />
+      <MainApp />
+    </>
+  );
 }
 
 function App() {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
 

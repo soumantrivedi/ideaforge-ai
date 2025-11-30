@@ -12,12 +12,18 @@ async def load_user_api_keys_from_db(
     db: AsyncSession,
     user_id: str
 ) -> dict[str, Optional[str]]:
-    """Load and decrypt API keys from database for a user."""
+    """Load and decrypt API keys from database for a user.
+    
+    Returns a dictionary with keys for:
+    - AI providers: 'openai', 'claude', 'gemini', 'v0', 'lovable'
+    - Atlassian: 'atlassian_email', 'atlassian_api_token', 'atlassian_url', 'atlassian_cloud_id'
+    - GitHub: 'github_token', 'github_org'
+    """
     try:
         await db.execute(text(f"SET LOCAL app.current_user_id = '{user_id}'"))
         
         query = text("""
-            SELECT provider, api_key_encrypted
+            SELECT provider, api_key_encrypted, metadata
             FROM user_api_keys
             WHERE user_id = :user_id AND is_active = true
         """)
@@ -31,6 +37,8 @@ async def load_user_api_keys_from_db(
         for row in rows:
             provider = row[0]
             encrypted_key = row[1]
+            metadata = row[2] if len(row) > 2 else None
+            
             try:
                 if not encrypted_key:
                     logger.warning("empty_encrypted_key", provider=provider, user_id=user_id)
@@ -41,6 +49,7 @@ async def load_user_api_keys_from_db(
                     continue
                 # Trim the decrypted key to remove any whitespace
                 decrypted_key = decrypted_key.strip()
+                
                 # Map database provider names to registry names
                 if provider == 'openai':
                     keys['openai'] = decrypted_key
@@ -56,6 +65,36 @@ async def load_user_api_keys_from_db(
                                key_prefix=decrypted_key[:8] + "..." if len(decrypted_key) > 8 else "N/A")
                 elif provider == 'lovable':
                     keys['lovable'] = decrypted_key
+                elif provider == 'github':
+                    keys['github_token'] = decrypted_key
+                    # Extract org from metadata if available
+                    if metadata and isinstance(metadata, dict):
+                        keys['github_org'] = metadata.get('org') or metadata.get('organization')
+                elif provider == 'atlassian':
+                    # For Atlassian, api_key_encrypted contains the API token
+                    keys['atlassian_api_token'] = decrypted_key
+                    keys['ATLASSIAN_API_TOKEN'] = decrypted_key  # Also provide uppercase variant
+                    
+                    # Extract email and URL from metadata
+                    if metadata and isinstance(metadata, dict):
+                        keys['atlassian_email'] = metadata.get('email')
+                        keys['ATLASSIAN_EMAIL'] = metadata.get('email')  # Also provide uppercase variant
+                        keys['atlassian_url'] = metadata.get('url')
+                        
+                        # Extract cloud ID from URL if available
+                        if metadata.get('url'):
+                            import re
+                            url = metadata.get('url')
+                            # Try to extract cloud ID from URL
+                            cloud_match = re.search(r'https?://([^.]+)\.atlassian\.net', url)
+                            if cloud_match:
+                                keys['atlassian_cloud_id'] = cloud_match.group(1)
+                    
+                    logger.info("atlassian_credentials_loaded_from_db",
+                               user_id=user_id,
+                               has_email=bool(keys.get('atlassian_email')),
+                               has_token=bool(keys.get('atlassian_api_token')))
+                
                 logger.debug("key_decrypted_successfully", provider=provider, user_id=user_id, key_length=len(decrypted_key))
             except ValueError as e:
                 error_msg = str(e) if str(e) else "Unknown decryption error"

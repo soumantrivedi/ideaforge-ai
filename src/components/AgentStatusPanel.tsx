@@ -102,6 +102,7 @@ export function AgentStatusPanel({
       prd_authoring: '📝',
       summary: '📄',
       scoring: '⭐',
+      strategy: '🎯',
       validation: '✅',
       export: '📤',
       v0: '🎨',
@@ -143,51 +144,63 @@ export function AgentStatusPanel({
     }
   };
 
-  // Get latest interaction for an agent
-  const getLatestInteraction = (agentRole: string): AgentInteraction | undefined => {
-    return agentInteractions
+  // Get latest interaction for an agent - improved matching
+  const getLatestInteraction = (agentRole: string, agentName?: string): AgentInteraction | undefined => {
+    // Normalize agent role and name for matching
+    const normalizedRole = agentRole.toLowerCase().replace(/\s+/g, '_');
+    const normalizedName = agentName ? agentName.toLowerCase().replace(/\s+/g, '_') : normalizedRole;
+    
+    const matchingInteractions = agentInteractions
       .filter(interaction => {
         const toAgent = (interaction.to_agent || '').toLowerCase().replace(/\s+/g, '_');
         const fromAgent = (interaction.from_agent || '').toLowerCase().replace(/\s+/g, '_');
-        return toAgent === agentRole || fromAgent === agentRole;
+        // Match by role, name, or both
+        return toAgent === normalizedRole || fromAgent === normalizedRole ||
+               toAgent === normalizedName || fromAgent === normalizedName ||
+               toAgent.includes(normalizedRole) || fromAgent.includes(normalizedRole) ||
+               normalizedRole.includes(toAgent) || normalizedRole.includes(fromAgent);
       })
       .sort((a, b) => {
         const timeA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
         const timeB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
         return timeB - timeA;
-      })[0];
+      });
+    
+    // Return the most recent interaction
+    return matchingInteractions[0];
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-4">
-      <div className="flex items-center justify-center mb-4">
-        <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl">
-          <Activity className="w-4 h-4 text-white" />
+    <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-2">
+      <div className="flex items-center justify-center mb-2">
+        <div className="p-1.5 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg">
+          <Activity className="w-3 h-3 text-white" />
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 justify-center">
+      <div className="flex flex-col gap-2 items-center">
         {displayAgents.length === 0 ? (
-          <div className="text-center py-4 text-gray-500 text-xs w-full">
-            <p>No active agents</p>
+          <div className="text-center py-2 text-gray-500 text-xs w-full">
+            <p>No agents</p>
           </div>
         ) : (
           displayAgents.map((agent) => {
-            const latestInteraction = agent.latestInteraction || getLatestInteraction(agent.role);
+            // Get latest interaction - prefer agent's latestInteraction, otherwise search
+            const latestInteraction = agent.latestInteraction || getLatestInteraction(agent.role, agent.name);
             return (
               <div key={agent.role} className="relative group">
                 <button
                   onClick={() => handleAgentClick(agent)}
-                  className={`w-10 h-10 rounded-xl bg-gradient-to-br ${getAgentColor(
+                  className={`w-10 h-10 rounded-lg bg-gradient-to-br ${getAgentColor(
                     agent.role
-                  )} flex items-center justify-center text-white text-lg shadow-lg hover:scale-110 transition-transform ${
+                  )} flex items-center justify-center text-white text-base shadow-md hover:scale-110 transition-transform ${
                     expandedAgent === agent.role ? 'ring-2 ring-blue-500' : ''
                   }`}
                   title={agent.name}
                 >
                   {getAgentIcon(agent.role)}
                   {agent.isActive && (
-                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white"></div>
+                    <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white"></div>
                   )}
                 </button>
                 <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">

@@ -136,6 +136,7 @@ Your responses should be:
     ) -> AgentResponse:
         """
         Process messages with RAG-enhanced responses.
+        Returns empty response if no knowledge base content is available.
         """
         # Extract the query from messages
         query = messages[-1].content if messages else ""
@@ -143,12 +144,22 @@ Your responses should be:
         # Search knowledge base first
         knowledge_results = await self.search_knowledge(query, top_k=5)
         
+        # If no knowledge results, return empty response immediately (don't process)
+        if not knowledge_results:
+            self.logger.info("rag_skipped_no_knowledge", query=query[:100])
+            from backend.models.schemas import AgentResponse
+            return AgentResponse(
+                agent_type="rag",
+                response="No knowledge base content available.",
+                metadata={"skipped": True, "reason": "no_knowledge_base_content", "knowledge_count": 0},
+                timestamp=datetime.utcnow()
+            )
+        
         # Enhance context with knowledge results
         enhanced_context = context or {}
-        if knowledge_results:
-            enhanced_context["knowledge_results"] = knowledge_results
-            enhanced_context["knowledge_count"] = len(knowledge_results)
+        enhanced_context["knowledge_results"] = knowledge_results
+        enhanced_context["knowledge_count"] = len(knowledge_results)
         
-        # Call parent process method
+        # Call parent process method only if we have knowledge results
         return await super().process(messages, enhanced_context)
 

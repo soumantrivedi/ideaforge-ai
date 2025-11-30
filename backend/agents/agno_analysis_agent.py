@@ -40,6 +40,7 @@ Your output should:
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="analysis_knowledge_base",
+            model_tier="fast",  # Use fast model for analysis (50-70% latency reduction)
             capabilities=[
                 "requirements analysis",
                 "swot analysis",

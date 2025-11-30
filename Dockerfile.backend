@@ -5,7 +5,8 @@
 # Build argument to specify base image
 # For local development: BASE_IMAGE should be ideaforge-ai-backend-base:latest
 # For CI/CD: BASE_IMAGE should be ghcr.io/soumantrivedi/ideaforge-ai/backend-base:latest
-ARG BASE_IMAGE=ghcr.io/soumantrivedi/ideaforge-ai/backend-base:latest
+# Fallback to python:3.11-slim if base image not available
+ARG BASE_IMAGE=python:3.11-slim
 
 # Use the specified base image
 FROM ${BASE_IMAGE}
@@ -19,6 +20,25 @@ ARG VERSION=unknown
 # Set environment variables
 ENV GIT_SHA=${GIT_SHA}
 ENV VERSION=${VERSION}
+
+# Install system dependencies and Python packages if using python:3.11-slim
+# (Skip if using pre-built base image that already has dependencies)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc \
+        g++ \
+        postgresql-client \
+        curl \
+        libpq-dev \
+        && rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Copy requirements.txt first for better layer caching
+COPY backend/requirements.txt /tmp/requirements.txt
+
+# Install Python dependencies from requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && \
+    rm /tmp/requirements.txt
 
 # Copy application code (this layer changes frequently)
 COPY backend ./backend

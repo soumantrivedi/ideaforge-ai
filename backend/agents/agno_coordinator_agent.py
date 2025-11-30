@@ -22,6 +22,7 @@ from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
 from backend.agents.agno_ideation_agent import AgnoIdeationAgent
 from backend.agents.agno_research_agent import AgnoResearchAgent
 from backend.agents.agno_analysis_agent import AgnoAnalysisAgent
+from backend.agents.agno_strategy_agent import AgnoStrategyAgent
 from backend.agents.agno_v0_agent import AgnoV0Agent
 from backend.agents.agno_lovable_agent import AgnoLovableAgent
 from backend.agents.agno_atlassian_agent import AgnoAtlassianAgent
@@ -47,6 +48,7 @@ class AgnoCoordinatorAgent:
         self.analysis_agent = AgnoAnalysisAgent(enable_rag=enable_rag)
         self.ideation_agent = AgnoIdeationAgent(enable_rag=enable_rag)
         self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=enable_rag)
+        self.strategy_agent = AgnoStrategyAgent(enable_rag=enable_rag)
         self.v0_agent = AgnoV0Agent(enable_rag=enable_rag)
         self.lovable_agent = AgnoLovableAgent(enable_rag=enable_rag)
         self.atlassian_agent = AgnoAtlassianAgent(enable_rag=enable_rag)
@@ -59,6 +61,7 @@ class AgnoCoordinatorAgent:
             "analysis": self.analysis_agent,
             "ideation": self.ideation_agent,
             "prd_authoring": self.prd_agent,
+            "strategy": self.strategy_agent,
             "v0": self.v0_agent,
             "lovable": self.lovable_agent,
             "atlassian_mcp": self.atlassian_agent,
@@ -76,26 +79,55 @@ class AgnoCoordinatorAgent:
         self.logger = logger.bind(component="agno_coordinator")
         self.interaction_history: List[AgentInteraction] = []
     
-    def _get_agno_model(self):
-        """Get appropriate Agno model based on provider registry.
-        Priority: GPT-5.1 (primary) > Gemini 3.0 Pro (tertiary) > Claude 4 Sonnet (secondary)
-        Prefers GPT-5.1 for best reasoning, falls back to Gemini 3.0 Pro if OpenAI not available.
+    def _get_agno_model(self, model_tier: str = "standard"):
+        """Get appropriate Agno model based on provider registry and tier.
+        
+        Model Tiers:
+        - fast: gpt-4o-mini, claude-3-haiku, gemini-1.5-flash
+        - standard: gpt-4o, claude-3.5-sonnet, gemini-1.5-pro (for coordinators)
+        - premium: gpt-5.1, claude-4-sonnet, gemini-3.0-pro
         """
-        # Prefer GPT-5.1 for best reasoning capabilities
-        if provider_registry.has_openai_key():
-            api_key = provider_registry.get_openai_key()
-            if api_key:
-                return OpenAIChat(id=settings.agent_model_primary, api_key=api_key)  # gpt-5.1 or gpt-5
-        # Fall back to Gemini 3.0 Pro if OpenAI not available
-        elif provider_registry.has_gemini_key():
-            api_key = provider_registry.get_gemini_key()
-            if api_key:
-                return Gemini(id=settings.agent_model_tertiary, api_key=api_key)  # gemini-3.0-pro
-        # Last resort: Claude 4 Sonnet
-        elif provider_registry.has_claude_key():
-            api_key = provider_registry.get_claude_key()
-            if api_key:
-                return Claude(id=settings.agent_model_secondary, api_key=api_key)
+        api_key = None
+        
+        if model_tier == "fast":
+            if provider_registry.has_openai_key():
+                api_key = provider_registry.get_openai_key()
+                if api_key:
+                    return OpenAIChat(id="gpt-4o-mini", api_key=api_key)
+            elif provider_registry.has_gemini_key():
+                api_key = provider_registry.get_gemini_key()
+                if api_key:
+                    return Gemini(id="gemini-1.5-flash", api_key=api_key)
+            elif provider_registry.has_claude_key():
+                api_key = provider_registry.get_claude_key()
+                if api_key:
+                    return Claude(id="claude-3-haiku-20240307", api_key=api_key)
+        elif model_tier == "standard":
+            if provider_registry.has_openai_key():
+                api_key = provider_registry.get_openai_key()
+                if api_key:
+                    return OpenAIChat(id="gpt-4o", api_key=api_key)
+            elif provider_registry.has_gemini_key():
+                api_key = provider_registry.get_gemini_key()
+                if api_key:
+                    return Gemini(id="gemini-1.5-pro", api_key=api_key)
+            elif provider_registry.has_claude_key():
+                api_key = provider_registry.get_claude_key()
+                if api_key:
+                    return Claude(id="claude-3-5-sonnet-20241022", api_key=api_key)
+        elif model_tier == "premium":
+            if provider_registry.has_openai_key():
+                api_key = provider_registry.get_openai_key()
+                if api_key:
+                    return OpenAIChat(id=settings.agent_model_primary, api_key=api_key)
+            elif provider_registry.has_gemini_key():
+                api_key = provider_registry.get_gemini_key()
+                if api_key:
+                    return Gemini(id=settings.agent_model_tertiary, api_key=api_key)
+            elif provider_registry.has_claude_key():
+                api_key = provider_registry.get_claude_key()
+                if api_key:
+                    return Claude(id=settings.agent_model_secondary, api_key=api_key)
         raise ValueError("No AI provider configured")
     
     def _create_agno_teams(self):
@@ -266,7 +298,8 @@ class AgnoCoordinatorAgent:
         self,
         query: str,
         agents: List[str],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        max_agents: int = 5  # Optimization: Limit sequential chain length
     ) -> AgentResponse:
         """Process query sequentially using agent consultation."""
         try:

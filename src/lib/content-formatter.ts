@@ -51,55 +51,76 @@ export class ContentFormatter {
     
     let html = markdown;
 
-    // Headers
-    html = html.replace(/^### (.*$)/gim, '<h3 class="text-lg font-bold text-gray-900 mt-6 mb-3">$1</h3>');
-    html = html.replace(/^## (.*$)/gim, '<h2 class="text-xl font-bold text-gray-900 mt-8 mb-4">$1</h2>');
-    html = html.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold text-gray-900 mt-10 mb-5">$1</h1>');
+    // Headers - Professional styling similar to ChatGPT/Claude
+    html = html.replace(/^### (.*$)/gim, '<h3 class="text-xl font-semibold text-gray-900 mt-8 mb-4 leading-tight">$1</h3>');
+    html = html.replace(/^## (.*$)/gim, '<h2 class="text-2xl font-semibold text-gray-900 mt-10 mb-5 leading-tight">$1</h2>');
+    html = html.replace(/^# (.*$)/gim, '<h1 class="text-3xl font-semibold text-gray-900 mt-12 mb-6 leading-tight">$1</h1>');
 
-    // Bold
+    // Bold - More prominent
     html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>');
 
     // Italic
-    html = html.replace(/\*(.*?)\*/g, '<em class="italic text-gray-800">$1</em>');
+    html = html.replace(/\*(.*?)\*/g, '<em class="italic text-gray-700">$1</em>');
 
-    // Code blocks
+    // Code blocks with syntax highlighting
     html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
-      return `<pre class="bg-gray-900 text-gray-100 rounded-lg p-4 my-4 overflow-x-auto"><code class="text-sm font-mono">${this.escapeHtml(code.trim())}</code></pre>`;
+      const language = lang || 'text';
+      // Import syntax highlighter dynamically
+      try {
+        const { highlightCode, detectLanguage } = require('./syntax-highlighter');
+        const detectedLang = detectLanguage(code.trim(), language);
+        const highlighted = highlightCode(code.trim(), detectedLang);
+        return `<div class="code-block-wrapper relative group my-4">
+          <div class="flex items-center justify-between mb-2 px-1">
+            <span class="text-xs font-mono text-gray-500 uppercase">${detectedLang}</span>
+            <button 
+              class="copy-code-btn opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-white rounded"
+              onclick="navigator.clipboard.writeText(\`${code.trim().replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000);"
+            >
+              Copy
+            </button>
+          </div>
+          <pre class="bg-gray-900 text-gray-100 rounded-lg p-5 my-6 overflow-x-auto shadow-lg"><code class="language-${detectedLang} text-sm font-mono leading-relaxed">${highlighted}</code></pre>
+        </div>`;
+      } catch (e) {
+        // Fallback to basic formatting
+        return `<pre class="bg-gray-900 text-gray-100 rounded-lg p-4 my-4 overflow-x-auto"><code class="text-sm font-mono">${this.escapeHtml(code.trim())}</code></pre>`;
+      }
     });
 
-    // Inline code
-    html = html.replace(/`([^`]+)`/g, '<code class="bg-gray-100 text-pink-600 px-2 py-1 rounded text-sm font-mono">$1</code>');
+    // Inline code - Better styling
+    html = html.replace(/`([^`]+)`/g, '<code class="bg-gray-100 text-pink-600 px-2 py-0.5 rounded text-sm font-mono">$1</code>');
 
-    // Unordered lists
-    html = html.replace(/^\* (.*$)/gim, '<li class="ml-6 mb-2 list-disc">$1</li>');
-    html = html.replace(/^- (.*$)/gim, '<li class="ml-6 mb-2 list-disc">$1</li>');
+    // Unordered lists - Better spacing and styling
+    html = html.replace(/^\* (.*$)/gim, '<li class="ml-6 mb-3 list-disc text-gray-800 leading-[1.75]">$1</li>');
+    html = html.replace(/^- (.*$)/gim, '<li class="ml-6 mb-3 list-disc text-gray-800 leading-[1.75]">$1</li>');
 
     // Ordered lists
-    html = html.replace(/^\d+\. (.*$)/gim, '<li class="ml-6 mb-2 list-decimal">$1</li>');
+    html = html.replace(/^\d+\. (.*$)/gim, '<li class="ml-6 mb-3 list-decimal text-gray-800 leading-[1.75]">$1</li>');
 
-    // Wrap consecutive list items
-    html = html.replace(/(<li class="ml-6 mb-2 list-disc">.*<\/li>\n?)+/g, (match) => {
-      return `<ul class="my-4 space-y-1">${match}</ul>`;
+    // Wrap consecutive list items - Better spacing
+    html = html.replace(/(<li class="ml-6 mb-3 list-disc.*?<\/li>\n?)+/g, (match) => {
+      return `<ul class="my-6 space-y-2 pl-2">${match}</ul>`;
     });
-    html = html.replace(/(<li class="ml-6 mb-2 list-decimal">.*<\/li>\n?)+/g, (match) => {
-      return `<ol class="my-4 space-y-1">${match}</ol>`;
+    html = html.replace(/(<li class="ml-6 mb-3 list-decimal.*?<\/li>\n?)+/g, (match) => {
+      return `<ol class="my-6 space-y-2 pl-2">${match}</ol>`;
     });
 
     // Links
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="text-blue-600 hover:text-blue-800 underline" target="_blank" rel="noopener noreferrer">$1</a>');
 
-    // Blockquotes
-    html = html.replace(/^> (.*$)/gim, '<blockquote class="border-l-4 border-blue-500 pl-4 py-2 my-4 italic text-gray-700 bg-blue-50">$1</blockquote>');
+    // Blockquotes - More prominent styling
+    html = html.replace(/^> (.*$)/gim, '<blockquote class="border-l-4 border-blue-500 pl-5 py-3 my-6 italic text-gray-700 bg-blue-50 rounded-r-lg">$1</blockquote>');
 
     // Horizontal rules
     html = html.replace(/^---$/gim, '<hr class="my-8 border-t-2 border-gray-200" />');
 
-    // Paragraphs (lines not already wrapped)
+    // Paragraphs (lines not already wrapped) - Better spacing and typography
     const lines = html.split('\n');
     html = lines.map(line => {
       const trimmed = line.trim();
       if (trimmed && !trimmed.startsWith('<')) {
-        return `<p class="mb-4 text-gray-800 leading-relaxed">${line}</p>`;
+        return `<p class="mb-5 text-gray-800 leading-[1.75] text-base">${line}</p>`;
       }
       return line;
     }).join('\n');
@@ -359,6 +380,50 @@ export class ContentFormatter {
       "'": '&#039;',
     };
     return text.replace(/[&<>"']/g, (m) => map[m]);
+  }
+
+  /**
+   * Strip all markdown and HTML tags from content, returning plain text
+   */
+  static stripMarkdownAndHtml(content: string): string {
+    let text = content;
+    
+    // Remove HTML tags
+    text = text.replace(/<[^>]*>/g, '');
+    
+    // Remove markdown headers
+    text = text.replace(/^#{1,6}\s+/gm, '');
+    
+    // Remove markdown bold/italic
+    text = text.replace(/\*\*(.*?)\*\*/g, '$1');
+    text = text.replace(/\*(.*?)\*/g, '$1');
+    text = text.replace(/_(.*?)_/g, '$1');
+    
+    // Remove markdown code blocks
+    text = text.replace(/```[\s\S]*?```/g, '');
+    text = text.replace(/`([^`]+)`/g, '$1');
+    
+    // Remove markdown links (keep text)
+    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+    
+    // Remove markdown images
+    text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '');
+    
+    // Remove markdown blockquotes
+    text = text.replace(/^>\s+/gm, '');
+    
+    // Remove markdown horizontal rules
+    text = text.replace(/^[-*_]{3,}$/gm, '');
+    
+    // Remove markdown list markers
+    text = text.replace(/^[\*\-\+]\s+/gm, '');
+    text = text.replace(/^\d+\.\s+/gm, '');
+    
+    // Clean up extra whitespace
+    text = text.replace(/\n{3,}/g, '\n\n');
+    text = text.trim();
+    
+    return text;
   }
 
   /**

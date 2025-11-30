@@ -1,8 +1,29 @@
-# IdeaForge AI
+# IdeaForge AI v2
 
 Multi-agent platform for full-stack product management. Specialized agents collaborate across ideation, research, analysis, validation, PRD authoring, and Jira execution while sharing a unified context, structured workflows, and a modern React/Vite interface.
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue) ![Status](https://img.shields.io/badge/status-active-green)
+![Version](https://img.shields.io/badge/version-2.0.0-blue) ![Status](https://img.shields.io/badge/status-active-green)
+
+## Latest Updates (November 30, 2025)
+
+### Major Changes
+- **Removed Playwright Integration**: Simplified system by removing browser automation complexity
+- **Enhanced Lovable Agent**: Now includes comprehensive Lovable.dev platform knowledge and industry best practices (as of Nov 2025)
+- **Agent Dashboard**: New endpoint for tracking agent usage, performance metrics, and trends
+- **Optimized Prompt Generation**: Lovable prompts now use all product lifecycle phase data for better context
+
+### Lovable Integration
+- **No API Key Required**: Lovable uses link generator, no API key needed
+- **Manual Workflow**: Users generate prompts using "Help with AI", then copy and paste into Lovable.dev UI
+- **Enhanced Prompts**: Agent generates production-ready prompts with full product context from all phases
+
+### Agent Dashboard
+- Track agent usage from first login
+- View processing times and performance metrics
+- Monitor cache hit rates and token usage
+- Analyze usage trends and phase distribution
+
+See [Deployment Notes](docs/deployment/DEPLOYMENT_NOTES.md) for detailed deployment information.
 
 ---
 

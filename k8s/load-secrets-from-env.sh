@@ -1,4 +1,7 @@
 #!/bin/bash
+# DEPRECATED: This script is no longer used. Secrets are loaded directly via make targets.
+# Use: make kind-load-secrets or make eks-load-secrets
+#
 # Script to load secrets from .env file into Kubernetes secrets.yaml format
 # Usage: ./load-secrets-from-env.sh [.env-file] [output-file]
 

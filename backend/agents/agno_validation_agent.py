@@ -48,6 +48,7 @@ Be thorough but constructive. Focus on making responses actionable and aligned w
 
         super().__init__(
             name="Validation Agent",
+            model_tier="fast",  # Use fast model for validation
             role="validation",
             system_prompt=system_prompt,
             enable_rag=enable_rag,

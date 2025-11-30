@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { X, Bot, FileText, MessageSquare, Database, Sparkles } from 'lucide-react';
 
 interface AgentInteraction {
@@ -39,9 +40,21 @@ export function AgentDetailModal({
   const userPrompt = metadata.user_prompt || interaction?.query || 'Not available';
   const response = interaction?.response || 'Not available';
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+  // Use React Portal to render at document root, avoiding z-index stacking context issues
+  const modalContent = (
+    <div className="fixed inset-0 z-[99999]" style={{ isolation: 'isolate' }}>
+      <div 
+        className="fixed inset-0 bg-black bg-opacity-50"
+        onClick={onClose}
+      />
+      <div 
+        className="fixed inset-0 flex items-center justify-center p-4 pointer-events-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div 
+          className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col pointer-events-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center gap-3">
@@ -117,8 +130,14 @@ export function AgentDetailModal({
             </div>
           )}
         </div>
+        </div>
       </div>
     </div>
   );
+
+  // Render modal using portal at document body level
+  return typeof document !== 'undefined' 
+    ? createPortal(modalContent, document.body)
+    : null;
 }
 

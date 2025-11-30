@@ -95,6 +95,7 @@ K8S_NAMESPACE ?= ideaforge-ai
 K8S_DIR ?= k8s
 KIND_CLUSTER_NAME ?= ideaforge-ai
 KIND_IMAGE ?= kindest/node:v1.33.0
+KIND_INGRESS_PORT ?= 8081
 EKS_CLUSTER_NAME ?= ideaforge-ai
 EKS_REGION ?= us-east-1
 EKS_NAMESPACE ?= $(K8S_NAMESPACE)
@@ -125,10 +126,14 @@ kind-create: ## Create a local kind cluster for testing
 	@echo "        node-labels: \"ingress-ready=true\"" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
 	@echo "  extraPortMappings:" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
 	@echo "  - containerPort: 80" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
-	@echo "    hostPort: 8080" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@echo "    hostPort: $(KIND_INGRESS_PORT)" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
 	@echo "    protocol: TCP" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
 	@echo "  - containerPort: 443" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
-	@echo "    hostPort: 8443" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@if [ "$(KIND_CLUSTER_NAME)" = "ideaforge-ai" ]; then \
+		echo "    hostPort: 8444" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml; \
+	else \
+		echo "    hostPort: 8443" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml; \
+	fi
 	@echo "    protocol: TCP" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
 	@kind create cluster --name $(KIND_CLUSTER_NAME) --image $(KIND_IMAGE) --config /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml || true
 	@rm -f /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
@@ -276,7 +281,7 @@ kind-deploy-full: ## Complete kind cluster setup: create cluster, setup ingress,
 	@echo "   Password: password123"
 	@echo ""
 
-kind-deploy: kind-create kind-setup-ingress kind-load-images ## Deploy to kind cluster (creates cluster, installs ingress, loads images, deploys)
+kind-deploy: kind-create kind-setup-ingress kind-load-images kind-load-secrets ## Deploy to kind cluster (creates cluster, installs ingress, loads images, loads secrets, deploys)
 	@echo "🚀 Deploying to kind cluster..."
 	@$(MAKE) kind-update-images
 	@$(MAKE) kind-deploy-internal
@@ -364,7 +369,7 @@ kind-deploy-internal: kind-create-db-configmaps ## Internal target: deploy manif
 	fi
 	@echo "🔄 Running database setup (migrations + seeding)..."
 	@kubectl delete job db-setup -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --ignore-not-found=true
-	@kubectl apply -f $(K8S_DIR)/db-setup-job.yaml --context kind-$(KIND_CLUSTER_NAME)
+	@kubectl apply -f $(K8S_DIR)/kind/db-setup-job.yaml -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME)
 	@echo "⏳ Waiting for database setup job to complete..."
 	@kubectl wait --for=condition=complete job/db-setup -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=300s || \
 		(echo "⚠️  Database setup job did not complete, checking logs..." && \

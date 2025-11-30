@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight, BarChart3, Star, Bot, Activity, Zap, CheckCircle2, Circle } from 'lucide-react';
 import { ProductChatInterface } from './ProductChatInterface';
 import { AgentStatusPanel } from './AgentStatusPanel';
-import { ProductLifecycleSidebar } from './ProductLifecycleSidebar';
+import { ResizableProductLifecycleSidebar } from './ResizableProductLifecycleSidebar';
 import { PhaseFormModal } from './PhaseFormModal';
 import { ValidationModal } from './ValidationModal';
 import { EnhancedSettings } from './EnhancedSettings';
@@ -14,6 +14,7 @@ import { UserProfile } from './UserProfile';
 import { IdeaScoreDashboard } from './IdeaScoreDashboard';
 import { ProductSummaryPRDGenerator } from './ProductSummaryPRDGenerator';
 import { MyProgress } from './MyProgress';
+import { AgentDashboard } from './AgentDashboard';
 import { getValidatedApiUrl } from '../lib/runtime-config';
 import { getJobPollInterval, getJobMaxPollAttempts, getJobTimeout } from '../lib/job-config';
 
@@ -22,7 +23,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { lifecycleService, type LifecyclePhase, type PhaseSubmission } from '../lib/product-lifecycle-service';
 import { saveAppState, loadAppState, resetProductState, clearAppState } from '../lib/session-storage';
 
-type View = 'dashboard' | 'chat' | 'settings' | 'knowledge' | 'portfolio' | 'history' | 'profile' | 'scoring';
+type View = 'dashboard' | 'chat' | 'settings' | 'knowledge' | 'portfolio' | 'history' | 'profile' | 'scoring' | 'agents';
 
 export function MainApp() {
   const { user, logout, token } = useAuth();
@@ -552,9 +553,9 @@ export function MainApp() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-secondary)' }}>
-      {/* Header */}
-      <header className="border-b" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* Header - Full Width */}
+      <header className="border-b w-full" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+        <div className="w-full px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-4">
               <h1 className="text-lg font-semibold text-gray-900 tracking-tight">IdeaForge AI</h1>
@@ -627,7 +628,7 @@ export function MainApp() {
               <LayoutDashboard className="w-5 h-5" />
               <span>Dashboard</span>
             </button>
-            {(['portfolio', 'chat', 'history', 'profile', 'settings', 'knowledge', 'scoring'] as View[]).map((viewName) => {
+            {(['portfolio', 'chat', 'history', 'profile', 'settings', 'knowledge', 'agents'] as View[]).map((viewName) => {
               const icons = {
                 portfolio: Folder,
                 chat: MessageSquare,
@@ -636,6 +637,7 @@ export function MainApp() {
                 settings: Settings,
                 knowledge: Database,
                 scoring: BarChart3,
+                agents: Bot,
               };
               const labels = {
                 portfolio: 'Portfolio',
@@ -645,6 +647,7 @@ export function MainApp() {
                 settings: 'Settings',
                 knowledge: 'Knowledge Base',
                 scoring: 'Idea Scoring',
+                agents: 'Agent Dashboard',
               };
               const Icon = icons[viewName];
               return (
@@ -733,48 +736,51 @@ export function MainApp() {
           )}
           {view === 'chat' && (
             <div className="flex gap-4 h-[calc(100vh-8rem)] relative">
-              {/* Left Sidebar - Product Lifecycle (1/3) */}
-              <div className="flex-[1] min-w-0 hidden lg:block">
-                {productId ? (
-                  <div className="sticky top-0 h-[calc(100vh-8rem)] overflow-y-auto">
-                    <ProductLifecycleSidebar
-                      phases={phases || []}
-                      submissions={submissions || []}
-                      currentPhaseId={currentPhase?.id}
-                      onPhaseSelect={(phase) => {
-                        setCurrentPhase(phase);
-                        setIsFormModalOpen(true);
-                      }}
-                      productId={productId}
-                    />
-                  </div>
-                ) : (
-                  <div className="h-full flex items-center justify-center rounded-xl border" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
-                    <div className="text-center p-8 w-full max-w-2xl">
-                      <p className="mb-4 text-lg font-medium" style={{ color: 'var(--text-primary)' }}>Select a product to view lifecycle phases</p>
-                      <div className="mt-6">
-                        <ProductsDashboard
-                          onProductSelect={(id) => {
-                            console.log('Chat view (left): Product selected:', id);
-                            if (id) {
-                              handleProductChange(id);
-                            } else {
-                              console.error('Chat view (left): Invalid product ID received:', id);
-                            }
-                          }}
-                          compact={true}
-                        />
-                      </div>
+              {/* Left Sidebar - Product Lifecycle (max 20%, resizable) */}
+              <ResizableProductLifecycleSidebar
+                productId={productId}
+                phases={phases || []}
+                submissions={submissions || []}
+                currentPhaseId={currentPhase?.id}
+                onPhaseSelect={(phase) => {
+                  setCurrentPhase(phase);
+                  setIsFormModalOpen(true);
+                }}
+              />
+              
+              {/* Product Selector when no product selected */}
+              {!productId && (
+                <div className="hidden lg:block w-[20%] min-w-[200px] h-full flex items-center justify-center rounded-xl border" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
+                  <div className="text-center p-8 w-full max-w-2xl">
+                    <p className="mb-4 text-lg font-medium" style={{ color: 'var(--text-primary)' }}>Select a product to view lifecycle phases</p>
+                    <div className="mt-6">
+                      <ProductsDashboard
+                        onProductSelect={(id) => {
+                          console.log('Chat view (left): Product selected:', id);
+                          if (id) {
+                            handleProductChange(id);
+                          } else {
+                            console.error('Chat view (left): Invalid product ID received:', id);
+                          }
+                        }}
+                        compact={true}
+                      />
                     </div>
                   </div>
-                )}
-              </div>
-              {/* Chatbot - Always 2/3 of screen */}
-              <div className="flex-[2] min-w-0 overflow-y-auto">
+                </div>
+              )}
+              
+              {/* Chatbot - Takes remaining space */}
+              <div className="flex-1 min-w-0 overflow-y-auto relative z-0">
                 {productId ? (
                   <ProductChatInterface
                     productId={productId}
                     sessionId={productId}
+                    phases={phases}
+                    onPhaseSelect={(phase) => {
+                      setCurrentPhase(phase);
+                      setIsFormModalOpen(true);
+                    }}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center rounded-xl border" style={{ backgroundColor: 'var(--card-bg)', borderColor: 'var(--border-color)' }}>
@@ -797,101 +803,7 @@ export function MainApp() {
                   </div>
                 )}
               </div>
-              {/* Right Sidebar - Agent Network & Review Progress (hidden on smaller screens) */}
-              {productId ? (
-                <div className="w-20 lg:w-80 flex flex-col gap-4 flex-shrink-0 hidden md:flex">
-                  <div className="flex-shrink-0">
-                    <AgentStatusPanel
-                      agents={activeAgents}
-                      agentInteractions={agentInteractions}
-                    />
-                  </div>
-                  <div className="flex-shrink-0 hidden lg:block">
-                    <MyProgress
-                      productId={productId}
-                      onNavigateToPhase={(phaseId) => {
-                        const phase = phases.find(p => p.id === phaseId);
-                        if (phase) {
-                          setCurrentPhase(phase);
-                          setIsFormModalOpen(true);
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="w-16 flex flex-col items-center py-4 gap-2 flex-shrink-0 hidden md:flex">
-                  <div className="sticky top-4">
-                    {activeAgents.length > 0 ? (
-                      activeAgents.map((agent: any) => {
-                        const getAgentIcon = (role: string) => {
-                          const icons: Record<string, string> = {
-                            general: '🤖',
-                            research: '🔬',
-                            coding: '💻',
-                            creative: '✨',
-                            analysis: '📊',
-                            rag: '📚',
-                            ideation: '💡',
-                            prd_authoring: '📝',
-                            summary: '📄',
-                            scoring: '⭐',
-                            validation: '✅',
-                            export: '📤',
-                            v0: '🎨',
-                            lovable: '🎭',
-                            github_mcp: '🐙',
-                            atlassian_mcp: '🔷',
-                          };
-                          return icons[role] || '🤖';
-                        };
-                        const getAgentColor = (role: string) => {
-                          const colors: Record<string, string> = {
-                            general: 'from-blue-500 to-cyan-500',
-                            research: 'from-green-500 to-emerald-500',
-                            coding: 'from-orange-500 to-amber-500',
-                            creative: 'from-pink-500 to-rose-500',
-                            analysis: 'from-purple-500 to-violet-500',
-                            rag: 'from-teal-500 to-cyan-500',
-                            ideation: 'from-yellow-500 to-amber-500',
-                            prd_authoring: 'from-indigo-500 to-purple-500',
-                            summary: 'from-gray-500 to-slate-500',
-                            scoring: 'from-yellow-400 to-orange-500',
-                            validation: 'from-green-400 to-emerald-500',
-                            export: 'from-blue-400 to-cyan-500',
-                            v0: 'from-black to-gray-700',
-                            lovable: 'from-pink-400 to-rose-500',
-                            github_mcp: 'from-gray-700 to-gray-900',
-                            atlassian_mcp: 'from-blue-600 to-blue-800',
-                          };
-                          return colors[role] || 'from-gray-500 to-slate-500';
-                        };
-                        const agentRole = agent.role || agent.name?.toLowerCase().replace(/\s+/g, '_') || 'general';
-                        const agentName = agent.name || agent.role || 'Agent';
-                        return (
-                          <div
-                            key={agentRole}
-                            className="relative group mb-2"
-                            title={agentName}
-                          >
-                            <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${getAgentColor(agentRole)} flex items-center justify-center text-white text-xl shadow-lg cursor-pointer hover:scale-110 transition-transform`}>
-                              {getAgentIcon(agentRole)}
-                            </div>
-                            <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
-                              {agentName}
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="text-center text-xs text-gray-500 p-2">
-                        <Bot className="w-6 h-6 mx-auto mb-1 opacity-50" />
-                        <p>No active agents</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
+              {/* Right Sidebar - Removed (Agent Status now in chatbot header) - More space for chat */}
             </div>
           )}
           {view === 'history' && (
@@ -925,6 +837,9 @@ export function MainApp() {
               )}
               <KnowledgeBaseManagerWrapper productId={productId || undefined} />
             </div>
+          )}
+          {view === 'agents' && (
+            <AgentDashboard />
           )}
           {view === 'scoring' && (
             <div className="space-y-6">
