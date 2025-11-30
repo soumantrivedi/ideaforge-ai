@@ -183,11 +183,35 @@ async def stream_phase_form_help(
         
         # Get orchestrator
         orchestrator = get_orchestrator()
+        
+        # If orchestrator is not Agno but we have user API keys, try to reinitialize
         if not isinstance(orchestrator, AgnoAgenticOrchestrator):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Agno framework not available"
+            # Check if we have any provider keys available (user keys or env keys)
+            has_provider = (
+                provider_registry.has_openai_key() or
+                provider_registry.has_claude_key() or
+                provider_registry.has_gemini_key()
             )
+            
+            if has_provider:
+                # Try to reinitialize orchestrator with Agno
+                try:
+                    from backend.agents.agno_orchestrator import AgnoAgenticOrchestrator as NewAgnoOrchestrator
+                    orchestrator = NewAgnoOrchestrator(enable_rag=True)
+                    # Update the global orchestrator reference
+                    set_orchestrator(orchestrator)
+                    logger.info("phase_form_help_orchestrator_reinitialized", has_provider=has_provider)
+                except Exception as e:
+                    logger.warning("phase_form_help_agno_reinit_failed", error=str(e))
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Agno framework not available"
+                    )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Agno framework not available. Please configure at least one API key (OpenAI, Claude, or Gemini) in Settings → Integrations."
+                )
         
         # Get phase expert agent
         agent_name = get_phase_expert_agent(request.phase_name)
