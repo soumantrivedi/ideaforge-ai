@@ -146,51 +146,84 @@ Always provide clear, structured responses with source information.
             import httpx
             
             # Construct Confluence API URL
-            # Extract cloud ID from URL if provided, or use configured cloud ID
-            confluence_base_url = f"https://api.atlassian.com/ex/confluence/{cloud_id}/wiki/api/v2"
+            # For Confluence Cloud, use: https://{site}.atlassian.net/wiki/api/v2/pages/{id}
+            # The cloud_id extracted from URL is the site name (e.g., "mckinsey" from "mckinsey.atlassian.net")
+            confluence_base_url = f"https://{cloud_id}.atlassian.net/wiki/api/v2"
             
+            # Use Basic auth with email:API token for Confluence Cloud
             auth_header = base64.b64encode(f"{atlassian_email}:{atlassian_token}".encode()).decode()
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 # Fetch page using Confluence API v2
+                # First, try to get page with expand parameter to get body content
                 response = await client.get(
                     f"{confluence_base_url}/pages/{page_id}",
                     headers={
                         "Authorization": f"Basic {auth_header}",
                         "Accept": "application/json"
+                    },
+                    params={
+                        "body-format": "atlas_doc_format,storage,view"
                     }
                 )
                 
                 if response.status_code == 200:
                     page_data = response.json()
                     
-                    # Fetch page body content
-                    body_response = await client.get(
-                        f"{confluence_base_url}/pages/{page_id}?body-format=atlas_doc_format",
-                        headers={
-                            "Authorization": f"Basic {auth_header}",
-                            "Accept": "application/json"
-                        }
-                    )
-                    
-                    # Extract content - try to get markdown or plain text
+                    # Extract content from response
                     content = ""
-                    if body_response.status_code == 200:
-                        body_data = body_response.json()
-                        # Try to extract markdown or plain text from body
-                        if "body" in body_data:
-                            body_obj = body_data["body"]
-                            if "atlas_doc_format" in body_obj:
-                                # Convert atlas_doc_format to markdown (simplified)
-                                content = str(body_obj["atlas_doc_format"])
-                            elif "storage" in body_obj:
-                                content = body_obj["storage"]["value"]
-                            elif "view" in body_obj:
-                                content = body_obj["view"]["value"]
+                    if "body" in page_data:
+                        body_obj = page_data["body"]
+                        # Try different body formats in order of preference
+                        if "atlas_doc_format" in body_obj:
+                            # Convert atlas_doc_format to markdown (simplified - just extract text)
+                            atlas_doc = body_obj["atlas_doc_format"]
+                            if isinstance(atlas_doc, dict):
+                                # Try to extract text from atlas_doc_format structure
+                                content = str(atlas_doc)
+                            else:
+                                content = str(atlas_doc)
+                        elif "storage" in body_obj:
+                            # Storage format (HTML-like)
+                            storage_obj = body_obj["storage"]
+                            if isinstance(storage_obj, dict) and "value" in storage_obj:
+                                content = storage_obj["value"]
+                            else:
+                                content = str(storage_obj)
+                        elif "view" in body_obj:
+                            # View format (rendered HTML)
+                            view_obj = body_obj["view"]
+                            if isinstance(view_obj, dict) and "value" in view_obj:
+                                content = view_obj["value"]
+                            else:
+                                content = str(view_obj)
+                        else:
+                            # Fallback: use entire body object as string
+                            content = str(body_obj)
+                    
+                    # If still no content, try fetching with different format
+                    if not content or len(content.strip()) < 10:
+                        # Try fetching with storage format explicitly
+                        storage_response = await client.get(
+                            f"{confluence_base_url}/pages/{page_id}",
+                            headers={
+                                "Authorization": f"Basic {auth_header}",
+                                "Accept": "application/json"
+                            },
+                            params={
+                                "body-format": "storage"
+                            }
+                        )
+                        if storage_response.status_code == 200:
+                            storage_data = storage_response.json()
+                            if "body" in storage_data and "storage" in storage_data["body"]:
+                                storage_value = storage_data["body"]["storage"]
+                                if isinstance(storage_value, dict) and "value" in storage_value:
+                                    content = storage_value["value"]
                     
                     # If no content extracted, use title as fallback
-                    if not content:
-                        content = page_data.get("title", "")
+                    if not content or len(content.strip()) < 10:
+                        content = page_data.get("title", "No content available")
                     
                     page_title = page_data.get("title", "Confluence Page")
                     page_url = page_data.get("_links", {}).get("webui", "")
@@ -216,12 +249,21 @@ Always provide clear, structured responses with source information.
                         }
                     }
                 elif response.status_code == 401:
-                    raise ValueError("Atlassian authentication failed. Please verify your API token in Settings.")
+                    error_detail = response.text
+                    self_logger.error("confluence_auth_failed", status_code=401, error=error_detail, cloud_id=cloud_id, page_id=page_id)
+                    raise ValueError("Atlassian authentication failed. Please verify your API token in Settings → Integrations.")
+                elif response.status_code == 403:
+                    error_detail = response.text
+                    self_logger.error("confluence_forbidden", status_code=403, error=error_detail, cloud_id=cloud_id, page_id=page_id)
+                    raise ValueError("Access forbidden. Please verify your API token has permission to access this Confluence page.")
                 elif response.status_code == 404:
-                    raise ValueError(f"Confluence page {page_id} not found. Please verify the page ID or URL.")
+                    error_detail = response.text
+                    self_logger.error("confluence_page_not_found", status_code=404, error=error_detail, cloud_id=cloud_id, page_id=page_id, url=confluence_url)
+                    raise ValueError(f"Confluence page {page_id} not found. Please verify the page ID or URL. URL used: {confluence_url or 'N/A'}, Cloud ID: {cloud_id}")
                 else:
                     error_text = response.text
-                    raise Exception(f"Failed to fetch Confluence page: {response.status_code} - {error_text}")
+                    self_logger.error("confluence_api_error", status_code=response.status_code, error=error_text, cloud_id=cloud_id, page_id=page_id)
+                    raise Exception(f"Failed to fetch Confluence page: HTTP {response.status_code} - {error_text[:200]}")
         
         except ValueError as e:
             self_logger.error("confluence_fetch_validation_error", error=str(e))
