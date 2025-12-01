@@ -165,8 +165,8 @@ class AgnoBaseAgent(ABC):
         """Get appropriate Agno model based on provider registry and tier.
         
         Model Tiers (Updated November 2025):
-        - fast: gpt-5-mini, claude-3-haiku, gemini-1.5-flash (for most agents - fastest, lowest cost)
-        - standard: gpt-4o, claude-3.5-sonnet, gemini-1.5-pro (for coordinators - balanced)
+        - fast: gpt-5.1-chat-latest, claude-3-haiku, gemini-1.5-flash (for most agents - fastest, lowest cost)
+        - standard: gpt-5.1, claude-3.5-sonnet, gemini-1.5-pro (for coordinators - balanced)
         - premium: gpt-5.1, claude-opus-4.5, gemini-3-pro (for critical reasoning - most powerful)
         
         Priority: GPT-5.1 (primary) > Gemini 3 Pro (tertiary) > Claude Opus 4.5 (secondary)
@@ -175,15 +175,11 @@ class AgnoBaseAgent(ABC):
         
         if model_tier == "fast":
             # Fast models for most agents (50-70% latency reduction, lowest cost)
-            # Updated Nov 2025: GPT-5-mini (if available), fallback to gpt-4o-mini
+            # Updated Dec 2025: GPT-5.1 Instant (fastest OpenAI model)
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    # Try GPT-5-mini first (Nov 2025), fallback to gpt-4o-mini
-                    try:
-                        return OpenAIChat(id="gpt-5-mini", api_key=api_key)
-                    except:
-                        return OpenAIChat(id="gpt-4o-mini", api_key=api_key)
+                    return OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -194,10 +190,11 @@ class AgnoBaseAgent(ABC):
                     return Claude(id="claude-3-haiku-20240307", api_key=api_key)
         elif model_tier == "standard":
             # Standard models for coordinators (balanced performance/cost)
+            # Updated Dec 2025: GPT-5.1 (enhanced reasoning)
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    return OpenAIChat(id="gpt-4o", api_key=api_key)
+                    return OpenAIChat(id="gpt-5.1", api_key=api_key)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:

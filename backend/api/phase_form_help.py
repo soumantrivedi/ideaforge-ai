@@ -271,7 +271,7 @@ async def stream_phase_form_help(
             fast_model = None
             
             if provider_registry.has_openai_key():
-                fast_model = OpenAIChat(id="gpt-4o-mini", api_key=provider_registry.get_openai_key())
+                fast_model = OpenAIChat(id="gpt-5.1-chat-latest", api_key=provider_registry.get_openai_key())
             elif provider_registry.has_gemini_key():
                 fast_model = Gemini(id="gemini-1.5-flash", api_key=provider_registry.get_gemini_key())
             elif provider_registry.has_claude_key():

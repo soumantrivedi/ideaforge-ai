@@ -102,8 +102,8 @@ class AgnoEnhancedCoordinator:
         """Get appropriate Agno model based on provider registry and tier.
         
         Model Tiers:
-        - fast: gpt-4o-mini, claude-3-haiku, gemini-1.5-flash
-        - standard: gpt-4o, claude-3.5-sonnet, gemini-1.5-pro (for coordinators)
+        - fast: gpt-5.1-chat-latest, claude-3-haiku, gemini-1.5-flash
+        - standard: gpt-5.1, claude-3.5-sonnet, gemini-1.5-pro (for coordinators)
         - premium: gpt-5.1, claude-4-sonnet, gemini-3.0-pro
         """
         api_key = None
@@ -112,7 +112,7 @@ class AgnoEnhancedCoordinator:
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    return OpenAIChat(id="gpt-4o-mini", api_key=api_key)
+                    return OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -125,7 +125,7 @@ class AgnoEnhancedCoordinator:
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    return OpenAIChat(id="gpt-4o", api_key=api_key)
+                    return OpenAIChat(id="gpt-5.1", api_key=api_key)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -1098,7 +1098,7 @@ INSTRUCTIONS:
                     
                     fast_model = None
                     if provider_registry.has_openai_key():
-                        fast_model = OpenAIChat(id="gpt-4o-mini", api_key=provider_registry.get_openai_key())
+                        fast_model = OpenAIChat(id="gpt-5.1-chat-latest", api_key=provider_registry.get_openai_key())
                     elif provider_registry.has_gemini_key():
                         fast_model = Gemini(id="gemini-1.5-flash", api_key=provider_registry.get_gemini_key())
                     elif provider_registry.has_claude_key():
