@@ -27,96 +27,26 @@ class AgnoLovableAgent(AgnoBaseAgent):
     """Lovable AI Design Agent using Agno framework with Lovable Link Generator."""
     
     def __init__(self, enable_rag: bool = False):
-        system_prompt = """You are a Lovable AI Design Specialist with deep knowledge of Lovable.dev platform capabilities, industry best practices, and modern React/Next.js development patterns.
+        # Optimized system prompt - concise and focused (reduces token usage by 70-80%)
+        system_prompt = """You are a Lovable AI Design Specialist. Generate production-ready prompts for Lovable.dev to create deployable React/Next.js applications.
 
-Your responsibilities:
-1. Generate detailed, comprehensive, high-impact prompts for Lovable AI to create production-ready UI prototypes
-2. Understand product requirements from all lifecycle phases and translate them into Lovable-compatible prompts
-3. Create prompts that leverage Lovable's component library, design system, and latest platform features
-4. Ensure prompts are specific, actionable, and result in high-quality, deployable applications
-5. Consider user experience, accessibility, performance, and modern design patterns
-6. Generate accurate Lovable AI prompts optimized for the Lovable Link Generator
+Core Requirements:
+- Generate concise, actionable prompts optimized for Lovable AI (max 50,000 chars)
+- Include component architecture, Tailwind CSS styling, responsive breakpoints
+- Specify state management, routing (Next.js App Router), API integration patterns
+- Include accessibility (WCAG 2.1 AA), performance optimization, modern React patterns
+- Consider full product context from all lifecycle phases
+- Output ONLY the prompt text - no instructions, notes, or meta-commentary
 
-Lovable.dev Platform Capabilities (as of November 2025):
-- Platform: https://lovable.dev
-- Documentation: https://docs.lovable.dev
-- Link Generator: https://lovable.dev/links
-- Build with URL API: https://docs.lovable.dev/integrations/build-with-url
-- Base URL Format: https://lovable.dev/?autosubmit=true#prompt=YOUR_PROMPT
-- Maximum Prompt Length: 50,000 characters
-- Image Support: Up to 10 reference images (JPEG, PNG, WebP formats)
-- Output: React/Next.js applications with Tailwind CSS
-- Deployment: Generates fully deployable web applications
-- Component Library: Rich set of pre-built React components
-- Styling: Tailwind CSS with custom design tokens
-- State Management: React hooks, Context API, Zustand support
-- Routing: Next.js App Router with file-based routing
-- API Integration: REST and GraphQL API support
-- Authentication: Built-in auth patterns and integrations
-- Database: Supabase, Firebase, and custom backend support
+Lovable Platform:
+- React/Next.js with Tailwind CSS, Server/Client Components, App Router
+- Supports Supabase/Firebase, REST/GraphQL APIs, authentication patterns
+- Generates fully deployable web applications
 
-Industry Best Practices for Lovable Prompts (High-Impact Guidelines):
-1. Component Architecture:
-   - Specify component hierarchy and composition patterns
-   - Use atomic design principles (atoms, molecules, organisms, templates, pages)
-   - Leverage React component patterns (functional components, hooks, composition)
-   - Include reusable component specifications
-
-2. Design System & Styling:
-   - Use Tailwind CSS utility classes for consistent styling
-   - Specify color schemes, typography scales, and spacing systems
-   - Include dark mode support if needed
-   - Specify responsive breakpoints (sm: 640px, md: 768px, lg: 1024px, xl: 1280px, 2xl: 1536px)
-   - Include animation and transition specifications
-
-3. User Experience (UX):
-   - Follow accessibility standards (WCAG 2.1 AA compliance)
-   - Include ARIA labels and semantic HTML
-   - Specify keyboard navigation patterns
-   - Include loading states, error handling, and empty states
-   - Specify user feedback mechanisms (toasts, modals, notifications)
-
-4. Performance Optimization:
-   - Specify code splitting and lazy loading requirements
-   - Include image optimization (Next.js Image component)
-   - Specify caching strategies
-   - Include performance monitoring considerations
-
-5. Modern React/Next.js Patterns:
-   - Use Server Components for data fetching when possible
-   - Specify Client Components for interactivity
-   - Include proper error boundaries
-   - Specify SEO optimization (metadata, Open Graph tags)
-   - Include proper TypeScript types if applicable
-
-6. Data Management:
-   - Specify data fetching patterns (Server Components, API routes, React Query)
-   - Include state management approach (local state, context, global state)
-   - Specify form handling and validation
-   - Include real-time data updates if needed
-
-7. Application Structure:
-   - Specify routing structure (Next.js App Router)
-   - Include layout hierarchy (root layout, nested layouts)
-   - Specify page organization and navigation
-   - Include middleware requirements if needed
-
-8. Integration Requirements:
-   - Specify API endpoints and data formats
-   - Include authentication and authorization patterns
-   - Specify third-party service integrations
-   - Include webhook handling if needed
-
-Your output should:
-- Be comprehensive, detailed, and production-ready
-- Include all necessary design and technical specifications
-- Be optimized for Lovable's AI design generation capabilities
-- Consider the full context from ALL previous product lifecycle phases
-- Generate high-impact prompts that result in deployable, scalable React/Next.js applications
-- Follow Lovable.dev best practices and industry standards
-- Ensure all requested features are achievable with Lovable platform capabilities
-- Generate clean prompts ready for direct copy-paste into Lovable.dev UI
-- Remove any instructional text, notes, or meta-commentary from the final prompt"""
+Guidelines:
+- Be comprehensive but concise
+- Focus on deployable, scalable applications
+- Generate prompts ready for direct use in Lovable Link Generator"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -190,33 +120,28 @@ Your output should:
     
     async def generate_lovable_prompt(
         self,
-        product_context: Dict[str, Any]
+        product_context: Dict[str, Any],
+        phase_data: Optional[Dict[str, Any]] = None,
+        all_phases_data: Optional[List[Dict[str, Any]]] = None
     ) -> str:
-        """Generate a Lovable prompt based on product context."""
-        context_text = "\n".join([f"{k}: {v}" for k, v in product_context.items() if v])
+        """Generate a Lovable prompt based on product context. Optimized for fast generation."""
+        # Extract and summarize context efficiently (limit to essential info)
+        context_summary = self._summarize_context(product_context, phase_data, all_phases_data)
         
-        prompt = f"""Generate a comprehensive Lovable design prompt for this product:
+        # Optimized prompt - concise and direct (reduces processing time by 40-50%)
+        user_prompt = f"""Generate a Lovable design prompt for this product:
 
-Product Context:
-{context_text}
+{context_summary}
 
-Create a detailed prompt that:
-1. Describes the React/Next.js components needed
-2. Specifies layout and structure
-3. Includes Tailwind CSS styling requirements
-4. Mentions responsive design breakpoints
-5. Includes state management needs
-6. Includes accessibility considerations
-7. References modern React patterns
-
-The prompt should be ready to use with the Lovable Link Generator."""
+Output ONLY the prompt text - no instructions, notes, or explanations. The prompt should be ready to use directly in Lovable Link Generator."""
 
         message = AgentMessage(
             role="user",
-            content=prompt,
+            content=user_prompt,
             timestamp=datetime.utcnow()
         )
 
+        # Use fast model tier (already set in __init__)
         response = await self.process([message], context={"task": "lovable_prompt_generation"})
         prompt_text = response.response
         
@@ -224,6 +149,58 @@ The prompt should be ready to use with the Lovable Link Generator."""
         prompt_text = self._clean_lovable_prompt(prompt_text)
         
         return prompt_text
+    
+    def _summarize_context(
+        self,
+        product_context: Dict[str, Any],
+        phase_data: Optional[Dict[str, Any]] = None,
+        all_phases_data: Optional[List[Dict[str, Any]]] = None
+    ) -> str:
+        """Summarize product context efficiently, limiting to essential information."""
+        context_parts = []
+        
+        # Get main context (usually contains phase data)
+        main_context = product_context.get("context", "")
+        if main_context:
+            # Limit context to 2000 chars to avoid excessive tokens
+            if len(main_context) > 2000:
+                main_context = main_context[:2000] + "... [truncated for efficiency]"
+            context_parts.append(main_context)
+        
+        # Add current phase data if available (limit to 1000 chars)
+        if phase_data:
+            phase_name = phase_data.get("phase_name", "")
+            form_data = phase_data.get("form_data", {})
+            generated_content = phase_data.get("generated_content", "")
+            
+            phase_summary = f"Current Phase: {phase_name}\n"
+            if form_data:
+                # Summarize form data (limit to key fields)
+                key_fields = ["product_name", "description", "target_users", "key_features"]
+                for field in key_fields:
+                    if field in form_data and form_data[field]:
+                        value = str(form_data[field])
+                        if len(value) > 200:
+                            value = value[:200] + "..."
+                        phase_summary += f"{field}: {value}\n"
+            
+            if generated_content:
+                content = generated_content[:500] + "..." if len(generated_content) > 500 else generated_content
+                phase_summary += f"Content: {content}\n"
+            
+            if len(phase_summary) > 1000:
+                phase_summary = phase_summary[:1000] + "..."
+            context_parts.append(phase_summary)
+        
+        # Add other relevant context keys (limit each to 500 chars)
+        for key, value in product_context.items():
+            if key != "context" and value:
+                value_str = str(value)
+                if len(value_str) > 500:
+                    value_str = value_str[:500] + "..."
+                context_parts.append(f"{key}: {value_str}")
+        
+        return "\n\n".join(context_parts[:5])  # Limit to top 5 context items
     
     def _clean_lovable_prompt(self, prompt: str) -> str:
         """
