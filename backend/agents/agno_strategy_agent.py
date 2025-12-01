@@ -77,28 +77,24 @@ Be thorough, strategic, and actionable. Focus on creating value and competitive 
         messages: List[AgentMessage],
         context: Optional[Dict[str, Any]] = None,
     ) -> AgentResponse:
-        """Process strategy-related queries."""
-        formatted_messages = self._prepare_messages(messages)
-        formatted_messages = self._add_context(formatted_messages, context)
-
-        try:
-            response = await self._process_with_agno(formatted_messages, context)
-
-            return AgentResponse(
-                agent_type=self.role,
-                response=response,
-                metadata={
-                    "has_context": context is not None,
-                    "message_count": len(messages),
-                    "capabilities_used": self.capabilities,
-                    "rag_enabled": self.enable_rag
-                },
-                timestamp=datetime.utcnow()
-            )
-
-        except Exception as e:
-            self.logger.error("strategy_error", error=str(e))
-            raise
+        """
+        Process strategy-related queries using Agno framework.
+        Uses the base class process method which handles all Agno-specific logic.
+        """
+        # Use the base class process method which handles Agno agent interaction
+        response = await super().process(messages, context)
+        
+        # Add strategy-specific metadata
+        if response.metadata:
+            response.metadata.update({
+                "capabilities_used": self.capabilities,
+            })
+        else:
+            response.metadata = {
+                "capabilities_used": self.capabilities,
+            }
+        
+        return response
 
     async def develop_product_strategy(
         self,
