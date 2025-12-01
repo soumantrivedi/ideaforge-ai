@@ -27,21 +27,37 @@ class AgnoV0Agent(AgnoBaseAgent):
     """V0 (Vercel) Design Agent using Agno framework with platform access."""
     
     def __init__(self, enable_rag: bool = False):
-        # Optimized system prompt - concise and focused (reduces token usage by 60-70%)
-        system_prompt = """You are a V0 (Vercel) Design Specialist. Generate production-ready V0 prompts for React/Next.js UI prototypes.
+        # Enhanced system prompt emphasizing detailed, comprehensive prompts
+        system_prompt = """You are a V0 (Vercel) Design Specialist expert in creating detailed, comprehensive prompts for V0.dev.
+
+Your primary goal is to generate EXTENSIVE, DETAILED prompts that capture ALL aspects of the product design based on the complete context provided.
 
 Core Requirements:
-- Generate concise, actionable prompts optimized for v0-1.5-md model
-- Include component types, layout, Tailwind CSS styling, responsive breakpoints
-- Specify interaction states, accessibility (ARIA), and user flows
-- Reference shadcn/ui patterns and modern React practices
+- Generate DETAILED, COMPREHENSIVE prompts (not concise - include all relevant information)
+- Include ALL form data, product context, and requirements from all lifecycle phases
+- Describe component types, layouts, Tailwind CSS styling, responsive breakpoints in detail
+- Specify ALL interaction states, accessibility (ARIA), and complete user flows
+- Reference shadcn/ui patterns, modern React practices, and Next.js App Router patterns
+- Include color schemes, typography, spacing, animations, and transitions
+- Describe data structures, state management, API integrations, and authentication flows
 - Output ONLY the prompt text - no instructions, notes, or meta-commentary
 
+V0 Documentation Guidelines (Based on Official Vercel V0 Docs):
+- V0 uses v0-1.5-md model specialized for UI generation
+- Prompts should be detailed enough to generate complete, production-ready components
+- Include specific Tailwind CSS classes and responsive breakpoints (sm:, md:, lg:, xl:)
+- Specify component hierarchy, props, and state management patterns
+- Describe complete user interactions, form validations, and error handling
+- Include accessibility features: ARIA labels, keyboard navigation, focus management
+- Reference React patterns: hooks, context, server/client components
+- Describe animations, transitions, and micro-interactions
+
 Guidelines:
-- Be specific and comprehensive but concise
-- Focus on deployable React/Next.js components with Tailwind CSS
-- Consider full product context from all lifecycle phases
-- Generate prompts ready for direct use in V0 API or UI"""
+- Be EXTENSIVE and COMPREHENSIVE - include ALL relevant details from the product context
+- Use ALL form data fields, not just key fields - every detail matters
+- Include context from ALL lifecycle phases (Ideation, Strategy, Research, PRD, Design, etc.)
+- Generate prompts that are detailed enough to create complete, deployable React/Next.js components
+- The prompt should be ready for direct use in V0 API or UI without additional editing"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -50,7 +66,7 @@ Guidelines:
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="v0_knowledge_base",
-            model_tier="fast",  # Use fast model for V0 prompt generation
+            model_tier="standard",  # Use standard model for better quality, detailed prompts
             tools=[],  # Tools will be added after initialization
             capabilities=[
                 "v0 prompt generation",
@@ -215,14 +231,33 @@ Guidelines:
         self,
         product_context: Dict[str, Any]
     ) -> str:
-        """Generate a V0 prompt based on product context. Optimized for fast generation."""
-        # Extract and summarize context efficiently (limit to essential info)
+        """Generate a detailed, comprehensive V0 prompt based on complete product context."""
+        # Extract ALL context without aggressive truncation
         context_summary = self._summarize_context(product_context)
         
-        # Optimized prompt - concise and direct (reduces processing time by 40-50%)
-        user_prompt = f"""Generate a V0 design prompt for this product:
+        # Detailed prompt emphasizing comprehensive output
+        user_prompt = f"""Generate a DETAILED, COMPREHENSIVE V0 design prompt for this product. Include ALL relevant information from the context below.
 
+IMPORTANT: 
+- Include ALL form data fields, product details, features, and requirements
+- Describe the complete UI/UX design in detail
+- Include all component specifications, layouts, styling, interactions, and user flows
+- Make the prompt EXTENSIVE and DETAILED - not concise
+- The prompt should be comprehensive enough to generate a complete, production-ready design
+
+Product Context:
 {context_summary}
+
+Generate a detailed V0 prompt that captures ALL aspects of this product design. Include:
+- Complete component architecture and hierarchy
+- Detailed layout specifications with responsive breakpoints
+- Full styling details (colors, typography, spacing, Tailwind CSS classes)
+- All interaction states and user flows
+- Accessibility features (ARIA labels, keyboard navigation)
+- State management and data flow
+- API integrations and data fetching patterns
+- Form validations and error handling
+- Animations and transitions
 
 Output ONLY the prompt text - no instructions, notes, or explanations. The prompt should be ready to use directly in V0."""
 
@@ -242,27 +277,31 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         return prompt_text
     
     def _summarize_context(self, product_context: Dict[str, Any]) -> str:
-        """Summarize product context efficiently, limiting to essential information."""
-        # Extract key information, limiting length to avoid token bloat
+        """Extract ALL product context without aggressive truncation - include everything."""
         context_parts = []
         
-        # Get main context (usually contains phase data)
+        # Get main context (usually contains phase data) - include ALL of it
         main_context = product_context.get("context", "")
         if main_context:
-            # Limit context to 2000 chars to avoid excessive tokens
-            if len(main_context) > 2000:
-                main_context = main_context[:2000] + "... [truncated for efficiency]"
-            context_parts.append(main_context)
+            # Include full context - don't truncate (let the model handle token limits)
+            context_parts.append(f"Product Context:\n{main_context}")
         
-        # Add other relevant context keys (limit each to 500 chars)
+        # Add ALL other context keys with full content
         for key, value in product_context.items():
             if key != "context" and value:
-                value_str = str(value)
-                if len(value_str) > 500:
-                    value_str = value_str[:500] + "..."
-                context_parts.append(f"{key}: {value_str}")
+                # Include full value - don't truncate
+                if isinstance(value, dict):
+                    # Format dict nicely
+                    formatted_dict = "\n".join([f"  {k}: {v}" for k, v in value.items() if v])
+                    context_parts.append(f"{key}:\n{formatted_dict}")
+                elif isinstance(value, list):
+                    # Format list nicely
+                    formatted_list = "\n".join([f"  - {item}" for item in value if item])
+                    context_parts.append(f"{key}:\n{formatted_list}")
+                else:
+                    context_parts.append(f"{key}: {value}")
         
-        return "\n\n".join(context_parts[:5])  # Limit to top 5 context items
+        return "\n\n".join(context_parts)  # Include ALL context items
     
     def _clean_v0_prompt(self, prompt: str) -> str:
         """

@@ -96,40 +96,31 @@ async def stream_design_prompt_generation(
         result = await db.execute(context_query, {"product_id": request.product_id})
         rows = result.fetchall()
         
-        # Build context efficiently (limit size to avoid token bloat)
+        # Build comprehensive context - include ALL form data and content
         context_parts = []
-        total_length = 0
-        max_context_length = 2000  # Limit total context to 2000 chars
         
         for row in rows:
-            if total_length >= max_context_length:
-                break
-                
             phase_name = row[2]
             form_data = row[0] or {}
             generated_content = row[1] or ""
             
             phase_text = f"## {phase_name} Phase\n"
+            
+            # Include ALL form data fields, not just key fields
             if form_data:
-                # Only include key fields (limit to 5 most important)
-                key_fields = ["product_name", "description", "target_users", "key_features", "goals"]
-                for field in key_fields:
-                    if field in form_data and form_data[field]:
-                        value = str(form_data[field])
-                        if len(value) > 200:
-                            value = value[:200] + "..."
-                        phase_text += f"- {field}: {value}\n"
-                        total_length += len(phase_text)
-                        if total_length >= max_context_length:
-                            break
+                phase_text += "Form Data:\n"
+                for field, value in form_data.items():
+                    if value:  # Only include non-empty fields
+                        if isinstance(value, (dict, list)):
+                            phase_text += f"- {field}: {json.dumps(value, indent=2)}\n"
+                        else:
+                            phase_text += f"- {field}: {value}\n"
             
-            if generated_content and total_length < max_context_length:
-                content = generated_content[:300] + "..." if len(generated_content) > 300 else generated_content
-                phase_text += f"Content: {content}\n"
-                total_length += len(content)
+            # Include full generated content
+            if generated_content:
+                phase_text += f"\nGenerated Content:\n{generated_content}\n"
             
-            if total_length < max_context_length:
-                context_parts.append(phase_text)
+            context_parts.append(phase_text)
         
         full_context = "\n".join(context_parts)
         
@@ -285,40 +276,32 @@ async def generate_design_prompt(
         result = await db.execute(context_query, {"product_id": request.product_id})
         rows = result.fetchall()
         
-        # Build context efficiently (limit size to avoid token bloat and reduce processing time)
+        # Build comprehensive context - include ALL form data and content
         context_parts = []
-        total_length = 0
-        max_context_length = 2000  # Limit total context to 2000 chars (reduces processing by 40-50%)
         
         for row in rows:
-            if total_length >= max_context_length:
-                break
-                
             phase_name = row[2]
             form_data = row[0] or {}
             generated_content = row[1] or ""
             
             phase_text = f"## {phase_name} Phase\n"
+            
+            # Include ALL form data fields, not just key fields
             if form_data:
-                # Only include key fields (limit to 5 most important)
-                key_fields = ["product_name", "description", "target_users", "key_features", "goals"]
-                for field in key_fields:
-                    if field in form_data and form_data[field] and total_length < max_context_length:
-                        value = str(form_data[field])
-                        if len(value) > 200:
-                            value = value[:200] + "..."
-                        phase_text += f"- {field}: {value}\n"
-                        total_length += len(phase_text)
-                        if total_length >= max_context_length:
-                            break
+                phase_text += "Form Data:\n"
+                for field, value in form_data.items():
+                    if value:  # Only include non-empty fields
+                        if isinstance(value, (dict, list)):
+                            import json
+                            phase_text += f"- {field}: {json.dumps(value, indent=2)}\n"
+                        else:
+                            phase_text += f"- {field}: {value}\n"
             
-            if generated_content and total_length < max_context_length:
-                content = generated_content[:300] + "..." if len(generated_content) > 300 else generated_content
-                phase_text += f"Content: {content}\n"
-                total_length += len(content)
+            # Include full generated content
+            if generated_content:
+                phase_text += f"\nGenerated Content:\n{generated_content}\n"
             
-            if total_length < max_context_length:
-                context_parts.append(phase_text)
+            context_parts.append(phase_text)
         
         full_context = "\n".join(context_parts)
         

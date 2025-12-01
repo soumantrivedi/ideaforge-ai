@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import structlog
 import urllib.parse
+import json
 
 from backend.agents.agno_base_agent import AgnoBaseAgent
 from backend.models.schemas import AgentMessage, AgentResponse
@@ -27,26 +28,38 @@ class AgnoLovableAgent(AgnoBaseAgent):
     """Lovable AI Design Agent using Agno framework with Lovable Link Generator."""
     
     def __init__(self, enable_rag: bool = False):
-        # Optimized system prompt - concise and focused (reduces token usage by 70-80%)
-        system_prompt = """You are a Lovable AI Design Specialist. Generate production-ready prompts for Lovable.dev to create deployable React/Next.js applications.
+        # Enhanced system prompt emphasizing detailed, comprehensive prompts
+        system_prompt = """You are a Lovable AI Design Specialist expert in creating detailed, comprehensive prompts for Lovable.dev.
+
+Your primary goal is to generate EXTENSIVE, DETAILED prompts that capture ALL aspects of the application based on the complete context provided.
 
 Core Requirements:
-- Generate concise, actionable prompts optimized for Lovable AI (max 50,000 chars)
-- Include component architecture, Tailwind CSS styling, responsive breakpoints
-- Specify state management, routing (Next.js App Router), API integration patterns
-- Include accessibility (WCAG 2.1 AA), performance optimization, modern React patterns
-- Consider full product context from all lifecycle phases
+- Generate DETAILED, COMPREHENSIVE prompts (not concise - include all relevant information)
+- Include ALL form data, product context, and requirements from all lifecycle phases
+- Describe complete application architecture, component structure, and data flow
+- Specify ALL features, user flows, API integrations, and authentication patterns
+- Include detailed Tailwind CSS styling, responsive breakpoints, and design system
+- Describe state management, routing (Next.js App Router), and data fetching patterns
+- Include accessibility (WCAG 2.1 AA), performance optimization, and modern React patterns
 - Output ONLY the prompt text - no instructions, notes, or meta-commentary
 
-Lovable Platform:
-- React/Next.js with Tailwind CSS, Server/Client Components, App Router
-- Supports Supabase/Firebase, REST/GraphQL APIs, authentication patterns
-- Generates fully deployable web applications
+Lovable Platform Documentation Guidelines (Based on Official Lovable.dev Docs):
+- Lovable.dev generates fully deployable React/Next.js applications
+- Supports Server Components, Client Components, and App Router patterns
+- Uses Tailwind CSS for styling with responsive breakpoints
+- Supports Supabase, Firebase, REST APIs, GraphQL, and authentication patterns
+- Prompts should be detailed enough to generate complete, production-ready applications
+- Include database schemas, API endpoints, authentication flows, and user management
+- Describe complete application structure: pages, components, layouts, routing
+- Include form validations, error handling, loading states, and user feedback
+- Specify data models, relationships, and data flow throughout the application
 
 Guidelines:
-- Be comprehensive but concise
-- Focus on deployable, scalable applications
-- Generate prompts ready for direct use in Lovable Link Generator"""
+- Be EXTENSIVE and COMPREHENSIVE - include ALL relevant details from the product context
+- Use ALL form data fields, not just key fields - every detail matters
+- Include context from ALL lifecycle phases (Ideation, Strategy, Research, PRD, Design, etc.)
+- Generate prompts that are detailed enough to create complete, deployable applications
+- The prompt should be ready for direct use in Lovable Link Generator without additional editing"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -55,7 +68,7 @@ Guidelines:
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="lovable_knowledge_base",
-            model_tier="fast",  # Use fast model for Lovable prompt generation
+            model_tier="standard",  # Use standard model for better quality, detailed prompts
             tools=[],  # Tools will be added after initialization
             capabilities=[
                 "lovable prompt generation",
@@ -124,14 +137,36 @@ Guidelines:
         phase_data: Optional[Dict[str, Any]] = None,
         all_phases_data: Optional[List[Dict[str, Any]]] = None
     ) -> str:
-        """Generate a Lovable prompt based on product context. Optimized for fast generation."""
-        # Extract and summarize context efficiently (limit to essential info)
+        """Generate a detailed, comprehensive Lovable prompt based on complete product context."""
+        # Extract ALL context without aggressive truncation
         context_summary = self._summarize_context(product_context, phase_data, all_phases_data)
         
-        # Optimized prompt - concise and direct (reduces processing time by 40-50%)
-        user_prompt = f"""Generate a Lovable design prompt for this product:
+        # Detailed prompt emphasizing comprehensive output
+        user_prompt = f"""Generate a DETAILED, COMPREHENSIVE Lovable.dev prompt for this application. Include ALL relevant information from the context below.
 
+IMPORTANT: 
+- Include ALL form data fields, product details, features, and requirements
+- Describe the complete application architecture, features, and user flows in detail
+- Include all component specifications, pages, routing, API integrations, and data models
+- Make the prompt EXTENSIVE and DETAILED - not concise
+- The prompt should be comprehensive enough to generate a complete, deployable application
+
+Product Context:
 {context_summary}
+
+Generate a detailed Lovable.dev prompt that captures ALL aspects of this application. Include:
+- Complete application architecture and structure
+- All pages, routes, and navigation structure
+- Detailed component specifications with props and state
+- Full styling details (Tailwind CSS classes, responsive breakpoints, design system)
+- Complete user flows and interactions
+- Database schema and data models
+- API endpoints and data fetching patterns
+- Authentication and user management flows
+- Form validations, error handling, and user feedback
+- State management patterns (React hooks, context, state)
+- Accessibility features (WCAG 2.1 AA compliance)
+- Performance optimizations and best practices
 
 Output ONLY the prompt text - no instructions, notes, or explanations. The prompt should be ready to use directly in Lovable Link Generator."""
 
@@ -156,51 +191,78 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         phase_data: Optional[Dict[str, Any]] = None,
         all_phases_data: Optional[List[Dict[str, Any]]] = None
     ) -> str:
-        """Summarize product context efficiently, limiting to essential information."""
+        """Extract ALL product context without aggressive truncation - include everything."""
         context_parts = []
         
-        # Get main context (usually contains phase data)
+        # Get main context (usually contains phase data) - include ALL of it
         main_context = product_context.get("context", "")
         if main_context:
-            # Limit context to 2000 chars to avoid excessive tokens
-            if len(main_context) > 2000:
-                main_context = main_context[:2000] + "... [truncated for efficiency]"
-            context_parts.append(main_context)
+            # Include full context - don't truncate
+            context_parts.append(f"Product Context:\n{main_context}")
         
-        # Add current phase data if available (limit to 1000 chars)
+        # Add ALL phase data if available - include EVERYTHING
+        if all_phases_data:
+            context_parts.append("\n=== ALL PRODUCT LIFECYCLE PHASES ===\n")
+            for phase_item in all_phases_data:
+                phase_name = phase_item.get("phase_name", "")
+                form_data = phase_item.get("form_data", {})
+                generated_content = phase_item.get("generated_content", "")
+                
+                phase_summary = f"\n--- {phase_name} Phase ---\n"
+                
+                # Include ALL form data fields, not just key fields
+                if form_data:
+                    phase_summary += "Form Data:\n"
+                    for field, value in form_data.items():
+                        if value:  # Only include non-empty fields
+                            if isinstance(value, (dict, list)):
+                                phase_summary += f"  {field}: {json.dumps(value, indent=2)}\n"
+                            else:
+                                phase_summary += f"  {field}: {value}\n"
+                
+                # Include full generated content
+                if generated_content:
+                    phase_summary += f"\nGenerated Content:\n{generated_content}\n"
+                
+                context_parts.append(phase_summary)
+        
+        # Add current phase data with full details if available
         if phase_data:
             phase_name = phase_data.get("phase_name", "")
             form_data = phase_data.get("form_data", {})
             generated_content = phase_data.get("generated_content", "")
             
-            phase_summary = f"Current Phase: {phase_name}\n"
+            phase_summary = f"\n=== CURRENT PHASE: {phase_name} ===\n"
+            
+            # Include ALL form data fields
             if form_data:
-                # Summarize form data (limit to key fields)
-                key_fields = ["product_name", "description", "target_users", "key_features"]
-                for field in key_fields:
-                    if field in form_data and form_data[field]:
-                        value = str(form_data[field])
-                        if len(value) > 200:
-                            value = value[:200] + "..."
-                        phase_summary += f"{field}: {value}\n"
+                phase_summary += "Form Data (Complete):\n"
+                for field, value in form_data.items():
+                    if value:
+                        if isinstance(value, (dict, list)):
+                            phase_summary += f"  {field}: {json.dumps(value, indent=2)}\n"
+                        else:
+                            phase_summary += f"  {field}: {value}\n"
             
+            # Include full generated content
             if generated_content:
-                content = generated_content[:500] + "..." if len(generated_content) > 500 else generated_content
-                phase_summary += f"Content: {content}\n"
+                phase_summary += f"\nGenerated Content:\n{generated_content}\n"
             
-            if len(phase_summary) > 1000:
-                phase_summary = phase_summary[:1000] + "..."
             context_parts.append(phase_summary)
         
-        # Add other relevant context keys (limit each to 500 chars)
+        # Add ALL other context keys with full content
         for key, value in product_context.items():
             if key != "context" and value:
-                value_str = str(value)
-                if len(value_str) > 500:
-                    value_str = value_str[:500] + "..."
-                context_parts.append(f"{key}: {value_str}")
+                if isinstance(value, dict):
+                    formatted_dict = "\n".join([f"  {k}: {v}" for k, v in value.items() if v])
+                    context_parts.append(f"{key}:\n{formatted_dict}")
+                elif isinstance(value, list):
+                    formatted_list = "\n".join([f"  - {item}" for item in value if item])
+                    context_parts.append(f"{key}:\n{formatted_list}")
+                else:
+                    context_parts.append(f"{key}: {value}")
         
-        return "\n\n".join(context_parts[:5])  # Limit to top 5 context items
+        return "\n\n".join(context_parts)  # Include ALL context items
     
     def _clean_lovable_prompt(self, prompt: str) -> str:
         """
