@@ -200,14 +200,19 @@ Based on the following Lovable.dev documentation:
 {documentation_content[:10000]}"""
         
         try:
+            from backend.config import get_openai_completion_param
+            model = "gpt-4o-mini"
+            param_name = get_openai_completion_param(model)
+            completion_params = {param_name: 1000}
+            
             response = await self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.7,
-                max_tokens=1000
+                **completion_params
             )
             
             prompt = response.choices[0].message.content.strip()

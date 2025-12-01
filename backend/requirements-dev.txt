@@ -1,0 +1,8 @@
+# Development and Testing Dependencies
+# These are not needed in production Docker images
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.2
+pytest-cov==6.0.0
+

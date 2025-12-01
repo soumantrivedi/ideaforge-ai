@@ -28,6 +28,27 @@ def _clean_api_key(key: Optional[str]) -> Optional[str]:
     return key if key else None
 
 
+def get_openai_completion_param(model: str) -> str:
+    """
+    Get the correct completion parameter name based on the OpenAI model.
+    
+    GPT-5.1 models (gpt-5.1, gpt-5.1-chat-latest) require 'max_completion_tokens'.
+    Older models (gpt-4o-mini, gpt-4o, gpt-5, etc.) use 'max_tokens'.
+    
+    Args:
+        model: The model name (e.g., 'gpt-5.1', 'gpt-4o-mini')
+        
+    Returns:
+        str: The parameter name ('max_completion_tokens' or 'max_tokens')
+        Example: 'max_completion_tokens' for GPT-5.1 models, 'max_tokens' for others
+    """
+    # GPT-5.1 models require max_completion_tokens
+    if model and ('gpt-5.1' in model.lower() or 'gpt-5' in model.lower()):
+        return 'max_completion_tokens'
+    # All other models use max_tokens
+    return 'max_tokens'
+
+
 class Settings(BaseSettings):
     # Database Configuration
     database_url: str = _get_database_url()

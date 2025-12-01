@@ -669,20 +669,96 @@ export function PhaseFormModal({
       console.error('Error generating AI help:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       
-      // Show a more user-friendly error message
-      if (errorMessage.includes('No AI provider')) {
-        const shouldGoToSettings = confirm(
-          `${errorMessage}\n\nWould you like to go to Settings to configure an AI provider now?`
-        );
-        if (shouldGoToSettings && onNavigateToSettings) {
-          onClose();
-          onNavigateToSettings();
-        } else if (shouldGoToSettings) {
-          alert('Please navigate to Settings from the main menu to configure AI providers.');
-        }
-      } else {
-        alert(`Failed to generate AI help: ${errorMessage}`);
+      // Parse error to determine type and create user-friendly message
+      const errorLower = errorMessage.toLowerCase();
+      let errorType: 'quota' | 'rate_limit' | 'auth' | 'server' | 'network' | 'generic' = 'generic';
+      let title = 'Error Generating AI Help';
+      let message = errorMessage;
+      let actionUrl: string | undefined;
+      let actionText: string | undefined;
+      let onAction: (() => void) | undefined;
+
+      // Check for quota/rate limit errors
+      if (errorLower.includes('quota') || errorLower.includes('exceeded') || 
+          errorLower.includes('billing') || errorLower.includes('plan')) {
+        errorType = 'quota';
+        title = 'API Quota Exceeded';
+        message = 'You have exceeded your current API quota. Please check your plan and billing details.\n\n' +
+                  'This may be due to:\n' +
+                  '• Reaching your monthly usage limit\n' +
+                  '• Insufficient credits in your account\n' +
+                  '• Payment method issues\n\n' +
+                  'Please update your billing information or upgrade your plan to continue using AI features.';
+        actionUrl = 'https://platform.openai.com/account/billing';
+        actionText = 'Check Billing';
+      } 
+      // Check for rate limit errors
+      else if (errorLower.includes('rate limit') || errorLower.includes('too many requests')) {
+        errorType = 'rate_limit';
+        title = 'Rate Limit Exceeded';
+        message = 'Too many requests. Please wait a moment and try again.';
       }
+      // Check for authentication errors
+      else if (errorLower.includes('unauthorized') || errorLower.includes('authentication') || 
+               errorLower.includes('invalid api key') || errorLower.includes('api key')) {
+        errorType = 'auth';
+        title = 'Authentication Error';
+        message = 'There was an issue with your API key. Please check your API key configuration in Settings.';
+        if (onNavigateToSettings) {
+          onAction = () => {
+            setErrorModal({ isOpen: false, error: { title: '', message: '' } });
+            onClose();
+            onNavigateToSettings();
+          };
+          actionText = 'Go to Settings';
+        }
+      }
+      // Check for network errors
+      else if (errorLower.includes('network') || errorLower.includes('fetch') || 
+               errorLower.includes('connection') || errorLower.includes('timeout')) {
+        errorType = 'network';
+        title = 'Network Error';
+        message = 'Unable to connect to the server. Please check your internet connection and try again.';
+      }
+      // Check for server errors
+      else if (errorLower.includes('server') || errorLower.includes('500') || 
+               errorLower.includes('internal server error')) {
+        errorType = 'server';
+        title = 'Server Error';
+        message = 'An error occurred on the server. Please try again later.';
+      }
+      // Check for missing AI provider
+      else if (errorMessage.includes('No AI provider')) {
+        errorType = 'auth';
+        title = 'AI Provider Not Configured';
+        message = 'No AI provider is configured. Please configure at least one AI provider in Settings to use AI features.';
+        if (onNavigateToSettings) {
+          onAction = () => {
+            setErrorModal({ isOpen: false, error: { title: '', message: '' } });
+            onClose();
+            onNavigateToSettings();
+          };
+          actionText = 'Go to Settings';
+        }
+      }
+      // Generic error
+      else {
+        title = 'Error Generating AI Help';
+        message = errorMessage;
+      }
+
+      // Show error modal
+      setErrorModal({
+        isOpen: true,
+        error: {
+          title,
+          message,
+          type: errorType,
+          actionUrl,
+          actionText,
+          onAction,
+        },
+      });
     } finally {
       setIsGeneratingAIHelp(false);
       setIsStreamingAIHelp(false);

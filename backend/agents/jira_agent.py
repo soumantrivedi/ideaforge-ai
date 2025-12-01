@@ -75,12 +75,17 @@ Ticket Structure:
             raise
 
     async def _process_with_openai(self, messages: List[Dict[str, str]]) -> str:
+        from backend.config import get_openai_completion_param
         client = self._get_openai_client()
+        model = settings.agent_model_primary
+        param_name = get_openai_completion_param(model)
+        completion_params = {param_name: 2000}
+        
         response = client.chat.completions.create(
-            model=settings.agent_model_primary,
+            model=model,
             messages=messages,
             temperature=0.5,
-            max_tokens=2000
+            **completion_params
         )
         return response.choices[0].message.content
 

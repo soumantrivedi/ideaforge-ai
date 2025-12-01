@@ -18,6 +18,58 @@ try:
     from agno.models.google import Gemini
     from agno.knowledge.knowledge import Knowledge
     from agno.vectordb.pgvector import PgVector, SearchType
+    
+    # Monkey-patch OpenAI client to use max_completion_tokens for GPT-5.1 models
+    # This fixes the issue where GPT-5.1 models require max_completion_tokens instead of max_tokens
+    # The agno library uses OpenAI client internally, so we patch at the client level
+    try:
+        from openai import OpenAI, AsyncOpenAI
+        
+        # Patch the ChatCompletion class's create method
+        from openai.resources.chat import completions
+        
+        _original_create = completions.Completions.create
+        _original_async_create = completions.AsyncCompletions.create if hasattr(completions, 'AsyncCompletions') else None
+        
+        def _patched_create(self, *args, **kwargs):
+            # Check if this is a GPT-5.1 model
+            model = kwargs.get('model') or (args[0] if args else None)
+            if model and ('gpt-5.1' in str(model).lower() or 'gpt-5' in str(model).lower()):
+                # Convert max_tokens to max_completion_tokens for GPT-5.1 models
+                if 'max_tokens' in kwargs and 'max_completion_tokens' not in kwargs:
+                    kwargs['max_completion_tokens'] = kwargs.pop('max_tokens')
+            return _original_create(self, *args, **kwargs)
+        
+        async def _patched_async_create(self, *args, **kwargs):
+            # Check if this is a GPT-5.1 model
+            model = kwargs.get('model') or (args[0] if args else None)
+            if model and ('gpt-5.1' in str(model).lower() or 'gpt-5' in str(model).lower()):
+                # Convert max_tokens to max_completion_tokens for GPT-5.1 models
+                if 'max_tokens' in kwargs and 'max_completion_tokens' not in kwargs:
+                    kwargs['max_completion_tokens'] = kwargs.pop('max_tokens')
+            return await _original_async_create(self, *args, **kwargs)
+        
+        # Apply patches to the completion classes
+        completions.Completions.create = _patched_create
+        if _original_async_create:
+            completions.AsyncCompletions.create = _patched_async_create
+            
+        # Also patch OpenAIChat.__init__ to handle max_completion_tokens parameter
+        _original_openai_chat_init = OpenAIChat.__init__
+        def _patched_openai_chat_init(self, *args, **kwargs):
+            # Check if this is a GPT-5.1 model
+            model_id = kwargs.get('id') or (args[0] if args else None)
+            if model_id and ('gpt-5.1' in str(model_id).lower() or 'gpt-5' in str(model_id).lower()):
+                # If max_tokens is provided, convert it to max_completion_tokens
+                if 'max_tokens' in kwargs and 'max_completion_tokens' not in kwargs:
+                    kwargs['max_completion_tokens'] = kwargs.pop('max_tokens')
+                # If neither is provided, set a default max_completion_tokens
+                elif 'max_completion_tokens' not in kwargs and 'max_tokens' not in kwargs:
+                    kwargs['max_completion_tokens'] = 4000
+            return _original_openai_chat_init(self, *args, **kwargs)
+        OpenAIChat.__init__ = _patched_openai_chat_init
+    except Exception as e:
+        structlog.get_logger().warning("failed_to_patch_openai_for_gpt51", error=str(e))
     # Embedders are in agno.knowledge.embedder
     try:
         from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -179,7 +231,8 @@ class AgnoBaseAgent(ABC):
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    return OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key)
+                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
+                    return OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key, max_completion_tokens=2000)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -194,7 +247,8 @@ class AgnoBaseAgent(ABC):
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    return OpenAIChat(id="gpt-5.1", api_key=api_key)
+                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
+                    return OpenAIChat(id="gpt-5.1", api_key=api_key, max_completion_tokens=4000)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -211,7 +265,11 @@ class AgnoBaseAgent(ABC):
                 if api_key:
                     # Use GPT-5.1 (primary) or GPT-5 as fallback
                     model_id = settings.agent_model_primary  # gpt-5.1 or gpt-5
-                    return OpenAIChat(id=model_id, api_key=api_key)
+                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
+                    if 'gpt-5.1' in model_id.lower() or 'gpt-5' in model_id.lower():
+                        return OpenAIChat(id=model_id, api_key=api_key, max_completion_tokens=4000)
+                    else:
+                        return OpenAIChat(id=model_id, api_key=api_key)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -341,10 +399,19 @@ class AgnoBaseAgent(ABC):
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    new_model = OpenAIChat(
-                        id=model_id or settings.agent_model_primary,
-                        api_key=api_key
-                    )
+                    model_id_final = model_id or settings.agent_model_primary
+                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
+                    if 'gpt-5.1' in model_id_final.lower() or 'gpt-5' in model_id_final.lower():
+                        new_model = OpenAIChat(
+                            id=model_id_final,
+                            api_key=api_key,
+                            max_completion_tokens=4000
+                        )
+                    else:
+                        new_model = OpenAIChat(
+                            id=model_id_final,
+                            api_key=api_key
+                        )
             elif provider_registry.has_claude_key():
                 api_key = provider_registry.get_claude_key()
                 if api_key:

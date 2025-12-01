@@ -86,6 +86,19 @@ export async function streamPhaseFormHelp(
             }
           } catch (e) {
             console.error('Error parsing SSE data:', e, line);
+            // If we can't parse the JSON, try to extract error message from the line
+            if (line.includes('error') || line.includes('Error')) {
+              const errorMatch = line.match(/error["\s:]+(.+?)(?:"|$)/i);
+              if (errorMatch) {
+                callbacks.onError?.(errorMatch[1] || 'Error parsing response data');
+                return;
+              }
+            }
+            // If it's a JSON parse error but we have the raw line, pass it through
+            if (e instanceof SyntaxError && line) {
+              callbacks.onError?.(`Error parsing response: ${line.slice(6)}`);
+              return;
+            }
           }
         }
       }

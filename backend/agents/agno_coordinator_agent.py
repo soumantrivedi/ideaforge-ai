@@ -93,7 +93,8 @@ class AgnoCoordinatorAgent:
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    return OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key)
+                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
+                    return OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key, max_completion_tokens=2000)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -106,7 +107,8 @@ class AgnoCoordinatorAgent:
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    return OpenAIChat(id="gpt-5.1", api_key=api_key)
+                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
+                    return OpenAIChat(id="gpt-5.1", api_key=api_key, max_completion_tokens=4000)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -119,7 +121,12 @@ class AgnoCoordinatorAgent:
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
-                    return OpenAIChat(id=settings.agent_model_primary, api_key=api_key)
+                    model_id = settings.agent_model_primary
+                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
+                    if 'gpt-5.1' in model_id.lower() or 'gpt-5' in model_id.lower():
+                        return OpenAIChat(id=model_id, api_key=api_key, max_completion_tokens=4000)
+                    else:
+                        return OpenAIChat(id=model_id, api_key=api_key)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
