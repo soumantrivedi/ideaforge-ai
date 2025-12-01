@@ -53,14 +53,38 @@ export function ConversationHistory() {
   const [agentInteractions, setAgentInteractions] = useState<AgentInteraction[]>([]);
   const [agentStatuses, setAgentStatuses] = useState<any[]>([]);
 
-  // Load ALL conversations once on mount to get all products
+  // Load products and conversations on mount
   useEffect(() => {
     if (token) {
+      loadProducts();
       loadAllConversations();
     }
   }, [token]);
   
-  // Load ALL conversations to extract unique products
+  // Load ALL products the user has access to
+  const loadProducts = async () => {
+    if (!token) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/products`, {
+        headers: { 'Authorization': `Bearer ${token}` },
+        credentials: 'include',
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const allProducts = data.products || [];
+        setProducts(allProducts.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+        })));
+      }
+    } catch (error) {
+      console.error('Failed to load products:', error);
+    }
+  };
+  
+  // Load ALL conversations
   const loadAllConversations = async () => {
     if (!token) return;
 
@@ -75,18 +99,6 @@ export function ConversationHistory() {
         const data = await response.json();
         const loadedConversations = data.conversations || [];
         setAllConversations(loadedConversations);
-        
-        // Extract unique products from ALL conversations
-        const uniqueProducts = new Map<string, Product>();
-        loadedConversations.forEach((conv: Conversation) => {
-          if (conv.product_id && conv.product_name && !uniqueProducts.has(conv.product_id)) {
-            uniqueProducts.set(conv.product_id, {
-              id: conv.product_id,
-              name: conv.product_name,
-            });
-          }
-        });
-        setProducts(Array.from(uniqueProducts.values()));
       }
     } catch (error) {
       console.error('Failed to load all conversations:', error);

@@ -290,8 +290,8 @@ async def lifespan(app: FastAPI):
     
     # Force re-check of provider registry to ensure it has latest values from environment
     # Provider registry is initialized at module load time, but environment variables might be set after
-    # So we rebuild clients to pick up any new keys
-    provider_registry._rebuild_clients()
+    # So we reload from environment to pick up any new keys from Kubernetes secrets
+    provider_registry.reload_from_environment()
     
     # Reinitialize orchestrator with updated provider registry
     orchestrator, agno_enabled = _initialize_orchestrator()

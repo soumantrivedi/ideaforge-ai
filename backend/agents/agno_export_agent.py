@@ -424,7 +424,14 @@ Your output should:
             "total_phases": total_phases,
             "missing_sections": missing_sections,
             "phase_scores": phase_scores,
-            "summary": f"PRD completeness: {total_score}% ({completed_phases}/{total_phases} phases completed). {'Ready for export - all phases completed' if total_score >= 100 else f'Missing {len(missing_phases) if missing_phases else 0} phase(s): {", ".join([p.get("phase_name", "Unknown") for p in (missing_phases or [])])}. Complete all phases for 100% completion.'}"
+            "summary": (
+                f"PRD completeness: {total_score}% ({completed_phases}/{total_phases} phases completed). "
+                + (
+                    "Ready for export - all phases completed"
+                    if total_score >= 100
+                    else f"Missing {len(missing_phases) if missing_phases else 0} phase(s): {', '.join([p.get('phase_name', 'Unknown') for p in (missing_phases or [])])}. Complete all phases for 100% completion."
+                )
+            )
         }
 
     async def generate_comprehensive_prd(

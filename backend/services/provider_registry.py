@@ -131,6 +131,39 @@ class ProviderRegistry:
     def get_gemini_key(self) -> Optional[str]:
         """Get Gemini API key."""
         return self._gemini_key
+    
+    def reload_from_environment(self) -> List[str]:
+        """
+        Reload API keys from environment variables (Settings).
+        Useful when environment variables are updated after module initialization.
+        """
+        with self._lock:
+            # Reload from settings (which reads from os.getenv)
+            import os
+            openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+            anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+            google_key = os.getenv("GOOGLE_API_KEY", "").strip()
+            
+            # Remove quotes if present
+            if openai_key.startswith('"') and openai_key.endswith('"'):
+                openai_key = openai_key[1:-1]
+            if anthropic_key.startswith('"') and anthropic_key.endswith('"'):
+                anthropic_key = anthropic_key[1:-1]
+            if google_key.startswith('"') and google_key.endswith('"'):
+                google_key = google_key[1:-1]
+            
+            # Update keys if they're different
+            if openai_key and openai_key != self._openai_key:
+                self._openai_key = openai_key
+            if anthropic_key and anthropic_key != self._claude_key:
+                self._claude_key = anthropic_key
+            if google_key and google_key != self._gemini_key:
+                self._gemini_key = google_key
+            
+            # Rebuild clients with updated keys
+            self._rebuild_clients()
+        
+        return self.get_configured_providers()
 
 
 provider_registry = ProviderRegistry()

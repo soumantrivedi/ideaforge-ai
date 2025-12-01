@@ -19,6 +19,8 @@ from backend.database import get_db
 from backend.api.auth import get_current_user
 from backend.api.product_permissions import check_product_permission
 from backend.agents import AGNO_AVAILABLE
+from backend.services.provider_registry import provider_registry
+from backend.services.api_key_loader import load_user_api_keys_from_db
 
 router = APIRouter(prefix="/api/products", tags=["export"])
 logger = structlog.get_logger()
@@ -32,6 +34,61 @@ if AGNO_AVAILABLE:
         export_agent = AgnoExportAgent(enable_rag=True)
     except Exception as e:
         logger.warning("export_agent_initialization_failed", error=str(e))
+
+
+async def ensure_export_agent_initialized(db: AsyncSession, user_id: str) -> bool:
+    """
+    Ensure export agent is initialized with available API keys.
+    Tries user API keys from database first, then falls back to environment keys.
+    Returns True if agent is ready, False otherwise.
+    """
+    global export_agent
+    
+    if not AGNO_AVAILABLE or export_agent is None:
+        return False
+    
+    try:
+        # Load user's API keys from database (if any)
+        user_keys = await load_user_api_keys_from_db(db, user_id)
+        
+        # Update provider registry with user's keys (user keys override .env keys)
+        provider_registry.update_keys(
+            openai_key=user_keys.get("openai"),
+            claude_key=user_keys.get("claude"),
+            gemini_key=user_keys.get("gemini"),
+        )
+        
+        # Check if any provider is configured (either from user keys or .env)
+        has_provider = (
+            provider_registry.has_openai_key() or
+            provider_registry.has_claude_key() or
+            provider_registry.has_gemini_key()
+        )
+        
+        if not has_provider:
+            logger.warning(
+                "export_agent_no_provider",
+                user_id=user_id,
+                message="No AI provider configured for export agent"
+            )
+            return False
+        
+        # Try to ensure agent is initialized (lazy initialization)
+        # The agent will initialize itself when first used if providers are available
+        try:
+            # Force initialization by checking if agent can get a model
+            if hasattr(export_agent, '_get_agno_model'):
+                model = export_agent._get_agno_model()
+                if model is None:
+                    return False
+        except Exception as e:
+            logger.warning("export_agent_initialization_check_failed", error=str(e))
+            return False
+        
+        return True
+    except Exception as e:
+        logger.error("ensure_export_agent_initialized_failed", error=str(e), user_id=user_id)
+        return False
 
 
 class ExportRequest(BaseModel):
@@ -208,28 +265,84 @@ async def generate_progress_report(
             logger.warning(f"Could not fetch design mockups: {str(e)}")
             design_mockups = []
         
+        # Ensure export agent is initialized with user's API keys
+        agent_ready = await ensure_export_agent_initialized(db, str(current_user["id"]))
+        
         # Generate review using export agent
-        if export_agent:
-            # Pass ALL phases information to review agent (including missing ones)
-            review_result = await export_agent.review_content_before_export(
-                product_id=str(product_id),
-                phase_data=phase_data,
-                all_phases=list(all_phases_map.values()),  # Pass all phases (including missing)
-                missing_phases=missing_phases,  # Explicitly pass missing phases
-                conversation_history=conversation_history,
-                knowledge_base=knowledge_base,
-                design_mockups=design_mockups,
-                context=None,
-                db=db  # Pass database session for additional queries if needed
-            )
+        if export_agent and agent_ready:
+            try:
+                # Pass ALL phases information to review agent (including missing ones)
+                review_result = await export_agent.review_content_before_export(
+                    product_id=str(product_id),
+                    phase_data=phase_data,
+                    all_phases=list(all_phases_map.values()),  # Pass all phases (including missing)
+                    missing_phases=missing_phases,  # Explicitly pass missing phases
+                    conversation_history=conversation_history,
+                    knowledge_base=knowledge_base,
+                    design_mockups=design_mockups,
+                    context=None,
+                    db=db  # Pass database session for additional queries if needed
+                )
+            except ValueError as ve:
+                # Handle "No AI provider configured" error gracefully
+                if "No AI provider configured" in str(ve):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) in Settings to generate progress reports."
+                    )
+                raise
         else:
-            # Fallback review
+            # Fallback review - calculate basic metrics without AI
+            total_phases = len(all_phases_map)
+            completed_phases = sum(1 for p in all_phases_map.values() if p.get("has_submission", False))
+            completion_score = round((completed_phases / total_phases * 100) if total_phases > 0 else 0, 1)
+            
+            phase_scores = []
+            missing_sections = []
+            
+            for phase_info in all_phases_map.values():
+                if phase_info.get("has_submission"):
+                    phase_scores.append({
+                        "phase_name": phase_info.get("phase_name"),
+                        "phase_id": phase_info.get("phase_id"),
+                        "phase_order": phase_info.get("phase_order"),
+                        "score": 100,
+                        "status": "complete"
+                    })
+                else:
+                    phase_scores.append({
+                        "phase_name": phase_info.get("phase_name"),
+                        "phase_id": phase_info.get("phase_id"),
+                        "phase_order": phase_info.get("phase_order"),
+                        "score": 0,
+                        "status": "missing"
+                    })
+                    missing_sections.append({
+                        "section": phase_info.get("phase_name"),
+                        "phase_name": phase_info.get("phase_name"),
+                        "phase_id": phase_info.get("phase_id"),
+                        "phase_order": phase_info.get("phase_order"),
+                        "importance": f"{phase_info.get('phase_name')} phase is required for a complete PRD.",
+                        "recommendation": f"Complete the {phase_info.get('phase_name')} phase in the Product Lifecycle workflow.",
+                        "score": 0
+                    })
+            
             review_result = {
-                "status": "needs_attention",
-                "score": 50,
-                "missing_sections": [],
-                "phase_scores": [],
-                "summary": "Review agent not available. Please configure export agent."
+                "status": "ready" if completion_score >= 100 else "needs_attention",
+                "score": completion_score,
+                "completed_phases": completed_phases,
+                "total_phases": total_phases,
+                "missing_sections": missing_sections,
+                "phase_scores": phase_scores,
+                "recommendations": [
+                    "Configure an AI provider (OpenAI, Claude, or Gemini) in Settings for detailed AI-powered analysis and recommendations."
+                ] if not agent_ready else [],
+                "summary": (
+                    f"PRD completeness: {completion_score}% ({completed_phases}/{total_phases} phases completed). "
+                    + ("Ready for export - all phases completed." if completion_score >= 100 
+                       else f"Missing {len(missing_sections)} phase(s): {', '.join([s.get('phase_name', 'Unknown') for s in missing_sections])}. Complete all phases for 100% completion.")
+                    + (" Configure an AI provider in Settings for enhanced analysis." if not agent_ready else "")
+                )
             }
         
         # Store report in database
@@ -394,9 +507,29 @@ async def review_prd_content(
         if not product_row:
             raise HTTPException(status_code=404, detail="Product not found")
         
+        # Get ALL lifecycle phases first (to identify missing ones)
+        all_phases_query = text("""
+            SELECT id, phase_name, phase_order, description
+            FROM product_lifecycle_phases
+            ORDER BY phase_order ASC
+        """)
+        all_phases_result = await db.execute(all_phases_query)
+        all_phases_rows = all_phases_result.fetchall()
+        
+        # Create a map of all phases
+        all_phases_map = {}
+        for row in all_phases_rows:
+            all_phases_map[str(row[0])] = {
+                "phase_id": str(row[0]),
+                "phase_name": row[1],
+                "phase_order": row[2],
+                "description": row[3],
+                "has_submission": False
+            }
+        
         # Get all phase submissions
         phase_query = text("""
-            SELECT ps.form_data, ps.generated_content, plp.phase_name, plp.phase_order
+            SELECT ps.phase_id, ps.form_data, ps.generated_content, ps.status, plp.phase_name, plp.phase_order
             FROM phase_submissions ps
             JOIN product_lifecycle_phases plp ON ps.phase_id = plp.id
             WHERE ps.product_id = :product_id
@@ -407,12 +540,24 @@ async def review_prd_content(
         
         phase_data = []
         for row in phase_rows:
+            phase_id = str(row[0])
             phase_data.append({
-                "phase_name": row[2],
-                "phase_order": row[3],
-                "form_data": row[0] or {},
-                "generated_content": row[1] or ""
+                "phase_id": phase_id,
+                "phase_name": row[4],
+                "phase_order": row[5],
+                "form_data": row[1] or {},
+                "generated_content": row[2] or "",
+                "status": row[3] or "draft"
             })
+            # Mark as having submission
+            if phase_id in all_phases_map:
+                all_phases_map[phase_id]["has_submission"] = True
+        
+        # Identify missing phases (phases that don't have submissions)
+        missing_phases = []
+        for phase_id, phase_info in all_phases_map.items():
+            if not phase_info["has_submission"]:
+                missing_phases.append(phase_info)
         
         # Get conversation history if not provided
         conversation_history = request.conversation_history
@@ -497,22 +642,34 @@ async def review_prd_content(
             logger.warning(f"Could not fetch design mockups: {str(e)}")
             design_mockups = []
         
+        # Ensure export agent is initialized with user's API keys
+        agent_ready = await ensure_export_agent_initialized(db, str(current_user["id"]))
+        
         # Review content using export agent
-        if export_agent:
-            # Pass ALL phases information to review agent (including missing ones)
-            review_result = await export_agent.review_content_before_export(
-                product_id=str(product_id),
-                phase_data=phase_data,
-                all_phases=list(all_phases_map.values()),  # Pass all phases (including missing)
-                missing_phases=missing_phases,  # Explicitly pass missing phases
-                conversation_history=conversation_history,
-                design_mockups=design_mockups,
-                knowledge_base=knowledge_base,
-                db=db  # Pass database session for additional queries if needed
-            )
-            return JSONResponse(content=review_result)
+        if export_agent and agent_ready:
+            try:
+                # Pass ALL phases information to review agent (including missing ones)
+                review_result = await export_agent.review_content_before_export(
+                    product_id=str(product_id),
+                    phase_data=phase_data,
+                    all_phases=list(all_phases_map.values()),  # Pass all phases (including missing)
+                    missing_phases=missing_phases,  # Explicitly pass missing phases
+                    conversation_history=conversation_history,
+                    design_mockups=design_mockups,
+                    knowledge_base=knowledge_base,
+                    db=db  # Pass database session for additional queries if needed
+                )
+                return JSONResponse(content=review_result)
+            except ValueError as ve:
+                # Handle "No AI provider configured" error gracefully
+                if "No AI provider configured" in str(ve):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) in Settings to review PRD content."
+                    )
+                raise
         else:
-            # Fallback: basic review
+            # Fallback: basic review without AI
             missing_sections = []
             has_market_research = any(
                 phase.get('phase_name', '').lower() in ['market research', 'research'] 
@@ -525,7 +682,10 @@ async def review_prd_content(
             return JSONResponse(content={
                 "is_complete": len(missing_sections) == 0,
                 "missing_sections": missing_sections,
-                "recommendations": [f"Consider adding {section}" for section in missing_sections],
+                "recommendations": (
+                    [f"Consider adding {section}" for section in missing_sections] +
+                    (["Configure an AI provider (OpenAI, Claude, or Gemini) in Settings for detailed AI-powered PRD review."] if not agent_ready else [])
+                ),
                 "warnings": []
             })
         

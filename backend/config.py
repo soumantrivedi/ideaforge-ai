@@ -17,14 +17,25 @@ def _get_database_url() -> str:
     return database_url
 
 
+def _clean_api_key(key: Optional[str]) -> Optional[str]:
+    """Clean API key by removing quotes and whitespace."""
+    if not key:
+        return None
+    key = key.strip()
+    # Remove surrounding quotes if present
+    if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
+        key = key[1:-1].strip()
+    return key if key else None
+
+
 class Settings(BaseSettings):
     # Database Configuration
     database_url: str = _get_database_url()
 
-    # AI Provider API Keys (strip whitespace to ensure proper detection)
-    openai_api_key: Optional[str] = os.getenv("OPENAI_API_KEY", "").strip() or None
-    anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY", "").strip() or None
-    google_api_key: Optional[str] = os.getenv("GOOGLE_API_KEY", "").strip() or None
+    # AI Provider API Keys (strip whitespace and quotes to ensure proper detection)
+    openai_api_key: Optional[str] = _clean_api_key(os.getenv("OPENAI_API_KEY"))
+    anthropic_api_key: Optional[str] = _clean_api_key(os.getenv("ANTHROPIC_API_KEY"))
+    google_api_key: Optional[str] = _clean_api_key(os.getenv("GOOGLE_API_KEY"))
 
     # Okta OAuth/SSO Configuration
     okta_client_id: str = os.getenv("OKTA_CLIENT_ID", "")
