@@ -24,3 +24,4 @@ dist-ssr
 backups/*.sql
 !backups/README.md
 !backups/.gitkeep
+env.kind
