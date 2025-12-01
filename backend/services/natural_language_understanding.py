@@ -148,9 +148,38 @@ class NaturalLanguageUnderstanding:
         if not agent_question and context:
             agent_question = self.extract_previous_question(context=context)
         
-        # Check for negative responses (high priority)
+        # Check for questions FIRST - questions should always proceed (even if they contain "no")
+        question_match = self.question_regex.search(user_input_lower)
+        if question_match:
+            # Questions always proceed - even if they contain negative words
+            return {
+                "should_proceed": True,
+                "intent": "question",
+                "confidence": 0.95,
+                "reason": "User asked a question - always proceed with agent army",
+                "suggested_response": None
+            }
+        
+        # Check for information requests - these should proceed
+        info_match = self.info_request_regex.search(user_input_lower)
+        if info_match:
+            return {
+                "should_proceed": True,
+                "intent": "info_request",
+                "confidence": 0.95,
+                "reason": "User requested information - proceed with agent army",
+                "suggested_response": None
+            }
+        
+        # Only block clear standalone negatives (not questions or info requests)
+        # Check for negative responses ONLY if it's a short, standalone response
         negative_match = self.negative_regex.search(user_input_lower)
         if negative_match:
+            # Only block if:
+            # 1. Agent asked a question AND user said no (clear decline)
+            # 2. OR it's a very short standalone negative (1-3 words like "no", "no thanks", "skip")
+            # 3. AND it's not a question or information request
+            
             # If agent asked a question and user said no, don't proceed
             if agent_question:
                 # Generate helpful next steps based on context
@@ -159,41 +188,33 @@ class NaturalLanguageUnderstanding:
                     "should_proceed": False,
                     "intent": "negative",
                     "confidence": 0.95,
-                    "reason": f"User declined: '{negative_match.group()}'",
+                    "reason": f"User declined agent question: '{negative_match.group()}'",
                     "suggested_response": suggested_response
                 }
-            # Even without explicit question, if it's a clear "no", check if it's a standalone rejection
-            if len(user_input_lower.split()) <= 3:  # Short response like "no", "no thanks"
-                suggested_response = self._generate_helpful_response_for_negative(context)
-                return {
-                    "should_proceed": False,
-                    "intent": "negative",
-                    "confidence": 0.85,
-                    "reason": f"User declined: '{negative_match.group()}'",
-                    "suggested_response": suggested_response
-                }
+            
+            # Check if it's a very short standalone negative (1-3 words)
+            word_count = len(user_input_lower.split())
+            if word_count <= 3:
+                # Only block if it's clearly a standalone negative, not a question
+                # Check if it's just "no", "no thanks", "skip", etc. without any question words
+                is_standalone_negative = (
+                    user_input_lower.strip() in ["no", "nope", "nah", "skip", "cancel", "ignore"] or
+                    user_input_lower.strip() in ["no thanks", "no thank you", "not now", "never mind"] or
+                    (word_count == 1 and negative_match)
+                )
+                
+                if is_standalone_negative:
+                    suggested_response = self._generate_helpful_response_for_negative(context)
+                    return {
+                        "should_proceed": False,
+                        "intent": "negative",
+                        "confidence": 0.85,
+                        "reason": f"User declined with standalone negative: '{negative_match.group()}'",
+                        "suggested_response": suggested_response
+                    }
         
-        # Check for questions (always proceed)
-        question_match = self.question_regex.search(user_input_lower)
-        if question_match:
-            return {
-                "should_proceed": True,
-                "intent": "question",
-                "confidence": 0.95,
-                "reason": "User asked a question",
-                "suggested_response": None
-            }
-        
-        # Check for information requests (proceed)
-        info_match = self.info_request_regex.search(user_input_lower)
-        if info_match:
-            return {
-                "should_proceed": True,
-                "intent": "info_request",
-                "confidence": 0.85,
-                "reason": "User requested information",
-                "suggested_response": None
-            }
+        # Note: Questions and info requests are now checked BEFORE negative patterns
+        # This ensures questions with "no" in them (e.g., "What is the answer to no?") proceed
         
         # Check for positive responses
         positive_match = self.positive_regex.search(user_input_lower)
@@ -230,22 +251,44 @@ class NaturalLanguageUnderstanding:
                 }
         
         # Default: proceed if input is substantial (likely a real request)
+        # For substantial input, always use agent army for quality responses
         if len(user_input_lower.split()) > 3:
             return {
                 "should_proceed": True,
                 "intent": "neutral",
-                "confidence": 0.6,
-                "reason": "Substantial input, likely a request",
+                "confidence": 0.8,
+                "reason": "Substantial input - proceed with agent army for comprehensive response",
                 "suggested_response": None
             }
         
-        # Very short input without clear intent - don't proceed
+        # For short inputs (1-3 words), check if it's a clear negative
+        # If not clearly negative, proceed to allow agent army to handle it intelligently
+        if len(user_input_lower.split()) <= 3:
+            # Only block if it's a clear standalone negative
+            if negative_match and user_input_lower.strip() in ["no", "nope", "nah", "skip", "cancel", "ignore", "no thanks", "no thank you", "not now", "never mind"]:
+                return {
+                    "should_proceed": False,
+                    "intent": "negative",
+                    "confidence": 0.8,
+                    "reason": "Clear standalone negative response",
+                    "suggested_response": self._generate_helpful_response_for_negative(context)
+                }
+            # Otherwise, proceed - let agent army handle it
+            return {
+                "should_proceed": True,
+                "intent": "neutral",
+                "confidence": 0.6,
+                "reason": "Short input - proceed with agent army for intelligent response",
+                "suggested_response": None
+            }
+        
+        # Fallback: proceed to ensure agent army handles all queries
         return {
-            "should_proceed": False,
-            "intent": "ambiguous",
-            "confidence": 0.4,
-            "reason": "Input too short and ambiguous",
-            "suggested_response": self._generate_helpful_response_for_negative(context)
+            "should_proceed": True,
+            "intent": "neutral",
+            "confidence": 0.5,
+            "reason": "Default: proceed with agent army for quality response",
+            "suggested_response": None
         }
     
     def _generate_helpful_response_for_negative(self, context: Optional[Dict] = None) -> str:

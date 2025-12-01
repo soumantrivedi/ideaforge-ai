@@ -781,23 +781,25 @@ INSTRUCTIONS:
             elif enhanced_context.get("ideation_from_chat"):
                 enhanced_query = f"{query}\n\n[Context from previous conversations]:\n{enhanced_context['ideation_from_chat'][:1000]}"
             
-            # Add concise mode instruction for chat responses (not for export)
+            # Add instructions based on context type
             if is_phase_form_help:
-                # Phase form help - enforce strict word limits
+                # Phase form help - enforce strict word limits for inline help
                 if response_length == "short":
                     concise_instruction = "\n\nCRITICAL: Maximum 500 words. Be concise and direct. Answer ONLY the specific question asked. Do NOT generate full PRD sections or other content. Stay within word limit."
                 else:
                     concise_instruction = "\n\nCRITICAL: Maximum 1000 words. Be detailed but focused. Answer ONLY the specific question asked. Do NOT generate full PRD sections or other content. Stay within word limit."
+                enhanced_query = enhanced_query + concise_instruction
             elif is_phase_specific and not user_wants_full_prd:
                 # User is in a specific phase - only generate content for that phase
                 phase_instruction = f"\n\nCRITICAL: The user is currently working on the {current_phase_name} phase. Generate content ONLY for the {current_phase_name} phase. Do NOT generate content for other phases (Market Research, Requirements, Design, etc.) unless the user explicitly asks for them. Focus your response on {current_phase_name} phase content only."
                 enhanced_query = enhanced_query + phase_instruction
-                concise_instruction = "\n\nIMPORTANT: This is a chat response. Be concise, direct, and conversational. Aim for 2-4 paragraphs maximum. Save detailed explanations for export. Focus on key points and actionable insights."
-                enhanced_query = enhanced_query + concise_instruction
+                # For phase-specific queries, provide comprehensive but focused response
+                quality_instruction = "\n\nIMPORTANT: Provide a comprehensive, intelligent response with all relevant details. Use the agent army to gather insights from all relevant agents. Be thorough and include actionable insights. Quality over brevity - ensure the response is complete and useful."
+                enhanced_query = enhanced_query + quality_instruction
             else:
-                # Regular chat response
-                concise_instruction = "\n\nIMPORTANT: This is a chat response. Be concise, direct, and conversational. Aim for 2-4 paragraphs maximum. Save detailed explanations for export. Focus on key points and actionable insights."
-                enhanced_query = enhanced_query + concise_instruction
+                # Regular chat response - use agent army for comprehensive, quality responses
+                quality_instruction = "\n\nIMPORTANT: This is a chat response. Use the agent army to provide a comprehensive, intelligent, and detailed response. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. Leverage all available agents and knowledge to provide the best possible answer."
+                enhanced_query = enhanced_query + quality_instruction
             
             # Skip RAG if requested (for fast phase form help)
             if skip_rag:
@@ -1085,23 +1087,58 @@ INSTRUCTIONS:
                                     prd_query += f"[{agent_name.title()}]: {response_text}\n"
                         prd_query += "\n\n"
                     
-                    # Add summarization instruction
+                    # Add comprehensive synthesis instruction
                     if interactions or (rag_response and rag_response.response and not (rag_response.metadata and rag_response.metadata.get("skipped"))):
                         if is_phase_specific and not user_wants_full_prd:
-                            prd_query += f"CRITICAL: Synthesize the above insights into a clear, focused response for the {current_phase_name} phase ONLY. Do NOT generate content for other phases. Provide a concise summary that addresses the user's question directly. Structure your response with clear headings relevant to {current_phase_name} phase only.\n"
+                            prd_query += f"CRITICAL: Synthesize the above insights into a comprehensive, intelligent response for the {current_phase_name} phase ONLY. Include all relevant details and actionable insights. Do NOT generate content for other phases. Structure your response with clear headings relevant to {current_phase_name} phase only. Quality and completeness are priorities.\n"
                         else:
-                            prd_query += "CRITICAL: Synthesize the above insights into a clear, focused response. Do NOT repeat all the details. Provide a concise summary that addresses the user's question directly. If combining multiple agents (e.g., Ideation + Research), structure your response with clear headings like:\n"
+                            # For regular chat queries, emphasize comprehensive, quality responses
+                            prd_query += "CRITICAL: Synthesize the above insights into a comprehensive, intelligent, and detailed response. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. If combining multiple agents (e.g., Ideation + Research), structure your response with clear headings like:\n"
                             prd_query += "- ## Ideation Insights\n"
                             prd_query += "- ## Research Findings\n"
-                            prd_query += "- ## Summary\n"
+                            prd_query += "- ## Analysis & Recommendations\n"
+                            prd_query += "- ## Summary & Next Steps\n"
+                            prd_query += "\nProvide a comprehensive response that leverages all available insights.\n"
                 
-                # Force fast model if requested (for phase form help)
+                # Determine model tier based on query type
+                # Use fast model for phase form help, standard for regular chat queries (quality priority)
                 original_model = None
-                if use_fast_model and hasattr(self.agents[primary], 'agno_agent') and self.agents[primary].agno_agent:
+                should_use_fast_model = use_fast_model and is_phase_form_help
+                
+                # For regular chat queries, use standard tier for better quality
+                if not should_use_fast_model and hasattr(self.agents[primary], 'agno_agent') and self.agents[primary].agno_agent:
+                    # Check current model tier - if it's fast, upgrade to standard for quality
+                    current_model = self.agents[primary].agno_agent.model
+                    current_model_id = getattr(current_model, 'id', '') if current_model else ''
+                    
+                    # If using fast model (gpt-5.1-chat-latest, haiku, flash), upgrade to standard
+                    is_fast_model = any(fast_id in current_model_id.lower() for fast_id in [
+                        'gpt-5.1-chat-latest', 'haiku', 'flash'
+                    ])
+                    
+                    if is_fast_model:
+                        # Temporarily switch to standard model for better quality
+                        original_model = current_model
+                        from backend.services.provider_registry import provider_registry
+                        
+                        standard_model = None
+                        if provider_registry.has_openai_key():
+                            # Use GPT-5.1 (standard tier) for quality responses
+                            standard_model = OpenAIChat(id="gpt-5.1", api_key=provider_registry.get_openai_key(), max_completion_tokens=4000)
+                        elif provider_registry.has_claude_key():
+                            standard_model = Claude(id="claude-3.5-sonnet-20241022", api_key=provider_registry.get_claude_key())
+                        elif provider_registry.has_gemini_key():
+                            standard_model = Gemini(id="gemini-1.5-pro", api_key=provider_registry.get_gemini_key())
+                        
+                        if standard_model:
+                            self.agents[primary].agno_agent.model = standard_model
+                            self.logger.info("upgraded_to_standard_model", agent=primary, model=standard_model.id if hasattr(standard_model, 'id') else str(type(standard_model)), reason="quality_priority_for_chat")
+                
+                # Force fast model if requested (for phase form help only)
+                if should_use_fast_model and hasattr(self.agents[primary], 'agno_agent') and self.agents[primary].agno_agent:
                     # Temporarily switch to fast model
                     original_model = self.agents[primary].agno_agent.model
                     from backend.services.provider_registry import provider_registry
-                    # OpenAIChat, Claude, Gemini are already imported at the top of the file
                     
                     fast_model = None
                     if provider_registry.has_openai_key():
