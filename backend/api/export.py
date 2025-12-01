@@ -76,9 +76,29 @@ async def generate_progress_report(
         if not product_row:
             raise HTTPException(status_code=404, detail="Product not found")
         
-        # Get all phase submissions with phase IDs
+        # CRITICAL: Get ALL lifecycle phases first (to identify missing phases)
+        all_phases_query = text("""
+            SELECT id, phase_name, phase_order, description
+            FROM product_lifecycle_phases
+            ORDER BY phase_order ASC
+        """)
+        all_phases_result = await db.execute(all_phases_query)
+        all_phases_rows = all_phases_result.fetchall()
+        
+        # Create a map of all phases
+        all_phases_map = {}
+        for row in all_phases_rows:
+            all_phases_map[str(row[0])] = {
+                "phase_id": str(row[0]),
+                "phase_name": row[1],
+                "phase_order": row[2],
+                "description": row[3],
+                "has_submission": False
+            }
+        
+        # Get all phase submissions with phase IDs and status
         phase_query = text("""
-            SELECT ps.form_data, ps.generated_content, plp.phase_name, plp.phase_order, plp.id as phase_id
+            SELECT ps.form_data, ps.generated_content, ps.status, plp.phase_name, plp.phase_order, plp.id as phase_id
             FROM phase_submissions ps
             JOIN product_lifecycle_phases plp ON ps.phase_id = plp.id
             WHERE ps.product_id = :product_id
@@ -88,14 +108,27 @@ async def generate_progress_report(
         phase_rows = phase_result.fetchall()
         
         phase_data = []
+        submitted_phase_ids = set()
         for row in phase_rows:
+            phase_id = str(row[5])
+            submitted_phase_ids.add(phase_id)
             phase_data.append({
-                "phase_name": row[2],
-                "phase_order": row[3],
-                "phase_id": str(row[4]),
+                "phase_id": phase_id,
+                "phase_name": row[3],
+                "phase_order": row[4],
                 "form_data": row[0] or {},
-                "generated_content": row[1] or ""
+                "generated_content": row[1] or "",
+                "status": row[2] or "draft"
             })
+            # Mark as having submission
+            if phase_id in all_phases_map:
+                all_phases_map[phase_id]["has_submission"] = True
+        
+        # Identify missing phases (phases that don't have submissions)
+        missing_phases = []
+        for phase_id, phase_info in all_phases_map.items():
+            if not phase_info["has_submission"]:
+                missing_phases.append(phase_info)
         
         # Get conversation history
         conv_query = text("""
@@ -177,13 +210,17 @@ async def generate_progress_report(
         
         # Generate review using export agent
         if export_agent:
+            # Pass ALL phases information to review agent (including missing ones)
             review_result = await export_agent.review_content_before_export(
                 product_id=str(product_id),
                 phase_data=phase_data,
+                all_phases=list(all_phases_map.values()),  # Pass all phases (including missing)
+                missing_phases=missing_phases,  # Explicitly pass missing phases
                 conversation_history=conversation_history,
                 knowledge_base=knowledge_base,
                 design_mockups=design_mockups,
-                context=None
+                context=None,
+                db=db  # Pass database session for additional queries if needed
             )
         else:
             # Fallback review
@@ -462,12 +499,16 @@ async def review_prd_content(
         
         # Review content using export agent
         if export_agent:
+            # Pass ALL phases information to review agent (including missing ones)
             review_result = await export_agent.review_content_before_export(
                 product_id=str(product_id),
                 phase_data=phase_data,
+                all_phases=list(all_phases_map.values()),  # Pass all phases (including missing)
+                missing_phases=missing_phases,  # Explicitly pass missing phases
                 conversation_history=conversation_history,
                 design_mockups=design_mockups,
-                knowledge_base=knowledge_base
+                knowledge_base=knowledge_base,
+                db=db  # Pass database session for additional queries if needed
             )
             return JSONResponse(content=review_result)
         else:

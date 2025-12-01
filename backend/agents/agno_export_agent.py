@@ -146,18 +146,145 @@ Your output should:
         conversation_history: List[Dict[str, Any]],
         knowledge_base: List[Dict[str, Any]],
         design_mockups: Optional[List[Dict[str, Any]]] = None,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        all_phases: Optional[List[Dict[str, Any]]] = None,
+        missing_phases: Optional[List[Dict[str, Any]]] = None,
+        db: Optional[Any] = None
     ) -> Dict[str, Any]:
         """
         Review content before export and identify missing critical sections.
+        CRITICAL: Reviews based on ALL lifecycle phases, not just conversation history.
+        
+        Args:
+            product_id: Product ID
+            phase_data: Submitted phase data
+            conversation_history: Chatbot conversation history (for context only, not primary source)
+            knowledge_base: Knowledge base articles
+            design_mockups: Design mockups/prototypes
+            context: Additional context
+            all_phases: ALL lifecycle phases from database (required for accurate review)
+            missing_phases: Phases that don't have submissions (required for accurate review)
+            db: Database session (optional, for additional queries)
         
         Returns:
             Dict with:
-            - is_complete: bool
-            - missing_sections: List[str]
-            - recommendations: List[str]
-            - warnings: List[str]
+            - status: "ready" or "needs_attention"
+            - score: 0-100 (completion percentage based on ACTUAL phase completion)
+            - missing_sections: List of missing sections/phases
+            - phase_scores: List of phase scores
+            - summary: Overall assessment
         """
+        # CRITICAL: Calculate completion based on ALL lifecycle phases, not just conversation history
+        # First, get all phases if not provided
+        if all_phases is None or missing_phases is None:
+            # Try to get from database if db session provided
+            if db:
+                from sqlalchemy import text
+                try:
+                    all_phases_query = text("""
+                        SELECT id, phase_name, phase_order, description
+                        FROM product_lifecycle_phases
+                        ORDER BY phase_order ASC
+                    """)
+                    all_phases_result = await db.execute(all_phases_query)
+                    all_phases_rows = all_phases_result.fetchall()
+                    
+                    all_phases = []
+                    submitted_phase_ids = {p.get("phase_id") for p in phase_data if p.get("phase_id")}
+                    missing_phases = []
+                    
+                    for row in all_phases_rows:
+                        phase_id = str(row[0])
+                        phase_info = {
+                            "phase_id": phase_id,
+                            "phase_name": row[1],
+                            "phase_order": row[2],
+                            "description": row[3],
+                            "has_submission": phase_id in submitted_phase_ids
+                        }
+                        all_phases.append(phase_info)
+                        if not phase_info["has_submission"]:
+                            missing_phases.append(phase_info)
+                except Exception as e:
+                    self.logger.warning("failed_to_fetch_all_phases", error=str(e))
+                    # Fallback: use phase_data to infer phases
+                    all_phases = [{"phase_id": p.get("phase_id"), "phase_name": p.get("phase_name"), "phase_order": p.get("phase_order")} for p in phase_data]
+                    missing_phases = []
+        
+        # Calculate actual completion based on ALL phases
+        total_phases = len(all_phases) if all_phases else len(phase_data)
+        completed_phases = 0
+        phase_scores = []
+        missing_sections = []
+        
+        # Create a map of submitted phases for quick lookup
+        submitted_phases_map = {p.get("phase_id"): p for p in phase_data if p.get("phase_id")}
+        
+        # Review each phase (ALL phases, not just submitted ones)
+        for phase_info in (all_phases or []):
+            phase_id = phase_info.get("phase_id")
+            phase_name = phase_info.get("phase_name", "Unknown Phase")
+            phase_order = phase_info.get("phase_order", 999)
+            
+            if phase_id in submitted_phases_map:
+                # Phase has submission - check completeness
+                submitted_phase = submitted_phases_map[phase_id]
+                form_data = submitted_phase.get("form_data", {})
+                generated_content = submitted_phase.get("generated_content", "")
+                status = submitted_phase.get("status", "draft")
+                
+                # Calculate phase completeness score
+                has_form_data = bool(form_data and any(v for v in form_data.values() if v and str(v).strip()))
+                has_content = bool(generated_content and generated_content.strip())
+                is_completed_status = status in ["completed", "reviewed"]
+                
+                # Phase is complete only if it has both form data AND generated content AND completed status
+                if has_form_data and has_content and is_completed_status:
+                    phase_score = 100
+                    phase_status = "complete"
+                    completed_phases += 1
+                elif has_form_data and has_content:
+                    phase_score = 75  # Has content but not marked complete
+                    phase_status = "incomplete"
+                elif has_form_data or has_content:
+                    phase_score = 50  # Partial content
+                    phase_status = "incomplete"
+                else:
+                    phase_score = 0
+                    phase_status = "incomplete"
+            else:
+                # Phase is missing - no submission
+                phase_score = 0
+                phase_status = "missing"
+                missing_sections.append({
+                    "section": phase_name,
+                    "phase_name": phase_name,
+                    "phase_id": phase_id,
+                    "phase_order": phase_order,
+                    "importance": f"{phase_name} phase is required for a complete PRD. This phase provides critical information for product development.",
+                    "recommendation": f"Complete the {phase_name} phase in the Product Lifecycle workflow to add this essential content.",
+                    "score": 0
+                })
+            
+            phase_scores.append({
+                "phase_name": phase_name,
+                "phase_id": phase_id,
+                "phase_order": phase_order,
+                "score": phase_score,
+                "status": phase_status
+            })
+        
+        # Calculate overall completion score based on ACTUAL phase completion
+        if total_phases > 0:
+            # Score = (completed_phases / total_phases) * 100
+            # But also consider partial completion (phases with some content)
+            partial_phases = sum(1 for ps in phase_scores if ps["score"] >= 50 and ps["status"] != "complete")
+            # Weight: complete phases = 100%, partial phases = 50%, missing = 0%
+            weighted_score = (completed_phases * 100 + partial_phases * 50) / total_phases
+            total_score = round(weighted_score, 1)
+        else:
+            total_score = 0
+        
         # Format design mockups if available
         design_mockups_text = ""
         if design_mockups:
@@ -168,58 +295,75 @@ Your output should:
                 project_url = mockup.get('project_url', '')
                 design_mockups_text += f"- {provider} Prototype: Status={status}, URL={project_url}\n"
         
+        # Build comprehensive review prompt that focuses on PHASE COMPLETION
         review_prompt = f"""Review the following product content for completeness before PRD export.
 
-**Phase Submissions:**
+**CRITICAL: Review based on ACTUAL lifecycle phase completion, not just conversation history.**
+
+**All Required Lifecycle Phases:**
+{self._format_all_phases_for_review(all_phases or [], phase_scores)}
+
+**Phase Submissions (Submitted Phases):**
 {self._format_phase_submissions(phase_data)}
 
-**Conversation History:**
-{self._format_conversation_history(conversation_history[:20])}  # Last 20 messages
+**Missing Phases (No Submissions):**
+{self._format_missing_phases(missing_phases or [])}
 
-**Knowledge Base:**
-{self._format_knowledge_articles(knowledge_base[:10])}  # Top 10 articles
+**Conversation History (Context Only - NOT primary source for completion):**
+{self._format_conversation_history(conversation_history[:10])}  # Limited to 10 messages for context
+
+**Knowledge Base (Supporting Information):**
+{self._format_knowledge_articles(knowledge_base[:5])}  # Top 5 articles
 {design_mockups_text}
 
-**Review Criteria:**
-1. Check if market research is present (Market Research phase or research in conversation/knowledge base)
-2. Check if user personas are defined
-3. Check if functional requirements are clear
-4. Check if technical architecture is outlined
-5. Check if success metrics are defined
-6. Check if go-to-market strategy is present
+**Review Instructions:**
+1. PRIMARY FOCUS: Check which lifecycle phases have been completed (have submissions with form_data AND generated_content AND status='completed')
+2. Identify missing phases (phases with no submissions)
+3. Identify incomplete phases (phases with submissions but missing form_data, generated_content, or not marked complete)
+4. Calculate completion percentage: (completed_phases / total_phases) * 100
+5. DO NOT rely on conversation history to determine completion - only actual phase submissions count
+6. DO NOT say PRD is 100% complete unless ALL phases are completed
 
-**Required Sections for Complete PRD:**
-- Market Research / Competitive Analysis
-- User Personas
-- Functional Requirements
-- Technical Architecture
-- Success Metrics
-- Go-to-Market Strategy
+**Current Status:**
+- Total Phases: {total_phases}
+- Completed Phases: {completed_phases}
+- Missing Phases: {len(missing_phases) if missing_phases else 0}
+- Calculated Completion: {total_score}%
 
-Respond in JSON format:
+**Required Response Format (JSON):**
 {{
     "status": "ready" or "needs_attention",
-    "score": <0-100>,  // Overall completeness score as percentage
+    "score": {total_score},  // MUST match calculated completion percentage
+    "completed_phases": {completed_phases},
+    "total_phases": {total_phases},
     "missing_sections": [
         {{
-            "section": "section name",
-            "phase_name": "Phase Name (if applicable)",
-            "phase_id": "phase-uuid (if applicable)",
-            "importance": "why this section matters",
-            "recommendation": "what to do",
-            "score": <0-100>  // Section-specific score
+            "section": "phase name",
+            "phase_name": "Phase Name",
+            "phase_id": "phase-uuid",
+            "phase_order": <number>,
+            "importance": "why this phase matters",
+            "recommendation": "what to do to complete this phase",
+            "score": 0
         }}
     ],
     "phase_scores": [
         {{
             "phase_name": "Phase Name",
             "phase_id": "phase-uuid",
+            "phase_order": <number>,
             "score": <0-100>,
             "status": "complete" or "incomplete" or "missing"
         }}
     ],
-    "summary": "Overall assessment summary"
-}}"""
+    "summary": "Accurate assessment based on actual phase completion. PRD is {total_score}% complete ({completed_phases}/{total_phases} phases completed)."
+}}
+
+**IMPORTANT:**
+- Score MUST reflect actual phase completion: {total_score}%
+- Status MUST be "needs_attention" if score < 100%
+- DO NOT say PRD is 100% complete unless ALL {total_phases} phases are completed
+- Focus on missing phases: {', '.join([p.get('phase_name', 'Unknown') for p in (missing_phases or [])]) if missing_phases else 'None'}"""
 
         messages = [
             AgentMessage(
@@ -249,71 +393,38 @@ Respond in JSON format:
         except:
             pass
         
-        # Fallback: analyze response text and calculate scores
-        missing_sections = []
-        phase_scores = []
-        total_score = 100
+        # Fallback: Use pre-calculated scores (more reliable than parsing AI response)
+        # The scores were already calculated above based on actual phase data
+        # This ensures accuracy and prevents false "100% complete" reports
         
-        # Check each required section
-        required_sections = [
-            ("Market Research", "Market Research"),
-            ("User Personas", "Ideation"),
-            ("Functional Requirements", "Requirements"),
-            ("Technical Architecture", "Design"),
-            ("Success Metrics", "Requirements"),
-            ("Go-to-Market Strategy", "Go-to-Market")
-        ]
+        # Try to parse JSON from response, but use pre-calculated scores as ground truth
+        parsed_result = None
+        try:
+            json_match = re.search(r'\{.*\}', response.response, re.DOTALL)
+            if json_match:
+                parsed_result = json.loads(json_match.group())
+                # Override score with calculated score to ensure accuracy
+                if parsed_result:
+                    parsed_result["score"] = total_score
+                    parsed_result["completed_phases"] = completed_phases
+                    parsed_result["total_phases"] = total_phases
+                    parsed_result["phase_scores"] = phase_scores
+                    parsed_result["missing_sections"] = missing_sections
+                    parsed_result["status"] = "ready" if total_score >= 100 else "needs_attention"
+                    parsed_result["summary"] = f"PRD completeness: {total_score}% ({completed_phases}/{total_phases} phases completed). {'Ready for export' if total_score >= 100 else f'Missing {len(missing_phases) if missing_phases else 0} phase(s). Complete all phases for 100% completion.'}"
+                    return parsed_result
+        except:
+            pass
         
-        for section_name, phase_name in required_sections:
-            section_lower = section_name.lower()
-            if section_lower not in response.response.lower():
-                missing_sections.append({
-                    "section": section_name,
-                    "phase_name": phase_name,
-                    "importance": f"{section_name} is critical for a complete PRD",
-                    "recommendation": f"Complete the {phase_name} phase or add {section_name} content",
-                    "score": 0
-                })
-                total_score -= 15  # Deduct 15 points per missing section
-        
-        # Calculate phase scores based on phase_data
-        if phase_data:
-            for phase in phase_data:
-                phase_name = phase.get('phase_name', '')
-                phase_id = phase.get('phase_id', '')
-                form_data = phase.get('form_data', {})
-                generated_content = phase.get('generated_content', '')
-                
-                # Calculate phase completeness score
-                has_form_data = bool(form_data and any(v for v in form_data.values() if v))
-                has_content = bool(generated_content and generated_content.strip())
-                
-                if has_form_data and has_content:
-                    phase_score = 100
-                    status = "complete"
-                elif has_form_data or has_content:
-                    phase_score = 50
-                    status = "incomplete"
-                else:
-                    phase_score = 0
-                    status = "missing"
-                
-                phase_scores.append({
-                    "phase_name": phase_name,
-                    "phase_id": phase_id,
-                    "score": phase_score,
-                    "status": status
-                })
-        
-        # Ensure score is between 0-100
-        total_score = max(0, min(100, total_score))
-        
+        # If parsing failed, return pre-calculated results (most accurate)
         return {
-            "status": "ready" if total_score >= 80 else "needs_attention",
+            "status": "ready" if total_score >= 100 else "needs_attention",
             "score": total_score,
+            "completed_phases": completed_phases,
+            "total_phases": total_phases,
             "missing_sections": missing_sections,
             "phase_scores": phase_scores,
-            "summary": f"PRD completeness: {total_score}%. {'Ready for export' if total_score >= 80 else 'Some sections need attention'}."
+            "summary": f"PRD completeness: {total_score}% ({completed_phases}/{total_phases} phases completed). {'Ready for export - all phases completed' if total_score >= 100 else f'Missing {len(missing_phases) if missing_phases else 0} phase(s): {", ".join([p.get("phase_name", "Unknown") for p in (missing_phases or [])])}. Complete all phases for 100% completion.'}"
         }
 
     async def generate_comprehensive_prd(
@@ -513,4 +624,42 @@ For each missing section, create a section header and include:
             source_type = article.get('source_type', '')
             if content:
                 formatted.append(f"### {title} ({source_type})\n{content[:1000]}")
+        return '\n'.join(formatted)
+    
+    def _format_all_phases_for_review(self, all_phases: List[Dict[str, Any]], phase_scores: List[Dict[str, Any]]) -> str:
+        """Format all lifecycle phases for review prompt."""
+        if not all_phases:
+            return "No lifecycle phases defined."
+        
+        # Create a map of phase scores for quick lookup
+        scores_map = {ps.get("phase_id"): ps for ps in phase_scores}
+        
+        formatted = []
+        for phase in sorted(all_phases, key=lambda x: x.get("phase_order", 999)):
+            phase_id = phase.get("phase_id", "")
+            phase_name = phase.get("phase_name", "Unknown Phase")
+            phase_order = phase.get("phase_order", 999)
+            has_submission = phase.get("has_submission", False)
+            
+            score_info = scores_map.get(phase_id, {})
+            score = score_info.get("score", 0)
+            status = score_info.get("status", "missing")
+            
+            status_icon = "✅" if status == "complete" else "⚠️" if status == "incomplete" else "❌"
+            formatted.append(f"{status_icon} Phase {phase_order}: {phase_name} - Score: {score}% ({status})")
+        
+        return '\n'.join(formatted)
+    
+    def _format_missing_phases(self, missing_phases: List[Dict[str, Any]]) -> str:
+        """Format missing phases for review prompt."""
+        if not missing_phases:
+            return "No missing phases - all phases have submissions."
+        
+        formatted = []
+        for phase in sorted(missing_phases, key=lambda x: x.get("phase_order", 999)):
+            phase_name = phase.get("phase_name", "Unknown Phase")
+            phase_order = phase.get("phase_order", 999)
+            description = phase.get("description", "")
+            formatted.append(f"❌ Phase {phase_order}: {phase_name} - {description}")
+        
         return '\n'.join(formatted)

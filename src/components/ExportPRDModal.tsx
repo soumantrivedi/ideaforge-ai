@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Download, FileText, AlertCircle, CheckCircle, Loader2, BookOpen, ExternalLink } from 'lucide-react';
 import { getValidatedApiUrl } from '../lib/runtime-config';
 
@@ -50,6 +51,26 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
       handleReview();
     }
   }, [isOpen, productId]);
+
+  // Handle Escape key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isExporting && !isPublishing && !isReviewing) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleEscape);
+    // Prevent body scroll when modal is open
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      document.body.style.overflow = '';
+    };
+  }, [isOpen, isExporting, isPublishing, isReviewing, onClose]);
 
   const handleReview = async () => {
     if (!token || !productId) return;
@@ -213,20 +234,40 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <h2 className="text-2xl font-bold text-gray-900">Export Product Requirements Document</h2>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition"
-          >
-            <X className="w-6 h-6" />
-          </button>
-        </div>
+  // Use React Portal to render at document root, avoiding z-index stacking context issues
+  const modalContent = (
+    <div 
+      className="fixed inset-0 z-[9999]" 
+      style={{ isolation: 'isolate' }}
+      onClick={(e) => {
+        // Close on backdrop click (but not on modal content click)
+        if (e.target === e.currentTarget && !isExporting && !isPublishing && !isReviewing) {
+          onClose();
+        }
+      }}
+    >
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm" />
+      
+      {/* Modal Content */}
+      <div className="fixed inset-0 flex items-center justify-center p-4 pointer-events-none">
+        <div 
+          className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col pointer-events-auto"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
+            <h2 className="text-2xl font-bold text-gray-900">Export Product Requirements Document</h2>
+            <button
+              onClick={onClose}
+              disabled={isExporting || isPublishing || isReviewing}
+              className="text-gray-400 hover:text-gray-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Close (Esc)"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
 
-        <div className="p-6 space-y-6">
+          <div className="p-6 space-y-6 overflow-y-auto flex-1">
           {/* Review Section */}
           <div className="bg-blue-50 rounded-lg p-4">
             <div className="flex items-center justify-between mb-3">
@@ -539,9 +580,13 @@ export function ExportPRDModal({ productId, isOpen, onClose, onExportComplete, t
             </div>
           )}
 
+          </div>
         </div>
       </div>
     </div>
   );
+
+  // Render using React Portal to document body
+  return createPortal(modalContent, document.body);
 }
 
