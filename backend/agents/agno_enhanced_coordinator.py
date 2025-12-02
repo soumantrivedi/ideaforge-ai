@@ -481,6 +481,12 @@ class AgnoEnhancedCoordinator:
             system_parts.append("\n=== IDEATION FROM CHATBOT ===")
             system_parts.append(context["ideation_from_chat"][:2500])  # Increased from 1500 - Option E
         
+        # Previous phase submissions (CRITICAL: Include ALL previous phase data)
+        if context.get("previous_phases"):
+            system_parts.append("\n=== PREVIOUS PHASE SUBMISSIONS ===")
+            system_parts.append("CRITICAL: Use ALL information from previous phases. Reference specific details from ideation, market research, and other completed phases.")
+            system_parts.append(context["previous_phases"])
+        
         # Form data context (exclude current field to avoid duplication) (Option E: increased limit)
         if context.get("form_data"):
             current_field = context.get("current_field")
@@ -534,9 +540,13 @@ USER REQUEST:
 INSTRUCTIONS:
 - Use the SYSTEM CONTEXT above to inform your response
 - Focus on the USER REQUEST as the primary task
-- Synthesize information from conversation history and knowledge base
-- Reference specific context when relevant
-- Provide a comprehensive, well-structured answer
+- Synthesize information from conversation history, knowledge base, AND previous phase submissions
+- Reference specific details from previous phases (ideation, market research, etc.) when relevant
+- Provide data-driven, specific responses - NOT generic guidance
+- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
+- DO NOT say "Since the earlier context only states..." or "Because your previous question was..."
+- Instead, directly use the information: "Based on your ideation phase, the problem is X, therefore..."
+- Be crisp, specific, and use actual information from previous phases
 """
         
         return enhanced
