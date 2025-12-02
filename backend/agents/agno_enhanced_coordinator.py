@@ -857,20 +857,41 @@ INSTRUCTIONS:
                 
                 # Skip RAG completely if no knowledge base, no documents, and no actual knowledge content
                 if not has_knowledge_base and not has_attached_docs and not rag_has_knowledge:
+                    skip_metadata = {
+                        "system_context": "No RAG context available",
+                        "system_prompt": "Skipped RAG - no documents or knowledge base",
+                        "user_prompt": enhanced_query,  # No truncation
+                        "rag_context": "No RAG context retrieved",
+                        "skipped": True,
+                        "reason": "no_documents_or_kb"
+                    }
                     yield {
                         "type": "agent_complete",
                         "agent": "rag",
                         "response": "No knowledge base content available. Skipping RAG agent.",
                         "progress": 0.2,
                         "timestamp": datetime.utcnow().isoformat(),
-                        "metadata": {
-                            "system_context": "No RAG context available",
-                            "system_prompt": "Skipped RAG - no documents or knowledge base",
-                            "user_prompt": enhanced_query[:500],
-                            "rag_context": "No RAG context retrieved",
-                            "skipped": True
-                        }
+                        "metadata": skip_metadata
                     }
+                    # CRITICAL: Also yield interaction event for skipped RAG so it's tracked
+                    yield {
+                        "type": "interaction",
+                        "from_agent": "coordinator",
+                        "to_agent": "rag",
+                        "query": enhanced_query,  # No truncation
+                        "response": "No knowledge base content available. Skipping RAG agent.",
+                        "metadata": skip_metadata,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    # Add to interactions list
+                    interactions.append({
+                        "from_agent": "coordinator",
+                        "to_agent": "rag",
+                        "query": enhanced_query,  # No truncation
+                        "response": "No knowledge base content available. Skipping RAG agent.",
+                        "metadata": skip_metadata,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
                     # Create empty RAG response object
                     from backend.models.schemas import AgentResponse
                     rag_response = AgentResponse(
@@ -934,19 +955,45 @@ INSTRUCTIONS:
             
             # Build system context for RAG agent
             system_context_str = self._build_system_content(enhanced_context) if enhanced_context else "Not available"
+            rag_metadata = {
+                "system_context": system_context_str if system_context_str != "Not available" else "Not available",  # Remove truncation
+                "system_prompt": self.rag_agent.system_prompt if hasattr(self.rag_agent, 'system_prompt') else "Not available",  # Remove truncation
+                "user_prompt": enhanced_query,  # Remove truncation
+                "rag_context": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # Remove truncation
+            }
+            if rag_response and rag_response.metadata:
+                rag_metadata.update(rag_response.metadata)
+            
             yield {
                 "type": "agent_complete",
                 "agent": "rag",
                 "response": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # No truncation - full response
                 "progress": 0.2,
                 "timestamp": datetime.utcnow().isoformat(),
-                "metadata": {
-                    "system_context": system_context_str if system_context_str != "Not available" else "Not available",  # Remove truncation
-                    "system_prompt": self.rag_agent.system_prompt if hasattr(self.rag_agent, 'system_prompt') else "Not available",  # Remove truncation
-                    "user_prompt": enhanced_query,  # Remove truncation
-                    "rag_context": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # Remove truncation
-                }
+                "metadata": rag_metadata
             }
+            
+            # CRITICAL: Also yield an interaction event for RAG so it's tracked in interactions list
+            # This ensures RAG usage is visible in test verification and metadata
+            yield {
+                "type": "interaction",
+                "from_agent": "coordinator",
+                "to_agent": "rag",
+                "query": enhanced_query,  # No truncation
+                "response": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # No truncation
+                "metadata": rag_metadata,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            # Also add to interactions list for final response
+            interactions.append({
+                "from_agent": "coordinator",
+                "to_agent": "rag",
+                "query": enhanced_query,  # No truncation
+                "response": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # No truncation
+                "metadata": rag_metadata,
+                "timestamp": datetime.utcnow().isoformat()
+            })
             
             # Skip supporting agents if single_agent_mode is enabled (for fast phase form help)
             if single_agent_mode:
