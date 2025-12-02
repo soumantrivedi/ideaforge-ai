@@ -1010,6 +1010,14 @@ eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates 
 				sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" "$$file"; \
 				sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)|g" "$$file"; \
 			fi; \
+			# Also update migration job if it exists in this file
+			if grep -q "db-migrations-job" "$$file" 2>/dev/null; then \
+				if [ "$$(uname)" = "Darwin" ]; then \
+					sed -i '' "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" "$$file"; \
+				else \
+					sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" "$$file"; \
+				fi; \
+			fi; \
 		 done)
 	@echo "✅ EKS manifests prepared for namespace: $(EKS_NAMESPACE)"
 
@@ -1076,8 +1084,37 @@ eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=yo
 	@echo "⏳ Waiting for database services to be ready..."
 	@kubectl wait --for=condition=ready pod -l app=postgres -n $(EKS_NAMESPACE) --timeout=300s || true
 	@kubectl wait --for=condition=ready pod -l app=redis -n $(EKS_NAMESPACE) --timeout=120s || true
-	@echo "🔄 Running database setup (migrations + seeding)..."
-	@kubectl apply -f $(K8S_DIR)/eks/db-setup-job.yaml
+	@echo "🔄 Running database migrations..."
+	@if [ -z "$(BACKEND_IMAGE_TAG)" ]; then \
+		echo "❌ BACKEND_IMAGE_TAG is required for migrations"; \
+		exit 1; \
+	fi
+	@echo "   Updating migration job with backend image: $(BACKEND_IMAGE_TAG)"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		sed -i '' "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" $(K8S_DIR)/eks/db-migrations-job.yaml; \
+	else \
+		sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" $(K8S_DIR)/eks/db-migrations-job.yaml; \
+	fi
+	@echo "   Deleting any existing migration job..."
+	@kubectl delete job db-migrations -n $(EKS_NAMESPACE) --ignore-not-found=true || true
+	@echo "   Creating migration job..."
+	@kubectl apply -f $(K8S_DIR)/eks/db-migrations-job.yaml
+	@echo "⏳ Waiting for database migrations to complete..."
+	@if kubectl wait --for=condition=complete job/db-migrations -n $(EKS_NAMESPACE) --timeout=600s; then \
+		echo "✅ Database migrations completed successfully"; \
+		kubectl logs -n $(EKS_NAMESPACE) job/db-migrations --tail=20 || true; \
+	else \
+		echo "❌ Database migrations failed!"; \
+		echo "   Migration job logs:"; \
+		kubectl logs -n $(EKS_NAMESPACE) job/db-migrations --tail=50 || true; \
+		echo "   Migration job status:"; \
+		kubectl describe job db-migrations -n $(EKS_NAMESPACE) | tail -20 || true; \
+		echo ""; \
+		echo "⚠️  Deployment stopped. Please fix migration issues before continuing."; \
+		exit 1; \
+	fi
+	@echo "🔄 Running database setup (seeding)..."
+	@kubectl apply -f $(K8S_DIR)/eks/db-setup-job.yaml || true
 	@echo "⏳ Waiting for database setup job to complete..."
 	@kubectl wait --for=condition=complete job/db-setup -n $(EKS_NAMESPACE) --timeout=300s || \
 		(echo "⚠️  Database setup job may have failed. Check logs:" && \
