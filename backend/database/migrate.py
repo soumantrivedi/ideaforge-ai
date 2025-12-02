@@ -95,10 +95,34 @@ async def apply_migration(db: AsyncSession, migration_file: Path) -> bool:
         # Read migration file
         migration_sql = migration_file.read_text(encoding='utf-8')
         
-        # Execute entire migration as a single transaction
+        # Split SQL into individual statements (by semicolon, ignoring comments and empty lines)
+        statements = []
+        current_statement = []
+        for line in migration_sql.split('\n'):
+            stripped = line.strip()
+            # Skip empty lines and comments
+            if not stripped or stripped.startswith('--'):
+                continue
+            current_statement.append(line)
+            # If line ends with semicolon, it's the end of a statement
+            if stripped.endswith(';'):
+                statement = '\n'.join(current_statement)
+                if statement.strip():
+                    statements.append(statement)
+                current_statement = []
+        
+        # If there's a remaining statement without semicolon, add it
+        if current_statement:
+            statement = '\n'.join(current_statement)
+            if statement.strip():
+                statements.append(statement)
+        
+        # Execute each statement separately within the same transaction
         # This ensures atomicity - either all statements succeed or none do
         try:
-            await db.execute(text(migration_sql))
+            for statement in statements:
+                if statement.strip():
+                    await db.execute(text(statement))
             await db.commit()
         except Exception as e:
             # Some statements may fail if already applied (e.g., CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS)
