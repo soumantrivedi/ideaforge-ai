@@ -55,7 +55,7 @@ def main():
     print("   kubectl create secret generic mckinsey-sso-secrets \\")
     print("     --from-literal=MCKINSEY_CLIENT_ID='your-client-id' \\")
     print("     --from-literal=MCKINSEY_CLIENT_SECRET='your-client-secret' \\")
-    print("     --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/api/auth/mckinsey/callback' \\")
+    print("     --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/auth/mckinsey/callback' \\")
     print(f"     --from-literal=MCKINSEY_TOKEN_ENCRYPTION_KEY='{key}' \\")
     print("     --namespace=your-namespace")
     print()

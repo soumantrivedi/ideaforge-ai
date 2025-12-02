@@ -40,12 +40,12 @@ IdeaForge AI supports McKinsey SSO authentication using OpenID Connect (OIDC) wi
 - **Description**: OAuth callback URL where McKinsey Identity Platform redirects after authentication
 - **Format**: Full HTTPS URL (HTTP allowed for local development)
 - **Examples**:
-  - Production: `https://ideaforge-ai-prod.cf.platform.mckinsey.cloud/api/auth/mckinsey/callback`
-  - Development: `http://localhost:80/api/auth/mckinsey/callback`
+  - Production: `https://ideaforge-ai-prod.cf.platform.mckinsey.cloud/auth/mckinsey/callback`
+  - Development: `http://localhost:80/auth/mckinsey/callback`
 - **Requirements**:
   - Must be registered with McKinsey Identity Platform
   - Must match exactly (including protocol, domain, path)
-  - Path must be `/api/auth/mckinsey/callback`
+  - Path must be `/auth/mckinsey/callback`
 
 #### MCKINSEY_TOKEN_ENCRYPTION_KEY
 - **Description**: 32-byte Fernet encryption key for encrypting refresh tokens at rest
@@ -84,13 +84,13 @@ For local development, McKinsey SSO can be disabled by leaving credentials empty
 # env.kind
 MCKINSEY_CLIENT_ID=
 MCKINSEY_CLIENT_SECRET=
-MCKINSEY_REDIRECT_URI=http://localhost:80/api/auth/mckinsey/callback
+MCKINSEY_REDIRECT_URI=http://localhost:80/auth/mckinsey/callback
 MCKINSEY_TOKEN_ENCRYPTION_KEY=
 ```
 
 If testing McKinsey SSO locally:
 1. Request test credentials from McKinsey Identity Platform team
-2. Register `http://localhost:80/api/auth/mckinsey/callback` as redirect URI
+2. Register `http://localhost:80/auth/mckinsey/callback` as redirect URI
 3. Generate encryption key:
    ```bash
    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -104,7 +104,7 @@ Production deployments **require** valid McKinsey SSO credentials:
 # env.eks
 MCKINSEY_CLIENT_ID=your-production-client-id
 MCKINSEY_CLIENT_SECRET=your-production-client-secret
-MCKINSEY_REDIRECT_URI=https://your-domain.cf.platform.mckinsey.cloud/api/auth/mckinsey/callback
+MCKINSEY_REDIRECT_URI=https://your-domain.cf.platform.mckinsey.cloud/auth/mckinsey/callback
 MCKINSEY_TOKEN_ENCRYPTION_KEY=your-production-encryption-key
 ```
 

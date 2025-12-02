@@ -116,7 +116,7 @@ Python script that:
 3. **MCKINSEY_REDIRECT_URI**
    - OAuth callback URL
    - Must match registered URI exactly
-   - Format: `https://your-domain.com/api/auth/mckinsey/callback`
+   - Format: `https://your-domain.com/auth/mckinsey/callback`
 
 4. **MCKINSEY_TOKEN_ENCRYPTION_KEY**
    - 32-byte Fernet encryption key
@@ -178,7 +178,7 @@ python3 scripts/generate-mckinsey-encryption-key.py
 kubectl create secret generic mckinsey-sso-secrets \
   --from-literal=MCKINSEY_CLIENT_ID='your-client-id' \
   --from-literal=MCKINSEY_CLIENT_SECRET='your-client-secret' \
-  --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/api/auth/mckinsey/callback' \
+  --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/auth/mckinsey/callback' \
   --from-literal=MCKINSEY_TOKEN_ENCRYPTION_KEY='your-encryption-key' \
   --namespace=your-namespace
 ```
