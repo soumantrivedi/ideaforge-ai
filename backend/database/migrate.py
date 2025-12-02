@@ -95,33 +95,37 @@ async def apply_migration(db: AsyncSession, migration_file: Path) -> bool:
         # Read migration file
         migration_sql = migration_file.read_text(encoding='utf-8')
         
-        # Split SQL into individual statements (by semicolon, ignoring comments and empty lines)
-        statements = []
-        current_statement = []
-        for line in migration_sql.split('\n'):
+        # Split SQL into individual statements by semicolon
+        # Remove comments and empty lines, then split by semicolon
+        lines = migration_sql.split('\n')
+        cleaned_lines = []
+        for line in lines:
             stripped = line.strip()
-            # Skip empty lines and comments
-            if not stripped or stripped.startswith('--'):
+            # Skip empty lines and full-line comments
+            if not stripped or (stripped.startswith('--') and not ';' in stripped):
                 continue
-            current_statement.append(line)
-            # If line ends with semicolon, it's the end of a statement
-            if stripped.endswith(';'):
-                statement = '\n'.join(current_statement)
-                if statement.strip():
-                    statements.append(statement)
-                current_statement = []
+            cleaned_lines.append(line)
         
-        # If there's a remaining statement without semicolon, add it
-        if current_statement:
-            statement = '\n'.join(current_statement)
-            if statement.strip():
-                statements.append(statement)
+        # Join and split by semicolon to get individual statements
+        full_sql = '\n'.join(cleaned_lines)
+        # Split by semicolon, but keep the semicolon with each statement
+        raw_statements = [s.strip() + ';' for s in full_sql.split(';') if s.strip()]
+        
+        # Clean up statements - remove trailing semicolons from the last one if needed
+        statements = []
+        for stmt in raw_statements:
+            stmt = stmt.strip()
+            if stmt and stmt != ';':
+                # Remove duplicate semicolons at the end
+                while stmt.endswith(';;'):
+                    stmt = stmt[:-1]
+                statements.append(stmt)
         
         # Execute each statement separately within the same transaction
         # This ensures atomicity - either all statements succeed or none do
         try:
             for statement in statements:
-                if statement.strip():
+                if statement.strip() and statement.strip() != ';':
                     await db.execute(text(statement))
             await db.commit()
         except Exception as e:
