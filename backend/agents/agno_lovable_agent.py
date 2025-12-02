@@ -223,6 +223,13 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         if all_phases_data:
             context_parts.append("\n=== ALL PRODUCT LIFECYCLE PHASES ===\n")
             for phase_item in all_phases_data:
+                # Ensure phase_item is a dict, not a list
+                if not isinstance(phase_item, dict):
+                    logger.warning("phase_item_not_dict", 
+                                 phase_item_type=type(phase_item).__name__,
+                                 phase_item_value=str(phase_item)[:100])
+                    continue  # Skip invalid phase items
+                
                 phase_name = phase_item.get("phase_name", "")
                 form_data = phase_item.get("form_data", {})
                 generated_content = phase_item.get("generated_content", "")
@@ -247,6 +254,12 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         
         # Add current phase data with full details if available
         if phase_data:
+            # Ensure phase_data is a dict, not a list
+            if not isinstance(phase_data, dict):
+                logger.warning("phase_data_not_dict", 
+                             phase_data_type=type(phase_data).__name__)
+                phase_data = {}  # Use empty dict to avoid errors
+            
             phase_name = phase_data.get("phase_name", "")
             form_data = phase_data.get("form_data", {})
             generated_content = phase_data.get("generated_content", "")

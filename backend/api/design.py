@@ -101,8 +101,25 @@ async def stream_design_prompt_generation(
         
         for row in rows:
             phase_name = row[2]
-            form_data = row[0] or {}
+            form_data_raw = row[0]
             generated_content = row[1] or ""
+            
+            # Ensure form_data is a dict, not a list
+            if isinstance(form_data_raw, dict):
+                form_data = form_data_raw
+            elif isinstance(form_data_raw, list):
+                logger.warning("form_data_is_list_in_stream_context", 
+                             phase_name=phase_name, 
+                             product_id=request.product_id)
+                form_data = {}  # Convert list to empty dict to avoid errors
+            else:
+                form_data = form_data_raw or {}
+                if not isinstance(form_data, dict):
+                    logger.warning("form_data_unexpected_type_in_stream", 
+                                 phase_name=phase_name, 
+                                 product_id=request.product_id,
+                                 form_data_type=type(form_data).__name__)
+                    form_data = {}
             
             phase_text = f"## {phase_name} Phase\n"
             
@@ -127,7 +144,16 @@ async def stream_design_prompt_generation(
         # Generate prompt using appropriate agent
         product_context = {"context": full_context}
         if request.context:
-            product_context.update(request.context)
+            # Ensure context is a dict, not a list
+            if isinstance(request.context, dict):
+                product_context.update(request.context)
+            elif isinstance(request.context, list):
+                logger.warning("context_is_list_in_stream", 
+                             provider=request.provider,
+                             product_id=request.product_id)
+            else:
+                logger.warning("unexpected_context_type_in_stream", 
+                             context_type=type(request.context).__name__)
         
         # Check for existing prompt
         existing_prompt = None
@@ -220,9 +246,23 @@ async def stream_design_prompt_generation(
             all_phases_data = []
             current_phase_data = None
             for row in phase_rows:
+                form_data_raw = row[0]
+                # Ensure form_data is a dict, not a list
+                if isinstance(form_data_raw, dict):
+                    form_data = form_data_raw
+                elif isinstance(form_data_raw, list):
+                    logger.warning("form_data_is_list_in_stream_lovable", 
+                                 phase_name=row[2], 
+                                 product_id=request.product_id)
+                    form_data = {}  # Convert list to empty dict
+                else:
+                    form_data = form_data_raw or {}
+                    if not isinstance(form_data, dict):
+                        form_data = {}
+                
                 phase_item = {
                     "phase_name": row[2],
-                    "form_data": row[0] or {},
+                    "form_data": form_data,
                     "generated_content": row[1] or "",
                     "phase_order": row[3]
                 }
@@ -281,8 +321,25 @@ async def generate_design_prompt(
         
         for row in rows:
             phase_name = row[2]
-            form_data = row[0] or {}
+            form_data_raw = row[0]
             generated_content = row[1] or ""
+            
+            # Ensure form_data is a dict, not a list
+            if isinstance(form_data_raw, dict):
+                form_data = form_data_raw
+            elif isinstance(form_data_raw, list):
+                logger.warning("form_data_is_list_in_context", 
+                             phase_name=phase_name, 
+                             product_id=request.product_id)
+                form_data = {}  # Convert list to empty dict to avoid errors
+            else:
+                form_data = form_data_raw or {}
+                if not isinstance(form_data, dict):
+                    logger.warning("form_data_unexpected_type", 
+                                 phase_name=phase_name, 
+                                 product_id=request.product_id,
+                                 form_data_type=type(form_data).__name__)
+                    form_data = {}
             
             phase_text = f"## {phase_name} Phase\n"
             
@@ -308,7 +365,18 @@ async def generate_design_prompt(
         # Generate prompt using appropriate agent
         product_context = {"context": full_context}
         if request.context:
-            product_context.update(request.context)
+            # Ensure context is a dict, not a list
+            if isinstance(request.context, dict):
+                product_context.update(request.context)
+            elif isinstance(request.context, list):
+                # If context is a list, log warning and skip
+                logger.warning("context_is_list_in_generate_prompt", 
+                             provider=request.provider,
+                             product_id=request.product_id,
+                             context_type=type(request.context).__name__)
+            else:
+                logger.warning("unexpected_context_type", 
+                             context_type=type(request.context).__name__)
         
         # Check for existing prompt in phase submission (unless force_new=True)
         existing_prompt = None
@@ -408,9 +476,23 @@ async def generate_design_prompt(
             all_phases_data = []
             current_phase_data = None
             for row in phase_rows:
+                form_data_raw = row[0]
+                # Ensure form_data is a dict, not a list
+                if isinstance(form_data_raw, dict):
+                    form_data = form_data_raw
+                elif isinstance(form_data_raw, list):
+                    logger.warning("form_data_is_list_in_lovable", 
+                                 phase_name=row[2], 
+                                 product_id=request.product_id)
+                    form_data = {}  # Convert list to empty dict
+                else:
+                    form_data = form_data_raw or {}
+                    if not isinstance(form_data, dict):
+                        form_data = {}
+                
                 phase_item = {
                     "phase_name": row[2],
-                    "form_data": row[0] or {},
+                    "form_data": form_data,
                     "generated_content": row[1] or "",
                     "phase_order": row[3]
                 }
