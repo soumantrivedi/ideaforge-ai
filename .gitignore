@@ -20,11 +20,23 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Environment files with sensitive data
 .env
+.env.*
+!env.example
+!env.kind.example
+!env.eks.example
+!env.docker-compose.example
+env.kind
+env.eks.stg
+.env.stg
+env.eks.dev
+.env.dev
+
+# Database backups
 backups/*.sql
 !backups/README.md
 !backups/.gitkeep
-env.kind
 
 # Python
 __pycache__/
@@ -35,5 +47,3 @@ __pycache__/
 
 # Kiro CLI
 .kiro/
-env.eks.stg
-.env.stg

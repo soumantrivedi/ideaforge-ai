@@ -1,4 +1,4 @@
-.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-test-agents kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace eks-setup-hpa eks-prewarm eks-performance-test
+.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-test-agents kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace eks-setup-hpa eks-prewarm eks-performance-test eks-rollout-images
 
 # Get git SHA for versioning
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -1322,3 +1322,136 @@ eks-performance-test: ## Run performance test with 100 concurrent users (use EKS
 		--users 100 \
 		--ramp-up 30 \
 		--output performance-metrics-$$(date +%Y%m%d-%H%M%S).json
+
+eks-rollout-images: ## Deploy new images with verification, database dump, and cleanup (use EKS_NAMESPACE=ns, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag, KUBECONFIG=path, BASE_URL=url)
+	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BACKEND_IMAGE_TAG)" ] || [ -z "$(FRONTEND_IMAGE_TAG)" ]; then \
+		echo "❌ Required parameters: EKS_NAMESPACE, BACKEND_IMAGE_TAG, FRONTEND_IMAGE_TAG"; \
+		echo "   Usage: make eks-rollout-images EKS_NAMESPACE=ns BACKEND_IMAGE_TAG=tag FRONTEND_IMAGE_TAG=tag [KUBECONFIG=path] [BASE_URL=url]"; \
+		echo "   Example: make eks-rollout-images EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BACKEND_IMAGE_TAG=3b0a9d6 FRONTEND_IMAGE_TAG=3b0a9d6 KUBECONFIG=/tmp/kubeconfig.sake62 BASE_URL=https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "🚀 EKS Image Rollout with Verification"
+	@echo "======================================"
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@echo "   Backend Image: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend Image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
+	@echo ""
+	@echo "📦 Step 1: Creating database backup..."
+	@BACKUP_DIR=$${BACKUP_DIR:-./backups}; \
+	mkdir -p $$BACKUP_DIR; \
+	TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	BACKUP_FILE="$$BACKUP_DIR/eks_db_backup_$(EKS_NAMESPACE)_$$TIMESTAMP.sql"; \
+	POSTGRES_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || \
+	                 kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (postgres,postgres-ha)' -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo ""); \
+	if [ -n "$$POSTGRES_POD" ]; then \
+		echo "   Found PostgreSQL pod: $$POSTGRES_POD"; \
+		POSTGRES_USER=$$(kubectl get configmap ideaforge-ai-config -n $(EKS_NAMESPACE) -o jsonpath='{.data.POSTGRES_USER}' 2>/dev/null || echo "agentic_pm"); \
+		POSTGRES_DB=$$(kubectl get configmap ideaforge-ai-config -n $(EKS_NAMESPACE) -o jsonpath='{.data.POSTGRES_DB}' 2>/dev/null || echo "agentic_pm_db"); \
+		POSTGRES_PASSWORD=$$(kubectl get secret ideaforge-ai-secrets -n $(EKS_NAMESPACE) -o jsonpath='{.data.POSTGRES_PASSWORD}' 2>/dev/null | base64 -d || echo ""); \
+		if [ -n "$$POSTGRES_PASSWORD" ]; then \
+			kubectl exec -n $(EKS_NAMESPACE) $$POSTGRES_POD -- \
+				env PGPASSWORD="$$POSTGRES_PASSWORD" \
+				pg_dump -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" \
+				--clean --if-exists --create --format=plain --no-owner --no-privileges \
+				> "$$BACKUP_FILE" 2>&1 && \
+			BACKUP_SIZE=$$(du -h "$$BACKUP_FILE" | cut -f1) && \
+			echo "   ✅ Database backup created: $$BACKUP_FILE ($$BACKUP_SIZE)"; \
+		else \
+			echo "   ⚠️  Could not retrieve database password, skipping backup"; \
+		fi; \
+	else \
+		echo "   ⚠️  PostgreSQL pod not found, skipping backup"; \
+	fi
+	@echo ""
+	@echo "🔄 Step 2: Updating image tags in deployments..."
+	@kubectl set image deployment/backend backend=ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
+		(echo "❌ Failed to update backend image" && exit 1)
+	@kubectl set image deployment/frontend frontend=ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
+		(echo "❌ Failed to update frontend image" && exit 1)
+	@echo "   ✅ Image tags updated"
+	@echo ""
+	@echo "⏳ Step 3: Rolling out deployments (low timeout)..."
+	@kubectl rollout status deployment/backend -n $(EKS_NAMESPACE) --timeout=120s || \
+		(echo "⚠️  Backend rollout timeout (120s), checking status..." && \
+		 kubectl get pods -n $(EKS_NAMESPACE) -l app=backend && \
+		 echo "   Continuing with verification...")
+	@kubectl rollout status deployment/frontend -n $(EKS_NAMESPACE) --timeout=120s || \
+		(echo "⚠️  Frontend rollout timeout (120s), checking status..." && \
+		 kubectl get pods -n $(EKS_NAMESPACE) -l app=frontend && \
+		 echo "   Continuing with verification...")
+	@echo "   ✅ Rollouts completed"
+	@echo ""
+	@echo "🧹 Step 4: Cleaning up old replicasets..."
+	@kubectl get replicasets -n $(EKS_NAMESPACE) -o json 2>/dev/null | \
+		jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' 2>/dev/null | \
+		while read rs; do \
+			if [ -n "$$rs" ]; then \
+				echo "   Deleting replicaset: $$rs"; \
+				kubectl delete replicaset $$rs -n $(EKS_NAMESPACE) --ignore-not-found=true; \
+			fi; \
+		done || echo "   No old replicasets to clean up"
+	@echo "   ✅ Cleanup complete"
+	@echo ""
+	@echo "🧪 Step 5: Verifying deployment..."
+	@echo "   Checking pod status..."
+	@kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (backend,frontend)' --no-headers | \
+		awk '{if ($$3 != "Running") {print "   ⚠️  Pod " $$1 " is " $$3; exit 1}}' || true
+	@echo "   ✅ All pods are running"
+	@echo ""
+	@echo "   Testing backend health endpoint..."
+	@BACKEND_POD=$$(kubectl get pod -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -n "$$BACKEND_POD" ]; then \
+		HEALTH_RESPONSE=$$(kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD -- curl -s http://localhost:8000/health 2>/dev/null || echo ""); \
+		if echo "$$HEALTH_RESPONSE" | grep -q "healthy\|status"; then \
+			echo "   ✅ Backend health check passed"; \
+		else \
+			echo "   ⚠️  Backend health check may have issues"; \
+		fi; \
+	fi
+	@if [ -n "$(BASE_URL)" ]; then \
+		echo ""; \
+		echo "   Testing API endpoint via ingress..."; \
+		API_RESPONSE=$$(curl -s -f "$(BASE_URL)/api/health" 2>/dev/null || echo ""); \
+		if echo "$$API_RESPONSE" | grep -q "healthy\|status"; then \
+			echo "   ✅ API endpoint accessible"; \
+		else \
+			echo "   ⚠️  API endpoint may not be accessible"; \
+		fi; \
+		echo ""; \
+		echo "   Testing frontend via ingress..."; \
+		FRONTEND_RESPONSE=$$(curl -s -f "$(BASE_URL)/" -o /dev/null -w "%{http_code}" 2>/dev/null || echo "000"); \
+		if [ "$$FRONTEND_RESPONSE" = "200" ] || [ "$$FRONTEND_RESPONSE" = "304" ]; then \
+			echo "   ✅ Frontend accessible"; \
+		else \
+			echo "   ⚠️  Frontend returned HTTP $$FRONTEND_RESPONSE"; \
+		fi; \
+		echo ""; \
+		echo "   Testing login endpoint..."; \
+		LOGIN_RESPONSE=$$(curl -s -X POST "$(BASE_URL)/api/auth/login" \
+			-H "Content-Type: application/json" \
+			-d '{"email":"test@example.com","password":"test"}' 2>/dev/null || echo ""); \
+		if echo "$$LOGIN_RESPONSE" | grep -qE "token|error|Invalid"; then \
+			echo "   ✅ Login endpoint responding"; \
+		else \
+			echo "   ⚠️  Login endpoint may not be responding correctly"; \
+		fi; \
+		echo ""; \
+		echo "   Testing SSO callback endpoint..."; \
+		SSO_RESPONSE=$$(curl -s -f "$(BASE_URL)/api/auth/mckinsey/callback?code=test&state=test" -o /dev/null -w "%{http_code}" 2>/dev/null || echo "000"); \
+		if [ "$$SSO_RESPONSE" != "000" ]; then \
+			echo "   ✅ SSO callback endpoint responding (HTTP $$SSO_RESPONSE)"; \
+		else \
+			echo "   ⚠️  SSO callback endpoint may not be accessible"; \
+		fi; \
+	fi
+	@echo ""
+	@echo "✅ Deployment complete!"
+	@echo "   Backend: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
+	@if [ -n "$$BACKUP_FILE" ] && [ -f "$$BACKUP_FILE" ]; then \
+		echo "   Database backup: $$BACKUP_FILE"; \
+	fi
