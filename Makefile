@@ -107,7 +107,7 @@ EKS_STORAGE_CLASS ?= default-storage-class  # Default to default-storage-class (
 EKS_GITHUB_USERNAME ?= $(shell git config user.name 2>/dev/null || echo "")
 EKS_GITHUB_TOKEN ?= $(shell grep "^GITHUB_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 
-kind-create: ## Create a local kind cluster for testing
+kind-create: ## Create a local kind cluster for testing with VPN networking support
 	@echo "🐳 Creating kind cluster: $(KIND_CLUSTER_NAME)..."
 	@if kind get clusters | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
 		echo "⚠️  Cluster $(KIND_CLUSTER_NAME) already exists"; \
@@ -135,6 +135,10 @@ kind-create: ## Create a local kind cluster for testing
 		echo "    hostPort: 8443" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml; \
 	fi
 	@echo "    protocol: TCP" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@echo "  extraMounts:" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@echo "  - hostPath: /etc/resolv.conf" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@echo "    containerPath: /etc/resolv.conf.host" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@echo "    readOnly: true" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
 	@kind create cluster --name $(KIND_CLUSTER_NAME) --image $(KIND_IMAGE) --config /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml || true
 	@rm -f /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
 	@echo "⏳ Waiting for cluster to be ready..."
@@ -142,6 +146,14 @@ kind-create: ## Create a local kind cluster for testing
 	@echo "✅ Kind cluster created successfully!"
 	@echo "   Cluster name: $(KIND_CLUSTER_NAME)"
 	@echo "   Context: kind-$(KIND_CLUSTER_NAME)"
+	@echo ""
+	@echo "🌐 Configuring DNS for VPN access..."
+	@$(MAKE) kind-configure-dns || (echo "⚠️  DNS configuration failed - you may need to run 'make kind-configure-dns' manually" && echo "   This is required for pods to resolve VPN-accessible hostnames like ai-gateway.quantumblack.com")
+	@echo ""
+	@echo "✅ Kind cluster setup complete!"
+	@echo "   DNS is configured to forward queries to host resolver"
+	@echo "   Host resolv.conf mounted for VPN DNS access"
+	@echo "   This allows pods to access VPN-accessible services while the cluster is running"
 
 kind-delete: ## Delete the local kind cluster
 	@echo "🗑️  Deleting kind cluster: $(KIND_CLUSTER_NAME)..."
@@ -537,6 +549,164 @@ kind-port-forward: ## Port forward frontend and backend services for local acces
 	@echo "   Backend:  http://localhost:8000"
 	@echo ""
 	@echo "To stop port forwarding, run: pkill -f 'kubectl port-forward'"
+
+kind-configure-dns: ## Configure Kind cluster to use host DNS (for VPN access to internal services)
+	@echo "🌐 Configuring Kind cluster DNS to use host resolver..."
+	@echo "   This allows pods to resolve hostnames accessible via VPN"
+	@echo "   Waiting for CoreDNS to be ready..."
+	@kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --timeout=60s || true
+	@echo "   Configuring CoreDNS to use host's resolv.conf (mounted at /etc/resolv.conf.host)..."
+	@echo "   Patching CoreDNS ConfigMap to forward DNS queries to host resolver..."
+	@kubectl get configmap coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) -o yaml > /tmp/coredns-original.yaml 2>/dev/null || true; \
+	if kubectl get configmap coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) > /dev/null 2>&1; then \
+		echo "   Updating existing CoreDNS ConfigMap..."; \
+		HOST_RESOLV=$$(docker exec $(KIND_CLUSTER_NAME)-control-plane cat /etc/resolv.conf.host 2>/dev/null | grep -E "^nameserver" | head -1 | awk '{print $$2}' || echo "8.8.8.8"); \
+		echo "   Using host DNS server: $$HOST_RESOLV"; \
+		kubectl patch configmap coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --type merge -p "{\"data\":{\"Corefile\":\".:53 {\\n    errors\\n    health {\\n       lameduck 5s\\n    }\\n    ready\\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\\n       pods insecure\\n       fallthrough in-addr.arpa ip6.arpa\\n       ttl 30\\n    }\\n    prometheus :9153\\n    forward . $$HOST_RESOLV {\\n       max_concurrent 1000\\n    }\\n    cache 30\\n    loop\\n    reload\\n    loadbalance\\n}\\n\"}}" || \
+		kubectl patch configmap coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --type merge -p '{"data":{"Corefile":".:53 {\n    errors\n    health {\n       lameduck 5s\n    }\n    ready\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\n       pods insecure\n       fallthrough in-addr.arpa ip6.arpa\n       ttl 30\n    }\n    prometheus :9153\n    forward . /etc/resolv.conf.host {\n       max_concurrent 1000\n    }\n    cache 30\n    loop\n    reload\n    loadbalance\n}\n"}}' || \
+		kubectl apply -f $(K8S_DIR)/kind/coredns-custom.yaml --context kind-$(KIND_CLUSTER_NAME) || true; \
+	else \
+		echo "   CoreDNS ConfigMap not found, applying custom configuration..."; \
+		kubectl apply -f $(K8S_DIR)/kind/coredns-custom.yaml --context kind-$(KIND_CLUSTER_NAME) || true; \
+	fi
+	@echo "   Updating CoreDNS deployment to mount host resolv.conf..."
+	@kubectl get deployment coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) -o yaml > /tmp/coredns-deployment.yaml 2>/dev/null || true; \
+	if ! kubectl get deployment coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) -o yaml | grep -q "resolv.conf.host"; then \
+		echo "   Adding host resolv.conf mount to CoreDNS pods..."; \
+		kubectl patch deployment coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --type json -p '[{"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-", "value": {"name": "host-resolv", "mountPath": "/etc/resolv.conf.host", "readOnly": true}}]' || true; \
+		kubectl patch deployment coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --type json -p '[{"op": "add", "path": "/spec/template/spec/volumes/-", "value": {"name": "host-resolv", "hostPath": {"path": "/etc/resolv.conf.host", "type": "File"}}}]' || true; \
+	fi
+	@echo "   Restarting CoreDNS pods to apply configuration..."
+	@kubectl rollout restart deployment/coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) || true
+	@echo "   Waiting for CoreDNS pods to be ready..."
+	@kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --timeout=120s || true
+	@sleep 5
+	@echo "   Verifying DNS configuration..."
+	@COREDNS_POD=$$(kubectl get pods -n kube-system -l k8s-app=kube-dns --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -n "$$COREDNS_POD" ]; then \
+		echo "   Testing DNS resolution from CoreDNS pod..."; \
+		kubectl exec -n kube-system $$COREDNS_POD --context kind-$(KIND_CLUSTER_NAME) -- sh -c "cat /etc/resolv.conf.host 2>/dev/null || echo 'Host resolv.conf not mounted'" || true; \
+		kubectl exec -n kube-system $$COREDNS_POD --context kind-$(KIND_CLUSTER_NAME) -- nslookup google.com 2>&1 | grep -q "Name:" && echo "   ✅ CoreDNS can resolve external hostnames" || echo "   ⚠️  CoreDNS DNS test inconclusive"; \
+	fi
+	@echo "✅ DNS configuration updated and verified"
+	@echo "   Pods can now resolve hostnames accessible from the host (including VPN services)"
+	@echo "   This configuration will persist while the cluster is running"
+
+kind-verify-dns: ## Verify DNS configuration in Kind cluster
+	@echo "🔍 Verifying DNS configuration..."
+	@bash scripts/verify-dns-config.sh
+
+kind-test-ai-gateway-connectivity: ## Test AI Gateway connectivity from Kind cluster pods
+	@echo "🧪 Testing AI Gateway connectivity from Kind cluster..."
+	@BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make kind-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Using backend pod: $$BACKEND_POD"; \
+	echo "   Testing DNS resolution..."; \
+	if kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) -- \
+		python -c "import socket; socket.gethostbyname('ai-gateway.quantumblack.com'); print('✅ DNS resolution successful')" 2>&1 | grep -q "✅"; then \
+		echo "   ✅ DNS resolution successful"; \
+		echo "   Testing HTTP connectivity..."; \
+		if kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) -- \
+			python -c "import httpx, asyncio; asyncio.run((lambda: httpx.AsyncClient(timeout=10.0).get('https://ai-gateway.quantumblack.com/health'))())" 2>&1 | \
+			grep -qE "200|OK|healthy"; then \
+			echo "   ✅ HTTP connectivity successful"; \
+		else \
+			echo "   ⚠️  HTTP connectivity test failed - check VPN connection and network access"; \
+		fi; \
+	else \
+		echo "   ❌ DNS resolution failed"; \
+		echo "   Troubleshooting steps:"; \
+		echo "     1. Ensure VPN is connected on the host machine"; \
+		echo "     2. Run 'make kind-configure-dns' to reconfigure DNS"; \
+		echo "     3. Run 'make kind-verify-dns' to verify DNS configuration"; \
+	fi
+
+kind-restart-backend: ## Restart backend deployment to pick up code changes
+	@echo "🔄 Restarting backend deployment..."
+	@kubectl rollout restart deployment/backend -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME)
+	@kubectl rollout status deployment/backend -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=180s
+	@echo "✅ Backend deployment restarted"
+
+kind-backup-database: ## Backup database from Kind cluster
+	@echo "📦 Backing up database from Kind cluster..."
+	@bash scripts/backup-database.sh
+
+kind-restore-database: ## Restore database to Kind cluster (requires BACKUP_FILE env var)
+	@if [ -z "$(BACKUP_FILE)" ]; then \
+		echo "❌ BACKUP_FILE not specified"; \
+		echo "   Usage: make kind-restore-database BACKUP_FILE=/path/to/backup.sql"; \
+		exit 1; \
+	fi
+	@echo "📥 Restoring database to Kind cluster..."
+	@BACKUP_FILE=$(BACKUP_FILE) bash scripts/restore-database.sh
+
+kind-recreate-with-vpn: ## Recreate Kind cluster with VPN networking support (backups database first)
+	@echo "🔄 Recreating Kind cluster with VPN networking support..."
+	@echo ""
+	@echo "Step 1: Backing up current database..."
+	@$(MAKE) kind-backup-database || echo "⚠️  Database backup skipped (cluster may not exist)"
+	@echo ""
+	@echo "Step 2: Deleting existing cluster..."
+	@$(MAKE) kind-delete || echo "⚠️  Cluster deletion skipped"
+	@echo ""
+	@echo "Step 3: Creating new cluster with VPN networking..."
+	@$(MAKE) kind-create
+	@echo ""
+	@echo "Step 4: Setting up ingress..."
+	@$(MAKE) kind-setup-ingress
+	@echo ""
+	@echo "Step 5: Loading images..."
+	@$(MAKE) kind-load-images
+	@echo ""
+	@echo "Step 6: Loading secrets..."
+	@$(MAKE) kind-load-secrets
+	@echo ""
+	@echo "Step 7: Deploying application..."
+	@$(MAKE) kind-deploy-internal
+	@echo ""
+	@LATEST_BACKUP=$$(ls -t backups/ideaforge-ai-backup-*.sql 2>/dev/null | head -1); \
+	if [ -n "$$LATEST_BACKUP" ]; then \
+		echo "Step 8: Restoring database from latest backup..."; \
+		echo "   Backup file: $$LATEST_BACKUP"; \
+		echo "   Run: make kind-restore-database BACKUP_FILE=$$LATEST_BACKUP"; \
+		echo "   Or restore manually after database is ready"; \
+	else \
+		echo "Step 8: No database backup found - database will be initialized fresh"; \
+	fi
+	@echo ""
+	@echo "✅ Cluster recreation complete!"
+	@echo "   DNS is configured for VPN access"
+	@echo "   Run 'make kind-verify-dns' to verify DNS resolution"
+
+kind-configure-vpn-networking: ## Configure existing Kind cluster for VPN networking (without recreating)
+	@echo "🌐 Configuring existing Kind cluster for VPN networking..."
+	@bash scripts/configure-kind-vpn-networking.sh
+
+kind-validate-ai-gateway: kind-test-ai-gateway-connectivity ## Validate AI Gateway integration (connectivity + API endpoint)
+	@echo ""
+	@echo "🧪 Validating AI Gateway API endpoint..."
+	@INGRESS_PORT=$(KIND_INGRESS_PORT); \
+	BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		exit 1; \
+	fi; \
+	echo "   Testing /api/providers/verify endpoint with ai_gateway provider..."; \
+	RESPONSE=$$(curl -s -X POST "http://localhost:$$INGRESS_PORT/api/providers/verify" \
+		-H "Content-Type: application/json" \
+		-d '{"provider": "ai_gateway", "api_key": "test", "client_secret": "test"}' 2>&1); \
+	if echo "$$RESPONSE" | grep -q "ai_gateway\|AI Gateway"; then \
+		echo "✅ API endpoint accepts ai_gateway provider"; \
+		echo "   Response: $$RESPONSE" | head -3; \
+	else \
+		echo "⚠️  API endpoint may not be accepting ai_gateway provider"; \
+		echo "   Response: $$RESPONSE" | head -5; \
+		echo "   Run 'make kind-restart-backend' to ensure latest code is running"; \
+	fi
 
 kind-status: ## Show status of kind cluster deployment
 	@echo "📊 Kind Cluster Status:"

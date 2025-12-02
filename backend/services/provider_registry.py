@@ -8,6 +8,7 @@ from anthropic import Anthropic
 import google.generativeai as genai
 
 from backend.config import settings
+from backend.services.ai_gateway_client import AIGatewayClient
 
 
 class ProviderRegistry:
@@ -19,10 +20,15 @@ class ProviderRegistry:
         self._openai_key: Optional[str] = (settings.openai_api_key.strip() if settings.openai_api_key else None) or None
         self._claude_key: Optional[str] = (settings.anthropic_api_key.strip() if settings.anthropic_api_key else None) or None
         self._gemini_key: Optional[str] = (settings.google_api_key.strip() if settings.google_api_key else None) or None
+        
+        # AI Gateway credentials (service account)
+        self._ai_gateway_client_id: Optional[str] = (getattr(settings, 'ai_gateway_client_id', None) or "").strip() or None
+        self._ai_gateway_client_secret: Optional[str] = (getattr(settings, 'ai_gateway_client_secret', None) or "").strip() or None
 
         self._openai_client: Optional[OpenAI] = None
         self._claude_client: Optional[Anthropic] = None
         self._gemini_configured: bool = False
+        self._ai_gateway_client: Optional[AIGatewayClient] = None
 
         self._rebuild_clients()
 
@@ -59,6 +65,32 @@ class ProviderRegistry:
                 logger = structlog.get_logger()
                 logger.warning("gemini_client_creation_failed", error=str(e))
                 self._gemini_configured = False
+        
+        # Rebuild AI Gateway client
+        self._ai_gateway_client = None
+        if self._ai_gateway_client_id and self._ai_gateway_client_secret:
+            try:
+                # Get provider-specific base URLs and instance ID
+                instance_id = getattr(settings, 'ai_gateway_instance_id', None)
+                env = getattr(settings, 'ai_gateway_env', 'prod')
+                openai_base_url = getattr(settings, 'ai_gateway_openai_base_url', None)
+                anthropic_base_url = getattr(settings, 'ai_gateway_anthropic_base_url', None)
+                base_url = getattr(settings, 'ai_gateway_base_url', None)  # For OAuth token endpoint
+                
+                self._ai_gateway_client = AIGatewayClient(
+                    client_id=self._ai_gateway_client_id,
+                    client_secret=self._ai_gateway_client_secret,
+                    instance_id=instance_id,
+                    env=env,
+                    openai_base_url=openai_base_url,
+                    anthropic_base_url=anthropic_base_url,
+                    base_url=base_url
+                )
+            except Exception as e:
+                import structlog
+                logger = structlog.get_logger()
+                logger.warning("ai_gateway_client_creation_failed", error=str(e))
+                self._ai_gateway_client = None
 
     def update_keys(
         self,
@@ -66,6 +98,8 @@ class ProviderRegistry:
         openai_key: Optional[str] = None,
         claude_key: Optional[str] = None,
         gemini_key: Optional[str] = None,
+        ai_gateway_client_id: Optional[str] = None,
+        ai_gateway_client_secret: Optional[str] = None,
     ) -> List[str]:
         """
         Update provider API keys and rebuild clients. None means 'no change'.
@@ -90,6 +124,18 @@ class ProviderRegistry:
                     self._gemini_key = gemini_key.strip()
                 else:
                     self._gemini_key = (settings.google_api_key.strip() if settings.google_api_key else None) or None
+            
+            # Update AI Gateway credentials
+            if ai_gateway_client_id is not None:
+                if ai_gateway_client_id.strip():
+                    self._ai_gateway_client_id = ai_gateway_client_id.strip()
+                else:
+                    self._ai_gateway_client_id = (getattr(settings, 'ai_gateway_client_id', None) or "").strip() or None
+            if ai_gateway_client_secret is not None:
+                if ai_gateway_client_secret.strip():
+                    self._ai_gateway_client_secret = ai_gateway_client_secret.strip()
+                else:
+                    self._ai_gateway_client_secret = (getattr(settings, 'ai_gateway_client_secret', None) or "").strip() or None
 
             self._rebuild_clients()
 
@@ -118,6 +164,8 @@ class ProviderRegistry:
             providers.append("claude")
         if self.has_gemini_key():
             providers.append("gemini")
+        if self.has_ai_gateway():
+            providers.append("ai_gateway")
         return providers
 
     def get_openai_key(self) -> Optional[str]:
@@ -132,6 +180,22 @@ class ProviderRegistry:
         """Get Gemini API key."""
         return self._gemini_key
     
+    def has_ai_gateway(self) -> bool:
+        """Check if AI Gateway is configured."""
+        return self._ai_gateway_client is not None
+    
+    def get_ai_gateway_client(self) -> Optional[AIGatewayClient]:
+        """Get AI Gateway client."""
+        return self._ai_gateway_client
+    
+    def get_ai_gateway_client_id(self) -> Optional[str]:
+        """Get AI Gateway client ID."""
+        return self._ai_gateway_client_id
+    
+    def get_ai_gateway_client_secret(self) -> Optional[str]:
+        """Get AI Gateway client secret."""
+        return self._ai_gateway_client_secret
+    
     def reload_from_environment(self) -> List[str]:
         """
         Reload API keys from environment variables (Settings).
@@ -143,6 +207,8 @@ class ProviderRegistry:
             openai_key = os.getenv("OPENAI_API_KEY", "").strip()
             anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
             google_key = os.getenv("GOOGLE_API_KEY", "").strip()
+            ai_gateway_client_id = os.getenv("AI_GATEWAY_CLIENT_ID", "").strip()
+            ai_gateway_client_secret = os.getenv("AI_GATEWAY_CLIENT_SECRET", "").strip()
             
             # Remove quotes if present
             if openai_key.startswith('"') and openai_key.endswith('"'):
@@ -151,6 +217,10 @@ class ProviderRegistry:
                 anthropic_key = anthropic_key[1:-1]
             if google_key.startswith('"') and google_key.endswith('"'):
                 google_key = google_key[1:-1]
+            if ai_gateway_client_id.startswith('"') and ai_gateway_client_id.endswith('"'):
+                ai_gateway_client_id = ai_gateway_client_id[1:-1]
+            if ai_gateway_client_secret.startswith('"') and ai_gateway_client_secret.endswith('"'):
+                ai_gateway_client_secret = ai_gateway_client_secret[1:-1]
             
             # Update keys if they're different
             if openai_key and openai_key != self._openai_key:
@@ -159,6 +229,10 @@ class ProviderRegistry:
                 self._claude_key = anthropic_key
             if google_key and google_key != self._gemini_key:
                 self._gemini_key = google_key
+            if ai_gateway_client_id and ai_gateway_client_id != self._ai_gateway_client_id:
+                self._ai_gateway_client_id = ai_gateway_client_id
+            if ai_gateway_client_secret and ai_gateway_client_secret != self._ai_gateway_client_secret:
+                self._ai_gateway_client_secret = ai_gateway_client_secret
             
             # Rebuild clients with updated keys
             self._rebuild_clients()

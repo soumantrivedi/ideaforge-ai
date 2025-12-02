@@ -19,6 +19,9 @@ try:
     from agno.knowledge.knowledge import Knowledge
     from agno.vectordb.pgvector import PgVector, SearchType
     
+    # AI Gateway model wrapper
+    from backend.models.ai_gateway_model import AIGatewayModel
+    
     # Monkey-patch OpenAI client to use max_completion_tokens for GPT-5.1 models
     # This fixes the issue where GPT-5.1 models require max_completion_tokens instead of max_tokens
     # The agno library uses OpenAI client internally, so we patch at the client level
@@ -225,9 +228,90 @@ class AgnoBaseAgent(ABC):
         - standard: gpt-5.1, claude-3.5-sonnet, gemini-1.5-pro (for coordinators - balanced)
         - premium: gpt-5.1, claude-opus-4.5, gemini-3-pro (for critical reasoning - most powerful)
         
-        Priority: GPT-5.1 (primary) > Gemini 3 Pro (tertiary) > Claude Opus 4.5 (secondary)
+        Priority: OpenAI GPT-5.1 (primary) > AI Gateway (secondary fallback) > Gemini 3 Pro (tertiary) > Claude Opus 4.5 (quaternary)
+        
+        AI Gateway models are determined by the gateway's available models and can be configured
+        via AI_GATEWAY_DEFAULT_MODEL environment variable or user settings.
         """
         api_key = None
+        
+        # PRIORITY: OpenAI is the primary provider, AI Gateway is secondary fallback
+        # Check if OpenAI is available first (primary)
+        # AI Gateway is only used if OpenAI is not available and AI Gateway is explicitly enabled
+        use_ai_gateway = False
+        if not provider_registry.has_openai_key():
+            # Only use AI Gateway as fallback if OpenAI is not available
+            use_ai_gateway = getattr(settings, 'ai_gateway_enabled', False) and provider_registry.has_ai_gateway()
+        
+        if use_ai_gateway and provider_registry.has_ai_gateway():
+            gateway_client = provider_registry.get_ai_gateway_client()
+            if gateway_client:
+                # Try to discover ChatGPT-5 models dynamically
+                try:
+                    from backend.services.ai_gateway_model_discovery import get_best_chatgpt5_model
+                    import asyncio
+                    
+                    # Try to get best ChatGPT-5 model (non-blocking if already discovered)
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # If loop is running, use cached discovery or defaults
+                            best_model = None
+                        else:
+                            best_model = loop.run_until_complete(get_best_chatgpt5_model())
+                    except RuntimeError:
+                        # No event loop, use defaults
+                        best_model = None
+                    
+                    # Use discovered model or fall back to settings/defaults
+                    if best_model:
+                        default_model = best_model
+                    else:
+                        # Get default model from settings or use tier-based defaults
+                        default_model = getattr(settings, 'ai_gateway_default_model', None)
+                        if not default_model:
+                            # Tier-based model selection for AI Gateway (prefer ChatGPT-5)
+                            if model_tier == "fast":
+                                default_model = getattr(settings, 'ai_gateway_fast_model', 'gpt-5.1-chat-latest')
+                            elif model_tier == "standard":
+                                default_model = getattr(settings, 'ai_gateway_standard_model', 'gpt-5.1')
+                            else:  # premium
+                                default_model = getattr(settings, 'ai_gateway_premium_model', 'gpt-5.1')
+                except Exception as e:
+                    self.logger.warning("ai_gateway_model_discovery_failed", error=str(e))
+                    # Fall back to settings/defaults
+                    default_model = getattr(settings, 'ai_gateway_default_model', 'gpt-5.1')
+                    if not default_model:
+                        if model_tier == "fast":
+                            default_model = getattr(settings, 'ai_gateway_fast_model', 'gpt-5.1-chat-latest')
+                        elif model_tier == "standard":
+                            default_model = getattr(settings, 'ai_gateway_standard_model', 'gpt-5.1')
+                        else:
+                            default_model = getattr(settings, 'ai_gateway_premium_model', 'gpt-5.1')
+                
+                try:
+                    # Determine max_tokens based on model and tier
+                    max_tokens = 2000 if model_tier == "fast" else 4000
+                    
+                    # GPT-5.1 models may need special handling
+                    if 'gpt-5.1' in default_model.lower() or 'gpt-5' in default_model.lower():
+                        # Use max_completion_tokens for GPT-5.1 models
+                        return AIGatewayModel(
+                            id=default_model,
+                            client=gateway_client,
+                            temperature=0.7,
+                            max_completion_tokens=max_tokens
+                        )
+                    else:
+                        return AIGatewayModel(
+                            id=default_model,
+                            client=gateway_client,
+                            temperature=0.7,
+                            max_tokens=max_tokens
+                        )
+                except Exception as e:
+                    self.logger.warning("ai_gateway_model_creation_failed", error=str(e), model_tier=model_tier, model=default_model)
+                    # Fall through to other providers
         
         if model_tier == "fast":
             # Fast models for most agents (50-70% latency reduction, lowest cost)
@@ -400,7 +484,27 @@ class AgnoBaseAgent(ABC):
             
             # Determine which provider to use and get API key
             new_model = None
-            if provider_registry.has_openai_key():
+            
+            # Check AI Gateway first if enabled
+            # Only use AI Gateway as fallback if OpenAI is not available
+            use_ai_gateway = False
+            if not provider_registry.has_openai_key():
+                use_ai_gateway = getattr(settings, 'ai_gateway_enabled', False) and provider_registry.has_ai_gateway()
+            if use_ai_gateway and provider_registry.has_ai_gateway():
+                gateway_client = provider_registry.get_ai_gateway_client()
+                if gateway_client:
+                    default_model = getattr(settings, 'ai_gateway_default_model', 'gpt-4o')
+                    try:
+                        new_model = AIGatewayModel(
+                            id=default_model,
+                            client=gateway_client,
+                            temperature=0.7,
+                            max_tokens=4000
+                        )
+                    except Exception as e:
+                        self.logger.warning("ai_gateway_model_update_failed", error=str(e))
+            
+            if new_model is None and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
                     model_id_final = model_id or settings.agent_model_primary

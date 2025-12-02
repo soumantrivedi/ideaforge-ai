@@ -83,8 +83,9 @@ def _initialize_orchestrator(force_agno: Optional[bool] = None) -> tuple[Agentic
     """
     global orchestrator, agno_enabled
     
-    # Check if any provider is configured
+    # Check if any provider is configured (prioritize AI Gateway)
     has_provider = (
+        provider_registry.has_ai_gateway() or
         provider_registry.has_openai_key() or
         provider_registry.has_claude_key() or
         provider_registry.has_gemini_key()
@@ -197,13 +198,15 @@ def _map_provider_exception(exc: Exception):
 
 
 class APIKeyVerificationRequest(BaseModel):
-    provider: Literal["openai", "claude", "gemini", "v0"]
+    provider: Literal["openai", "claude", "gemini", "v0", "ai_gateway"]
     api_key: str
     verify_ssl: Optional[bool] = None  # Optional: if not provided, uses settings.verify_ssl
+    client_secret: Optional[str] = None  # For AI Gateway: service account client secret
+    base_url: Optional[str] = None  # For AI Gateway: optional base URL override
 
 
 class APIKeyVerificationResponse(BaseModel):
-    provider: Literal["openai", "claude", "gemini", "v0"]
+    provider: Literal["openai", "claude", "gemini", "v0", "ai_gateway"]
     valid: bool
     message: str
 
@@ -214,6 +217,10 @@ class ProviderConfigureRequest(BaseModel):
     geminiKey: Optional[str] = None
     v0Key: Optional[str] = None
     lovableKey: Optional[str] = None
+    aiGatewayClientId: Optional[str] = None
+    aiGatewayClientSecret: Optional[str] = None
+    aiGatewayBaseUrl: Optional[str] = None
+    aiGatewayDefaultModel: Optional[str] = None
 
 
 class ProviderConfigureResponse(BaseModel):
@@ -277,10 +284,13 @@ async def lifespan(app: FastAPI):
         has_openai=provider_registry.has_openai_key(),
         has_claude=provider_registry.has_claude_key(),
         has_gemini=provider_registry.has_gemini_key(),
+        has_ai_gateway=provider_registry.has_ai_gateway(),
         source="environment_variables",
         openai_key_present=bool(settings.openai_api_key),
         anthropic_key_present=bool(settings.anthropic_api_key),
-        google_key_present=bool(settings.google_api_key)
+        google_key_present=bool(settings.google_api_key),
+        ai_gateway_enabled=getattr(settings, 'ai_gateway_enabled', False),
+        ai_gateway_client_id_present=bool(getattr(settings, 'ai_gateway_client_id', None))
     )
     
     # Reinitialize orchestrator on startup to ensure Agno is initialized if providers are available
@@ -292,6 +302,21 @@ async def lifespan(app: FastAPI):
     # Provider registry is initialized at module load time, but environment variables might be set after
     # So we reload from environment to pick up any new keys from Kubernetes secrets
     provider_registry.reload_from_environment()
+    
+    # Discover AI Gateway models and update defaults if AI Gateway is configured
+    if provider_registry.has_ai_gateway():
+        try:
+            from backend.services.ai_gateway_model_discovery import update_ai_gateway_default_models
+            model_info = await update_ai_gateway_default_models()
+            if model_info:
+                logger.info(
+                    "ai_gateway_models_discovered_at_startup",
+                    default_model=model_info.get('default'),
+                    fast_model=model_info.get('fast'),
+                    available_models=model_info.get('available', [])
+                )
+        except Exception as e:
+            logger.warning("ai_gateway_model_discovery_failed_at_startup", error=str(e))
     
     # Reinitialize orchestrator with updated provider registry
     orchestrator, agno_enabled = _initialize_orchestrator()
@@ -314,9 +339,11 @@ async def lifespan(app: FastAPI):
         openai_configured=provider_registry.has_openai_key(),
         claude_configured=provider_registry.has_claude_key(),
         gemini_configured=provider_registry.has_gemini_key(),
+        ai_gateway_configured=provider_registry.has_ai_gateway(),
         openai_key_present=bool(settings.openai_api_key),
         anthropic_key_present=bool(settings.anthropic_api_key),
-        google_key_present=bool(settings.google_api_key)
+        google_key_present=bool(settings.google_api_key),
+        ai_gateway_enabled=getattr(settings, 'ai_gateway_enabled', False)
     )
     
     # Agno agents are automatically initialized when orchestrator is created
@@ -1148,6 +1175,60 @@ async def verify_provider_key(payload: APIKeyVerificationRequest):
                 valid=True,
                 message="Google Gemini API key is valid."
             )
+        
+        if payload.provider == "ai_gateway":
+            # AI Gateway uses service account credentials (client_id and client_secret)
+            # The payload should contain both credentials
+            from backend.services.ai_gateway_client import AIGatewayClient
+            
+            # Extract client_id and client_secret from payload
+            # For AI Gateway, we expect the api_key field to contain client_id
+            # and metadata to contain client_secret, or we can use a special format
+            client_id = payload.api_key
+            client_secret = getattr(payload, 'client_secret', None) or getattr(payload, 'metadata', {}).get('client_secret') if hasattr(payload, 'metadata') else None
+            
+            if not client_secret:
+                raise HTTPException(
+                    status_code=400,
+                    detail="AI Gateway requires both client_id and client_secret. Please provide client_secret in the request."
+                )
+            
+            # Get provider-specific configuration
+            instance_id = getattr(settings, 'ai_gateway_instance_id', None)
+            env = getattr(settings, 'ai_gateway_env', 'prod')
+            openai_base_url = getattr(settings, 'ai_gateway_openai_base_url', None)
+            anthropic_base_url = getattr(settings, 'ai_gateway_anthropic_base_url', None)
+            base_url = getattr(settings, 'ai_gateway_base_url', None)  # For OAuth
+            
+            try:
+                async with AIGatewayClient(
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    instance_id=instance_id,
+                    env=env,
+                    openai_base_url=openai_base_url,
+                    anthropic_base_url=anthropic_base_url,
+                    base_url=base_url
+                ) as gateway_client:
+                    is_valid = await gateway_client.verify_credentials()
+                    if is_valid:
+                        return APIKeyVerificationResponse(
+                            provider="ai_gateway",
+                            valid=True,
+                            message="AI Gateway service account credentials are valid."
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=401,
+                            detail="AI Gateway service account credentials are invalid."
+                        )
+            except Exception as e:
+                error_msg = str(e) if str(e) else "Unknown error"
+                logger.error("ai_gateway_verification_failed", error=error_msg)
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Failed to verify AI Gateway credentials: {error_msg}"
+                )
 
         if payload.provider == "v0":
             # V0 API verification - perform complete API verification
@@ -1595,6 +1676,76 @@ async def configure_provider_keys(
             await db.execute(delete_query, {"user_id": current_user['id']})
             logger.info("lovable_api_key_removed", user_id=current_user['id'])
         
+        # AI Gateway - Service account credentials (client_id and client_secret)
+        if payload.aiGatewayClientId is not None and payload.aiGatewayClientId.strip():
+            client_id = payload.aiGatewayClientId.strip()
+            client_secret = payload.aiGatewayClientSecret.strip() if payload.aiGatewayClientSecret else None
+            
+            if not client_secret:
+                raise HTTPException(
+                    status_code=400,
+                    detail="AI Gateway requires both client_id and client_secret"
+                )
+            
+            # Store client_id in api_key_encrypted and client_secret in metadata
+            from backend.utils.encryption import get_encryption
+            encryption = get_encryption()
+            
+            # Encrypt both credentials
+            encrypted_client_id = encryption.encrypt(client_id)
+            encrypted_client_secret = encryption.encrypt(client_secret)
+            
+            # Prepare metadata with client_secret and optional config
+            metadata = {
+                "client_secret": encrypted_client_secret
+            }
+            # Store instance_id and env if provided, otherwise use defaults
+            instance_id = getattr(settings, 'ai_gateway_instance_id', '1d8095ae-5ef9-4e61-885c-f5b031f505a4')
+            env = getattr(settings, 'ai_gateway_env', 'prod')
+            metadata["instance_id"] = instance_id
+            metadata["env"] = env
+            # Store provider-specific base URLs (auto-constructed if not provided)
+            if not getattr(settings, 'ai_gateway_openai_base_url', None):
+                metadata["openai_base_url"] = f"https://openai.{env}.ai-gateway.quantumblack.com/{instance_id}/v1"
+            if not getattr(settings, 'ai_gateway_anthropic_base_url', None):
+                metadata["anthropic_base_url"] = f"https://anthropic.{env}.ai-gateway.quantumblack.com/{instance_id}"
+            # Legacy base_url for OAuth (if provided)
+            if payload.aiGatewayBaseUrl:
+                metadata["base_url"] = payload.aiGatewayBaseUrl.strip()
+            if payload.aiGatewayDefaultModel:
+                metadata["default_model"] = payload.aiGatewayDefaultModel.strip()
+            
+            # Save to database
+            from sqlalchemy import text
+            upsert_query = text("""
+                INSERT INTO user_api_keys (user_id, provider, api_key_encrypted, metadata, is_active)
+                VALUES (:user_id, 'ai_gateway', :api_key_encrypted, :metadata::jsonb, true)
+                ON CONFLICT (user_id, provider)
+                DO UPDATE SET
+                    api_key_encrypted = EXCLUDED.api_key_encrypted,
+                    metadata = EXCLUDED.metadata,
+                    updated_at = now()
+            """)
+            await db.execute(upsert_query, {
+                "user_id": current_user['id'],
+                "api_key_encrypted": encrypted_client_id,
+                "metadata": json.dumps(metadata)
+            })
+            await db.commit()
+            
+            # Update provider registry
+            keys_to_update_registry['ai_gateway_client_id'] = client_id
+            keys_to_update_registry['ai_gateway_client_secret'] = client_secret
+            
+            logger.info("ai_gateway_credentials_saved",
+                       user_id=str(current_user['id']),
+                       has_base_url=bool(payload.aiGatewayBaseUrl),
+                       has_default_model=bool(payload.aiGatewayDefaultModel))
+        elif 'ai_gateway_client_id' in existing_keys:
+            # Preserve existing AI Gateway credentials
+            keys_to_update_registry['ai_gateway_client_id'] = existing_keys['ai_gateway_client_id']
+            keys_to_update_registry['ai_gateway_client_secret'] = existing_keys.get('ai_gateway_client_secret')
+        
         # Save only the keys that were provided
         for provider, key_value in keys_to_save.items():
             # Ensure V0 provider name matches database schema
@@ -1740,10 +1891,13 @@ async def initialize_agno_agents(
     
     # Update provider registry with user's keys (user keys override .env keys)
     # If user hasn't set keys, provider_registry still has .env keys from initialization
+    # Note: AI Gateway credentials are typically set via environment variables, not user keys
     provider_registry.update_keys(
         openai_key=user_keys.get("openai"),
         claude_key=user_keys.get("claude"),
         gemini_key=user_keys.get("gemini"),
+        ai_gateway_client_id=user_keys.get("ai_gateway_client_id"),
+        ai_gateway_client_secret=user_keys.get("ai_gateway_client_secret"),
     )
     
     # Check if any provider is configured (either from user keys or .env)
