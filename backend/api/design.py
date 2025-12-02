@@ -207,6 +207,13 @@ async def stream_design_prompt_generation(
                 
                 # Stream prompt generation
                 try:
+                    # Ensure product_context is a dict before passing to agent
+                    if not isinstance(product_context, dict):
+                        logger.error("product_context_not_dict_v0_stream", 
+                                   product_context_type=type(product_context).__name__,
+                                   product_id=request.product_id)
+                        product_context = {"context": full_context}
+                    
                     # Use Agno agent's process method which supports streaming via arun
                     prompt = await agno_v0_agent.generate_v0_prompt(product_context=product_context)
                     
@@ -378,6 +385,14 @@ async def generate_design_prompt(
                 logger.warning("unexpected_context_type", 
                              context_type=type(request.context).__name__)
         
+        # Ensure product_context is always a dict before passing to agents
+        if not isinstance(product_context, dict):
+            logger.error("product_context_not_dict_before_agent", 
+                        product_context_type=type(product_context).__name__,
+                        provider=request.provider,
+                        product_id=request.product_id)
+            product_context = {"context": full_context}  # Reset to safe default
+        
         # Check for existing prompt in phase submission (unless force_new=True)
         existing_prompt = None
         if not request.force_new and request.phase_submission_id:
@@ -434,6 +449,13 @@ async def generate_design_prompt(
                 if v0_key:
                     agno_v0_agent.set_v0_api_key(v0_key)
                 try:
+                    # Ensure product_context is a dict before passing to agent
+                    if not isinstance(product_context, dict):
+                        logger.error("product_context_not_dict_v0", 
+                                   product_context_type=type(product_context).__name__,
+                                   product_id=request.product_id)
+                        product_context = {"context": full_context}
+                    
                     # Optimized prompt generation (uses fast model tier and optimized system prompt)
                     prompt = await agno_v0_agent.generate_v0_prompt(
                         product_context=product_context
@@ -500,6 +522,13 @@ async def generate_design_prompt(
                 # If this is the Design phase, mark it as current
                 if row[2] and "design" in row[2].lower():
                     current_phase_data = phase_item
+            
+            # Ensure product_context is a dict before passing to agent
+            if not isinstance(product_context, dict):
+                logger.error("product_context_not_dict_lovable", 
+                           product_context_type=type(product_context).__name__,
+                           product_id=request.product_id)
+                product_context = {"context": full_context}
             
             # Generate optimized prompt with all context (uses fast model tier and optimized system prompt)
             prompt = await agno_lovable_agent.generate_lovable_prompt(

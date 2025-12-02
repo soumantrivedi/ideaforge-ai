@@ -299,6 +299,17 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         """Extract ALL product context without aggressive truncation - include everything."""
         context_parts = []
         
+        # Ensure product_context is a dict, not a list
+        if not isinstance(product_context, dict):
+            logger.warning("product_context_not_dict", 
+                         product_context_type=type(product_context).__name__,
+                         product_context_value=str(product_context)[:200])
+            # Convert list to dict or use empty dict
+            if isinstance(product_context, list):
+                product_context = {"context": "\n".join([str(item) for item in product_context if item])}
+            else:
+                product_context = {"context": str(product_context)}
+        
         # Get main context (usually contains phase data) - include ALL of it
         main_context = product_context.get("context", "")
         if main_context:
