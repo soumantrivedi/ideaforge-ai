@@ -45,6 +45,17 @@ These variables are shared across all platforms:
 - `LOG_LEVEL` - Logging level (default: info)
 - `SESSION_EXPIRES_IN` - Session expiration in seconds
 
+### McKinsey SSO (Required for McKinsey deployments)
+- `MCKINSEY_CLIENT_ID` - OAuth 2.0 client ID from McKinsey Identity Platform
+- `MCKINSEY_CLIENT_SECRET` - OAuth 2.0 client secret (store in Kubernetes secrets)
+- `MCKINSEY_REDIRECT_URI` - OAuth callback URL (must match registered URI)
+- `MCKINSEY_TOKEN_ENCRYPTION_KEY` - 32-byte Fernet key for token encryption
+- `MCKINSEY_AUTHORIZATION_ENDPOINT` - OIDC authorization endpoint (has default)
+- `MCKINSEY_TOKEN_ENDPOINT` - OIDC token endpoint (has default)
+- `MCKINSEY_JWKS_URI` - JWKS endpoint for token verification (has default)
+
+See [McKinsey SSO Configuration Guide](MCKINSEY_SSO_CONFIGURATION.md) for detailed setup instructions.
+
 ## Platform-Specific Variables
 
 ### EKS (Production)

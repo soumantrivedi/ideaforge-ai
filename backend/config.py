@@ -23,7 +23,9 @@ def _clean_api_key(key: Optional[str]) -> Optional[str]:
         return None
     key = key.strip()
     # Remove surrounding quotes if present
-    if (key.startswith('"') and key.endswith('"')) or (key.startswith("'") and key.endswith("'")):
+    if (key.startswith('"') and key.endswith('"')) or (
+        key.startswith("'") and key.endswith("'")
+    ):
         key = key[1:-1].strip()
     return key if key else None
 
@@ -31,25 +33,28 @@ def _clean_api_key(key: Optional[str]) -> Optional[str]:
 def get_openai_completion_param(model: str) -> str:
     """
     Get the correct completion parameter name based on the OpenAI model.
-    
+
     GPT-5.1 models (gpt-5.1, gpt-5.1-chat-latest) require 'max_completion_tokens'.
     Older models (gpt-4o-mini, gpt-4o, gpt-5, etc.) use 'max_tokens'.
-    
+
     Args:
         model: The model name (e.g., 'gpt-5.1', 'gpt-4o-mini')
-        
+
     Returns:
         str: The parameter name ('max_completion_tokens' or 'max_tokens')
         Example: 'max_completion_tokens' for GPT-5.1 models, 'max_tokens' for others
     """
     # GPT-5.1 models require max_completion_tokens
-    if model and ('gpt-5.1' in model.lower() or 'gpt-5' in model.lower()):
-        return 'max_completion_tokens'
+    if model and ("gpt-5.1" in model.lower() or "gpt-5" in model.lower()):
+        return "max_completion_tokens"
     # All other models use max_tokens
-    return 'max_tokens'
+    return "max_tokens"
 
 
 class Settings(BaseSettings):
+    # Environment
+    environment: str = os.getenv("ENVIRONMENT", "development")
+
     # Database Configuration
     database_url: str = _get_database_url()
 
@@ -58,10 +63,23 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = _clean_api_key(os.getenv("ANTHROPIC_API_KEY"))
     google_api_key: Optional[str] = _clean_api_key(os.getenv("GOOGLE_API_KEY"))
 
-    # Okta OAuth/SSO Configuration
-    okta_client_id: str = os.getenv("OKTA_CLIENT_ID", "")
-    okta_client_secret: str = os.getenv("OKTA_CLIENT_SECRET", "")
-    okta_issuer: str = os.getenv("OKTA_ISSUER", "")
+    # McKinsey OIDC/SSO Configuration
+    mckinsey_client_id: str = os.getenv("MCKINSEY_CLIENT_ID", "")
+    mckinsey_client_secret: str = os.getenv("MCKINSEY_CLIENT_SECRET", "")
+    mckinsey_authorization_endpoint: str = os.getenv(
+        "MCKINSEY_AUTHORIZATION_ENDPOINT",
+        "https://auth.mckinsey.id/auth/realms/r/protocol/openid-connect/auth",
+    )
+    mckinsey_token_endpoint: str = os.getenv(
+        "MCKINSEY_TOKEN_ENDPOINT",
+        "https://auth.mckinsey.id/auth/realms/r/protocol/openid-connect/token",
+    )
+    mckinsey_jwks_uri: str = os.getenv(
+        "MCKINSEY_JWKS_URI",
+        "https://auth.mckinsey.id/auth/realms/r/protocol/openid-connect/certs",
+    )
+    mckinsey_redirect_uri: str = os.getenv("MCKINSEY_REDIRECT_URI", "")
+    mckinsey_token_encryption_key: str = os.getenv("MCKINSEY_TOKEN_ENCRYPTION_KEY", "")
 
     # Jira Integration
     jira_url: str = os.getenv("JIRA_URL", "")
@@ -85,7 +103,9 @@ class Settings(BaseSettings):
     redis_url: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
     # Session Configuration
-    session_secret: str = os.getenv("SESSION_SECRET", "your_secure_random_secret_key_here")
+    session_secret: str = os.getenv(
+        "SESSION_SECRET", "your_secure_random_secret_key_here"
+    )
     session_expires_in: int = int(os.getenv("SESSION_EXPIRES_IN", "86400"))
 
     # Agent Configuration
@@ -95,17 +115,25 @@ class Settings(BaseSettings):
     # - Claude 4 Sonnet: Advanced reasoning and ideation capabilities
     # - Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
     # Default to GPT-5.1 for best reasoning, with Gemini 3.0 Pro as secondary option
-    agent_model_primary: str = os.getenv("AGENT_MODEL_PRIMARY", "gpt-5.1")  # GPT-5.1 for best reasoning (or gpt-5 as fallback)
-    agent_model_secondary: str = os.getenv("AGENT_MODEL_SECONDARY", "claude-sonnet-4-20250522")
-    agent_model_tertiary: str = os.getenv("AGENT_MODEL_TERTIARY", "gemini-3.0-pro")  # Gemini 3.0 Pro
-    
+    agent_model_primary: str = os.getenv(
+        "AGENT_MODEL_PRIMARY", "gpt-5.1"
+    )  # GPT-5.1 for best reasoning (or gpt-5 as fallback)
+    agent_model_secondary: str = os.getenv(
+        "AGENT_MODEL_SECONDARY", "claude-sonnet-4-20250522"
+    )
+    agent_model_tertiary: str = os.getenv(
+        "AGENT_MODEL_TERTIARY", "gemini-3.0-pro"
+    )  # Gemini 3.0 Pro
+
     # AI Response Timeout (seconds) - Set to 50s to avoid Cloudflare 60s timeout
     agent_response_timeout: float = float(os.getenv("AGENT_RESPONSE_TIMEOUT", "50.0"))
 
     # MCP Server Configuration
     mcp_github_url: str = os.getenv("MCP_GITHUB_URL", "http://mcp-github:8001")
     mcp_jira_url: str = os.getenv("MCP_JIRA_URL", "http://mcp-jira:8002")
-    mcp_confluence_url: str = os.getenv("MCP_CONFLUENCE_URL", "http://mcp-confluence:8003")
+    mcp_confluence_url: str = os.getenv(
+        "MCP_CONFLUENCE_URL", "http://mcp-confluence:8003"
+    )
 
     # Backend Configuration
     backend_port: int = int(os.getenv("BACKEND_PORT", "8000"))
@@ -119,10 +147,16 @@ class Settings(BaseSettings):
     log_format: str = os.getenv("LOG_FORMAT", "json")
 
     # Feature Flags
-    feature_agno_framework: bool = os.getenv("FEATURE_AGNO_FRAMEWORK", "true").lower() == "true"
+    feature_agno_framework: bool = (
+        os.getenv("FEATURE_AGNO_FRAMEWORK", "true").lower() == "true"
+    )
     feature_fast_mcp: bool = os.getenv("FEATURE_FAST_MCP", "true").lower() == "true"
-    feature_multi_tenant: bool = os.getenv("FEATURE_MULTI_TENANT", "true").lower() == "true"
-    feature_leadership_view: bool = os.getenv("FEATURE_LEADERSHIP_VIEW", "true").lower() == "true"
+    feature_multi_tenant: bool = (
+        os.getenv("FEATURE_MULTI_TENANT", "true").lower() == "true"
+    )
+    feature_leadership_view: bool = (
+        os.getenv("FEATURE_LEADERSHIP_VIEW", "true").lower() == "true"
+    )
 
     # SSL Verification (for API key verification)
     verify_ssl: bool = os.getenv("VERIFY_SSL", "false").lower() == "true"
@@ -133,8 +167,12 @@ class Settings(BaseSettings):
     max_team_members: int = int(os.getenv("MAX_TEAM_MEMBERS", "50"))
 
     # McKinsey CodeBeyond Standards
-    codebeyond_templates_path: str = os.getenv("CODEBEYOND_TEMPLATES_PATH", "./templates/codebeyond")
-    prd_validation_strict_mode: bool = os.getenv("PRD_VALIDATION_STRICT_MODE", "true").lower() == "true"
+    codebeyond_templates_path: str = os.getenv(
+        "CODEBEYOND_TEMPLATES_PATH", "./templates/codebeyond"
+    )
+    prd_validation_strict_mode: bool = (
+        os.getenv("PRD_VALIDATION_STRICT_MODE", "true").lower() == "true"
+    )
 
     class Config:
         env_file = ".env"
