@@ -331,6 +331,9 @@ The system automatically selects supporting agents based on query keywords:
 - RAG agent is **always** included in Enhanced Collaborative mode
 - Provides knowledge base context for all queries
 - Ensures comprehensive context for all agents
+- **RAG Integration (v1.1.0+)**: All lifecycle agents (PRD Authoring, Validation, Research, Analysis, Ideation, Export) have RAG enabled by default
+- **Knowledge Base Usage**: Agents intelligently reference knowledge base articles based on query context and phase
+- **RAG Timeout**: 60 seconds to handle lazy initialization and multiple documents (10+ documents supported)
 
 ---
 
@@ -418,21 +421,26 @@ POST /api/multi-agent/process
 
 ## Agent Capabilities Matrix
 
-| Agent | RAG Support | Confluence | GitHub | Export | Multi-Agent |
-|-------|-------------|------------|--------|--------|-------------|
-| Research | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Analysis | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Ideation | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Validation | ✅ | ❌ | ❌ | ❌ | ✅ |
-| PRD Authoring | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Summary | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Scoring | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Export | ✅ | ✅ | ❌ | ✅ | ✅ |
-| V0 | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Lovable | ✅ | ❌ | ❌ | ❌ | ✅ |
-| GitHub | ✅ | ❌ | ✅ | ❌ | ✅ |
-| Atlassian | ✅ | ✅ | ❌ | ✅ | ✅ |
-| RAG | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Agent | RAG Support | Confluence | GitHub | Export | Multi-Agent | Direct Content |
+|-------|-------------|------------|--------|--------|-------------|----------------|
+| Research | ✅ (v1.1.0+) | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Analysis | ✅ (v1.1.0+) | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Ideation | ✅ (v1.1.0+) | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Validation | ✅ (v1.1.0+) | ❌ | ❌ | ❌ | ✅ | ✅ |
+| PRD Authoring | ✅ (v1.1.0+) | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Summary | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Scoring | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Export | ✅ (v1.1.0+) | ✅ | ❌ | ✅ | ✅ | ✅ |
+| V0 | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Lovable | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| GitHub | ✅ | ❌ | ✅ | ❌ | ✅ | ✅ |
+| Atlassian | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| RAG | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+
+**Legend:**
+- ✅ = Full support
+- ❌ = Not applicable
+- **Direct Content**: Agents write content as if user typed it (no coaching language) - v1.1.0+
 
 **Legend:**
 - ✅ = Full support

@@ -8,9 +8,11 @@ The PRD Authoring Agent (`AgnoPRDAuthoringAgent`) specializes in creating compre
 
 The PRD Authoring Agent uses the following system context:
 
-- **RAG Knowledge Base**: `prd_knowledge_base` (optional, disabled by default)
+- **RAG Knowledge Base**: `prd_knowledge_base` (✅ **ENABLED BY DEFAULT** - v1.1.0+)
 - **Model Tier**: `standard` (balanced performance for important quality)
 - **Capabilities**: PRD creation, ICAgile compliance, industry-standard documentation, product requirements, user stories, acceptance criteria, functional requirements, technical requirements
+- **Direct Content Generation**: ✅ Agents write content as if the user typed it directly (no coaching language)
+- **Response Completeness**: ✅ Full responses stored asynchronously (no truncation)
 
 ## System Prompt
 
