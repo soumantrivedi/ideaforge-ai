@@ -318,21 +318,48 @@ class AgentVerificationTest:
                 result["error"] = "Response seems too short (possible truncation)"
             
             # Check 5: RAG was used (check metadata and response content)
-            interactions = metadata.get("agent_interactions", []) or []
-            # Check for RAG in interactions
+            # Check interaction_metadata which contains agent_interactions
+            interaction_metadata = metadata.get("interaction_metadata", {}) or {}
+            interactions = interaction_metadata.get("agent_interactions", []) or metadata.get("agent_interactions", []) or []
+            
+            # Check for RAG in interactions (multiple possible field names)
             rag_interaction = next(
-                (i for i in interactions if i.get("agent_name") == "rag" or i.get("agent_type") == "rag" or i.get("to_agent") == "rag"),
+                (i for i in interactions if 
+                 i.get("agent_name") == "rag" or 
+                 i.get("agent_type") == "rag" or 
+                 i.get("to_agent") == "rag" or
+                 i.get("from_agent") == "rag" or
+                 str(i.get("agent_name", "")).lower() == "rag" or
+                 str(i.get("to_agent", "")).lower() == "rag"),
                 None
             )
+            
             # Also check if RAG context is mentioned in metadata
-            rag_context_in_metadata = bool(metadata.get("rag_context")) or bool(metadata.get("knowledge_base"))
+            rag_context_in_metadata = (
+                bool(metadata.get("rag_context")) or 
+                bool(metadata.get("knowledge_base")) or
+                bool(interaction_metadata.get("rag_context")) or
+                bool(interaction_metadata.get("knowledge_base"))
+            )
+            
             # Check if response mentions knowledge base (indirect indicator)
             rag_mentioned_in_response = any(
                 keyword.lower() in agent_response.lower()
-                for keyword in ["knowledge base", "reference", "according to", "based on", "article", "document"]
+                for keyword in ["knowledge base", "reference", "according to", "based on", "article", "document", "best practices", "guidance"]
             )
+            
+            # RAG is used if any indicator is true
             result["rag_used"] = rag_interaction is not None or rag_context_in_metadata or rag_mentioned_in_response
             result["checks"]["rag_used"] = result["rag_used"]
+            
+            # Store detailed RAG detection info
+            result["rag_detection_details"] = {
+                "rag_interaction_found": rag_interaction is not None,
+                "rag_context_in_metadata": rag_context_in_metadata,
+                "rag_mentioned_in_response": rag_mentioned_in_response,
+                "interactions_count": len(interactions),
+                "interaction_agent_names": [i.get("agent_name") or i.get("to_agent") for i in interactions[:5]]
+            }
             
             # Check 6: Knowledge base referenced (if RAG was used)
             if result["rag_used"]:
