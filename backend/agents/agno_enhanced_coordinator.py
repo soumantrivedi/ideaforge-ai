@@ -456,36 +456,36 @@ class AgnoEnhancedCoordinator:
         if context.get("session_ids"):
             system_parts.append(f"Relevant Sessions: {', '.join(context['session_ids'])}")
         
-        # Conversation history - structured for system context
+        # Conversation history - structured for system context (Option E: increased limits)
         if context.get("conversation_history"):
             system_parts.append("\n=== CONVERSATION HISTORY ===")
-            for msg in context["conversation_history"][-15:]:  # Last 15 messages (reduced from 20)
+            for msg in context["conversation_history"][-20:]:  # Last 20 messages (increased from 15 - Option E)
                 role = msg.get("role", "unknown")
                 content = msg.get("content", "")
                 agent_name = msg.get("agent_name", "")
                 if content:
                     agent_label = f" ({agent_name})" if agent_name else ""
-                    system_parts.append(f"{role.upper()}{agent_label}: {content[:400]}")  # Reduced from 500
+                    system_parts.append(f"{role.upper()}{agent_label}: {content[:600]}")  # Increased from 400 - Option E
         
-        # Ideation from chat
+        # Ideation from chat (Option E: increased limit)
         if context.get("ideation_from_chat"):
             system_parts.append("\n=== IDEATION FROM CHATBOT ===")
-            system_parts.append(context["ideation_from_chat"][:1500])  # Reduced from 2000
+            system_parts.append(context["ideation_from_chat"][:2500])  # Increased from 1500 - Option E
         
-        # Form data context (exclude current field to avoid duplication)
+        # Form data context (exclude current field to avoid duplication) (Option E: increased limit)
         if context.get("form_data"):
             current_field = context.get("current_field")
             form_data_filtered = {k: v for k, v in context["form_data"].items() if k != current_field and v and str(v).strip()}
             if form_data_filtered:
                 system_parts.append("\n=== OTHER FORM FIELDS (Already Filled) ===")
-                form_summary = "\n".join([f"{k.replace('_', ' ').title()}: {str(v)[:200]}" for k, v in form_data_filtered.items()])
+                form_summary = "\n".join([f"{k.replace('_', ' ').title()}: {str(v)[:500]}" for k, v in form_data_filtered.items()])  # Increased from 200 - Option E
                 system_parts.append(form_summary)
         
-        # Knowledge base
+        # Knowledge base (Option E: increased limit)
         if context.get("knowledge_base"):
             system_parts.append("\n=== KNOWLEDGE BASE ===")
-            for kb_item in context["knowledge_base"][:5]:
-                kb_content = kb_item.get('content', '')[:300]  # Reduced from 200
+            for kb_item in context["knowledge_base"][:10]:  # Increased from 5 - Option E
+                kb_content = kb_item.get('content', '')[:500]  # Increased from 300 - Option E
                 system_parts.append(f"- {kb_content}")
         
         # Shared context

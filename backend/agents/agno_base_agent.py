@@ -116,12 +116,14 @@ class AgnoBaseAgent(ABC):
         tools: Optional[List[Any]] = None,
         capabilities: Optional[List[str]] = None,
         model_tier: str = "fast",  # "fast", "standard", or "premium"
-        max_history_runs: int = 3,  # Limit message history (30-50% latency reduction)
+        max_history_runs: int = 5,  # Limit message history (increased from 3 for better context - Option E)
         max_tool_calls_from_history: int = 3,  # Limit tool call history (20-40% latency reduction)
         compress_tool_results: bool = True,  # Compress tool results (10-20% latency reduction)
         enable_agentic_memory: bool = False,  # Disabled by default for performance
         enable_session_summaries: bool = False,  # Disabled by default for performance
         max_reasoning_steps: int = 3,  # Limit reasoning iterations (20-30% latency reduction)
+        enable_intelligent_summarization: bool = True,  # Enable intelligent summarization for older messages (Option E)
+        context_relevance_scoring: bool = True,  # Enable context relevance scoring (Option E)
         cache_enabled: bool = True,  # Enable response caching
         cache_ttl: int = 3600,  # Cache TTL in seconds (1 hour)
         tool_call_timeout: float = 10.0,  # Timeout for tool calls in seconds
@@ -159,6 +161,8 @@ class AgnoBaseAgent(ABC):
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_session_summaries = enable_session_summaries
         self.max_reasoning_steps = max_reasoning_steps
+        self.enable_intelligent_summarization = enable_intelligent_summarization
+        self.context_relevance_scoring = context_relevance_scoring
         
         # Metrics collection
         self.metrics = {
@@ -434,6 +438,58 @@ class AgnoBaseAgent(ABC):
         except Exception as e:
             self.logger.warning("failed_to_update_model_api_key", error=str(e))
     
+    def _build_enhanced_system_prompt(self, base_prompt: str, context: Optional[Dict[str, Any]]) -> str:
+        """Build enhanced system prompt that emphasizes context usage (Option E - Phase 1).
+        
+        This method enhances the base system prompt with explicit instructions
+        to use ALL provided context, ensuring no critical information is lost.
+        """
+        if not context:
+            return base_prompt
+        
+        # Build context summary for prompt
+        context_summary_parts = []
+        
+        if context.get("conversation_history"):
+            msg_count = len(context.get("conversation_history", []))
+            context_summary_parts.append(f"- Conversation History: {msg_count} messages")
+        
+        if context.get("form_data"):
+            field_count = len([k for k, v in context.get("form_data", {}).items() if v])
+            context_summary_parts.append(f"- Form Data: {field_count} fields with data")
+        
+        if context.get("phase_name"):
+            context_summary_parts.append(f"- Phase Context: {context.get('phase_name')}")
+        
+        if context.get("knowledge_base"):
+            kb_count = len(context.get("knowledge_base", []))
+            context_summary_parts.append(f"- Knowledge Base: {kb_count} items")
+        
+        if not context_summary_parts:
+            return base_prompt
+        
+        context_summary = "\n".join(context_summary_parts)
+        
+        # Enhanced prompt with context usage instructions
+        enhanced_prompt = f"""{base_prompt}
+
+=== CRITICAL CONTEXT USAGE INSTRUCTIONS ===
+You MUST use ALL provided context in your response. This includes:
+
+{context_summary}
+
+CRITICAL REQUIREMENTS:
+- You MUST reference specific details from the conversation history when relevant
+- If the user mentioned X in chat, you MUST incorporate it in your response
+- Use ALL form data fields provided - nothing should be omitted or skipped
+- Reference specific phase content when relevant
+- If context contains specific requirements, preferences, or decisions, you MUST use them
+- Demonstrate context awareness by referencing specific details from the provided context
+
+Your response MUST show that you've used this context. Generic responses that ignore context are not acceptable."""
+        
+        return enhanced_prompt
+    
     async def process(
         self,
         messages: List[AgentMessage],
@@ -457,6 +513,15 @@ class AgnoBaseAgent(ABC):
         
         # Ensure agent is initialized before processing
         self._ensure_agent_initialized()
+        
+        # Option E Enhancement: Build enhanced system prompt if context is provided
+        original_instructions = None
+        if context and hasattr(self, 'agno_agent') and self.agno_agent:
+            enhanced_prompt = self._build_enhanced_system_prompt(self.system_prompt, context)
+            # Temporarily update agent instructions
+            original_instructions = self.agno_agent.instructions if hasattr(self.agno_agent, 'instructions') else None
+            if hasattr(self.agno_agent, 'instructions'):
+                self.agno_agent.instructions = enhanced_prompt
         try:
             # Generate cache key for response caching
             cache_key = self._generate_cache_key(messages, context)
@@ -601,7 +666,16 @@ class AgnoBaseAgent(ABC):
             
         except Exception as e:
             self.logger.error("agno_agent_error", error=str(e), agent=self.name)
+            # Restore original instructions on error
+            if original_instructions and hasattr(self, 'agno_agent') and self.agno_agent:
+                if hasattr(self.agno_agent, 'instructions'):
+                    self.agno_agent.instructions = original_instructions
             raise
+        finally:
+            # Ensure original instructions are restored
+            if original_instructions and hasattr(self, 'agno_agent') and self.agno_agent:
+                if hasattr(self.agno_agent, 'instructions'):
+                    self.agno_agent.instructions = original_instructions
     
     def _format_messages_to_query(self, messages: List[AgentMessage], context: Optional[Dict[str, Any]]) -> str:
         """Convert AgentMessage list to query string for Agno.
@@ -642,24 +716,24 @@ class AgnoBaseAgent(ABC):
                         user_query = user_query[0].upper() + user_query[1:]
                     break
             
-            # If query is very long (>500 chars), extract the core question
-            if len(user_query) > 500:
+            # If query is very long (>800 chars), extract the core question (Option E: increased from 500)
+            if len(user_query) > 800:
                 # Try to find the main question (look for question marks or key question words)
                 sentences = user_query.split('.')
                 questions = [s.strip() for s in sentences if '?' in s or any(qw in s.lower()[:20] for qw in ['what', 'how', 'why', 'when', 'where', 'which', 'who'])]
                 if questions:
                     user_query = questions[0]  # Use the first question
                 else:
-                    # Take first 300 chars and add ellipsis
-                    user_query = user_query[:300] + "..."
+                    # Take first 500 chars and add ellipsis (increased from 300)
+                    user_query = user_query[:500] + "..."
         
-        # Summarize older context if needed (but keep it minimal - max 100 chars)
+        # Summarize older context if needed (Option E: increased limit, intelligent summarization)
         if len(messages) > self.max_history_runs:
             older_messages = messages[:-self.max_history_runs]
             context_summary = self._summarize_context(older_messages)
             if context_summary:
-                # Add minimal context summary (max 100 chars - reduced from 200)
-                user_query = f"{context_summary[:100]}\n\n{user_query}"
+                # Increased limit to 300 chars for better context preservation (Option E)
+                user_query = f"{context_summary[:300]}\n\n{user_query}"
         
         # CRITICAL: Do NOT add system context here - it's already in Agno's 'instructions' parameter
         # Adding it here would duplicate tokens and increase latency by 40-60%
@@ -800,11 +874,48 @@ class AgnoBaseAgent(ABC):
             self.logger.warning("cache_storage_error", error=str(e), key=key[:20])
     
     def _summarize_context(self, messages: List[AgentMessage]) -> str:
-        """Summarize older message context for history limiting."""
+        """Summarize older message context for history limiting.
+        
+        Option E Enhancement: Intelligent summarization that preserves key facts,
+        requirements, decisions, and preferences instead of just truncating.
+        """
         if not messages:
             return ""
         
-        # Simple summarization: extract key information from messages
+        if self.enable_intelligent_summarization:
+            # Intelligent summarization: extract key facts, requirements, decisions
+            key_facts = []
+            requirements = []
+            decisions = []
+            preferences = []
+            
+            for msg in messages:
+                content = msg.content.lower()
+                # Extract key information patterns
+                if any(kw in content for kw in ["require", "need", "must", "should", "requirement"]):
+                    requirements.append(msg.content[:150])
+                elif any(kw in content for kw in ["decide", "chose", "selected", "decision"]):
+                    decisions.append(msg.content[:150])
+                elif any(kw in content for kw in ["prefer", "like", "want", "favorite"]):
+                    preferences.append(msg.content[:150])
+                elif msg.role == "user":
+                    # Extract key facts from user messages
+                    key_facts.append(msg.content[:150])
+            
+            summary_parts = []
+            if requirements:
+                summary_parts.append(f"Requirements: {'; '.join(requirements[:2])}")
+            if decisions:
+                summary_parts.append(f"Decisions: {'; '.join(decisions[:2])}")
+            if preferences:
+                summary_parts.append(f"Preferences: {'; '.join(preferences[:2])}")
+            if key_facts:
+                summary_parts.append(f"Key facts: {'; '.join(key_facts[:3])}")
+            
+            if summary_parts:
+                return f"Previous context ({len(messages)} messages): " + " | ".join(summary_parts)
+        
+        # Fallback to simple summarization
         user_messages = [msg.content[:200] for msg in messages if msg.role == "user"]
         if user_messages:
             return f"Previous conversation ({len(messages)} messages): " + " | ".join(user_messages[:3])
