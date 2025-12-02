@@ -277,6 +277,13 @@ async def stream_design_prompt_generation(
                 if row[2] and "design" in row[2].lower():
                     current_phase_data = phase_item
             
+            # Ensure product_context is a dict before passing to agent
+            if not isinstance(product_context, dict):
+                logger.error("product_context_not_dict_lovable_stream", 
+                           product_context_type=type(product_context).__name__,
+                           product_id=request.product_id)
+                product_context = {"context": full_context}
+            
             # Stream prompt generation
             try:
                 prompt = await agno_lovable_agent.generate_lovable_prompt(
