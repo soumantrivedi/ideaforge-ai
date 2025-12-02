@@ -141,8 +141,15 @@ Your responses should be:
         # Extract the query from messages
         query = messages[-1].content if messages else ""
         
-        # Search knowledge base first
-        knowledge_results = await self.search_knowledge(query, top_k=5)
+        # CRITICAL: Filter by product_id if available in context
+        # This ensures only documents for the specific product are retrieved
+        filters = {}
+        if context and context.get("product_id"):
+            filters["product_id"] = str(context.get("product_id"))
+            self.logger.info("rag_filtering_by_product_id", product_id=context.get("product_id"))
+        
+        # Search knowledge base first with product_id filter
+        knowledge_results = await self.search_knowledge(query, top_k=5, filters=filters if filters else None)
         
         # If no knowledge results, return empty response immediately (don't process)
         if not knowledge_results:

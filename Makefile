@@ -1018,7 +1018,7 @@ eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates 
 					sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" "$$file"; \
 				fi; \
 			fi; \
-		 done)
+		done)
 	@echo "✅ EKS manifests prepared for namespace: $(EKS_NAMESPACE)"
 
 eks-load-secrets: ## Load secrets from .env file for EKS deployment (use EKS_NAMESPACE=your-namespace)

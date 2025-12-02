@@ -415,14 +415,22 @@ class AgnoEnhancedCoordinator:
             # Also include as message_history for NLU extraction
             context["message_history"] = self.shared_context["conversation_history"]
         
-        # Retrieve knowledge from RAG
+        # Retrieve knowledge from RAG - CRITICAL: Filter by product_id to get only relevant documents
         if session_ids or product_id:
             try:
                 rag_query = f"Product: {product_id}, Sessions: {', '.join(session_ids) if session_ids else 'N/A'}"
-                knowledge_results = await self.rag_agent.search_knowledge(rag_query, top_k=10)
+                # Pass product_id as filter to ensure only documents for this product are retrieved
+                filters = {}
+                if product_id:
+                    filters["product_id"] = str(product_id)
+                knowledge_results = await self.rag_agent.search_knowledge(rag_query, top_k=10, filters=filters)
                 context["knowledge_base"] = knowledge_results
+                self.logger.info("rag_knowledge_retrieved",
+                               product_id=product_id,
+                               results_count=len(knowledge_results),
+                               filters=filters)
             except Exception as e:
-                self.logger.warning("rag_context_retrieval_failed", error=str(e))
+                self.logger.warning("rag_context_retrieval_failed", error=str(e), product_id=product_id)
         
         return context
     
@@ -831,12 +839,17 @@ INSTRUCTIONS:
                 has_attached_docs = enhanced_context.get("attached_documents") or enhanced_context.get("file_attachments")
                 
                 # Check if RAG agent actually has knowledge base available
+                # CRITICAL: Filter by product_id when checking for knowledge
                 rag_has_knowledge = False
                 if hasattr(self.rag_agent, 'agno_agent') and self.rag_agent.agno_agent:
                     if hasattr(self.rag_agent.agno_agent, 'knowledge') and self.rag_agent.agno_agent.knowledge:
-                        # Try a quick search to see if there's any content
+                        # Try a quick search to see if there's any content for this product
                         try:
-                            test_results = await self.rag_agent.search_knowledge(enhanced_query[:50], top_k=1)
+                            # Pass product_id as filter to check for product-specific knowledge
+                            test_filters = {}
+                            if enhanced_context.get("product_id"):
+                                test_filters["product_id"] = str(enhanced_context.get("product_id"))
+                            test_results = await self.rag_agent.search_knowledge(enhanced_query[:50], top_k=1, filters=test_filters)
                             rag_has_knowledge = len(test_results) > 0
                         except:
                             rag_has_knowledge = False
