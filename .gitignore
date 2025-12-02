@@ -25,3 +25,13 @@ backups/*.sql
 !backups/README.md
 !backups/.gitkeep
 env.kind
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Kiro CLI
+.kiro/
