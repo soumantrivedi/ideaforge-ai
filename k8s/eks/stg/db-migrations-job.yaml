@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: db-migrations
-  namespace: 20890-ideaforge-ai-dev-58a50
+  namespace: 20890-ideaforge-ai-stg-60df9
   labels:
     app: db-migration
     component: database
@@ -33,8 +33,8 @@ spec:
         - sh
         - -c
         - |
-          until nc -z postgres 5432; do
-            echo "Waiting for postgres..."
+          until nc -z postgres-ha-0.postgres-ha 5432; do
+            echo "Waiting for postgres-ha-0.postgres-ha..."
             sleep 2
           done
           echo "Postgres is ready!"
@@ -58,10 +58,7 @@ spec:
         env:
         # Database Configuration
         - name: POSTGRES_HOST
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_HOST
+          value: postgres-ha-0.postgres-ha
         - name: POSTGRES_PORT
           valueFrom:
             configMapKeyRef:

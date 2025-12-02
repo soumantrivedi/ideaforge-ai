@@ -114,6 +114,46 @@ async def upload_local_file(
         
         logger.info("document_uploaded", user_id=str(current_user["id"]), document_id=str(document_id))
         
+        # CRITICAL: Also add to RAG agent's vector database for semantic search
+        # This ensures the document is available for RAG retrieval
+        try:
+            from backend.agents.rag_agent import RAGAgent
+            rag_agent = RAGAgent()
+            
+            # Prepare content with title for better context
+            title = file.filename or "Untitled Document"
+            full_content = f"Title: {title}\n\n{content_str}"
+            
+            # Prepare metadata with product_id for filtering
+            rag_metadata = {
+                "product_id": str(product_id),
+                "article_id": str(document_id),
+                "title": title,
+                "source": "local_upload",
+                "filename": file.filename,
+                "content_type": content_type,
+                "size": len(content),
+                "user_id": str(current_user["id"])
+            }
+            
+            # Add to vector database
+            success = await rag_agent.add_knowledge(full_content, rag_metadata)
+            if success:
+                logger.info("uploaded_document_added_to_rag",
+                          document_id=str(document_id),
+                          product_id=product_id,
+                          filename=file.filename)
+            else:
+                logger.warning("uploaded_document_rag_add_failed",
+                             document_id=str(document_id),
+                             product_id=product_id)
+        except Exception as e:
+            # Log error but don't fail the request - document is still in database
+            logger.error("failed_to_add_uploaded_doc_to_rag_vector_db",
+                        document_id=str(document_id),
+                        product_id=product_id,
+                        error=str(e))
+        
         return {
             "document_id": str(document_id),
             "message": "File uploaded successfully"
@@ -182,6 +222,30 @@ async def upload_from_github(
         await db.commit()
         
         logger.info("github_document_uploaded", user_id=str(current_user["id"]), document_id=str(document_id))
+        
+        # CRITICAL: Also add to RAG agent's vector database for semantic search
+        try:
+            from backend.agents.rag_agent import RAGAgent
+            rag_agent = RAGAgent()
+            
+            title = metadata.get("path", "GitHub Document") or "GitHub Document"
+            full_content = f"Title: {title}\n\n{content}"
+            
+            rag_metadata = {
+                "product_id": str(request.product_id),
+                "article_id": str(document_id),
+                "title": title,
+                "source": "github",
+                "github_url": request.github_url,
+                "user_id": str(current_user["id"]),
+                **metadata
+            }
+            
+            success = await rag_agent.add_knowledge(full_content, rag_metadata)
+            if success:
+                logger.info("github_document_added_to_rag", document_id=str(document_id), product_id=request.product_id)
+        except Exception as e:
+            logger.error("failed_to_add_github_doc_to_rag", document_id=str(document_id), error=str(e))
         
         return {
             "document_id": str(document_id),
@@ -273,6 +337,31 @@ async def upload_from_confluence(
         await db.commit()
         
         logger.info("confluence_document_uploaded", user_id=str(current_user["id"]), document_id=str(document_id))
+        
+        # CRITICAL: Also add to RAG agent's vector database for semantic search
+        try:
+            from backend.agents.rag_agent import RAGAgent
+            rag_agent = RAGAgent()
+            
+            title = metadata.get("title", "Confluence Document") or "Confluence Document"
+            full_content = f"Title: {title}\n\n{content}"
+            
+            rag_metadata = {
+                "product_id": str(request.product_id),
+                "article_id": str(document_id),
+                "title": title,
+                "source": "confluence",
+                "confluence_url": request.confluence_url,
+                "page_id": page_id,
+                "user_id": str(current_user["id"]),
+                **metadata
+            }
+            
+            success = await rag_agent.add_knowledge(full_content, rag_metadata)
+            if success:
+                logger.info("confluence_document_added_to_rag", document_id=str(document_id), product_id=request.product_id)
+        except Exception as e:
+            logger.error("failed_to_add_confluence_doc_to_rag", document_id=str(document_id), error=str(e))
         
         return {
             "document_id": str(document_id),

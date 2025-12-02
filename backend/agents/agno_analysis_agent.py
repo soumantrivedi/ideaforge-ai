@@ -9,7 +9,7 @@ from backend.models.schemas import AgentMessage, AgentResponse
 class AgnoAnalysisAgent(AgnoBaseAgent):
     """Analysis Agent using Agno framework."""
     
-    def __init__(self, enable_rag: bool = False):
+    def __init__(self, enable_rag: bool = True):
         system_prompt = """You are a Strategic Analysis Specialist.
 
 Your responsibilities:
@@ -27,12 +27,18 @@ Analysis Types:
 - Cost-benefit analysis
 - Performance and scalability analysis
 
-Your output should:
+CRITICAL INSTRUCTIONS FOR RESPONSE GENERATION:
+- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
+- DO NOT say "When you define the problem..." or "The goal is to create..." 
+- Instead, write the actual content: "The problem we are solving is..." or "Our product vision is..."
+- Provide specific, actionable analysis that can be directly used
+- Reference knowledge base articles when relevant to support your analysis
 - Be structured and comprehensive
 - Identify key insights and patterns
 - Highlight risks and opportunities
 - Provide actionable recommendations
-- Include quantitative assessments when possible"""
+- Include quantitative assessments when possible
+- Your response should be the actual analysis content, not instructions on how to analyze"""
 
         super().__init__(
             name="Analysis Agent",

@@ -265,9 +265,46 @@ async def create_knowledge_article(
         
         await db.commit()
         row = result.fetchone()
+        article_id = str(row[0])
+        
+        # CRITICAL: Also add to RAG agent's vector database for semantic search
+        # This ensures the document is available for RAG retrieval
+        try:
+            from backend.agents.rag_agent import RAGAgent
+            rag_agent = RAGAgent()
+            
+            # Prepare content with title for better context
+            full_content = f"Title: {article.get('title', 'Untitled')}\n\n{article.get('content', '')}"
+            
+            # Prepare metadata with product_id for filtering
+            rag_metadata = {
+                "product_id": str(product_id) if product_id else None,
+                "article_id": article_id,
+                "title": article.get("title", "Untitled"),
+                "source": article.get("source", "manual"),
+                **metadata  # Include any additional metadata
+            }
+            
+            # Add to vector database
+            success = await rag_agent.add_knowledge(full_content, rag_metadata)
+            if success:
+                logger.info("knowledge_article_added_to_rag",
+                          article_id=article_id,
+                          product_id=product_id,
+                          title=article.get("title"))
+            else:
+                logger.warning("knowledge_article_rag_add_failed",
+                             article_id=article_id,
+                             product_id=product_id)
+        except Exception as e:
+            # Log error but don't fail the request - document is still in database
+            logger.error("failed_to_add_to_rag_vector_db",
+                        article_id=article_id,
+                        product_id=product_id,
+                        error=str(e))
         
         return {
-            "id": str(row[0]),
+            "id": article_id,
             "created_at": row[1].isoformat() if row[1] else None,
         }
     except HTTPException:

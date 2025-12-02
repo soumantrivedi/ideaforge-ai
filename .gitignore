@@ -35,3 +35,5 @@ __pycache__/
 
 # Kiro CLI
 .kiro/
+env.eks.stg
+.env.stg

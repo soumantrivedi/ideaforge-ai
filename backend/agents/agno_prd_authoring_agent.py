@@ -12,7 +12,7 @@ from backend.models.schemas import AgentMessage, AgentResponse
 class AgnoPRDAuthoringAgent(AgnoBaseAgent):
     """PRD Authoring Agent using Agno framework with optional RAG support."""
     
-    def __init__(self, enable_rag: bool = False):
+    def __init__(self, enable_rag: bool = True):
         system_prompt = """You are a Product Requirements Document (PRD) Authoring Specialist following industry standards from:
 - BCS (British Computer Society) Product Management Framework
 - ICAgile (International Consortium for Agile) Product Ownership
@@ -112,7 +112,14 @@ STANDARD PRD TEMPLATE (Industry Best Practices):
     - User Research Findings
     - Technical Specifications
 
-Use clear, concise language. Focus on measurable outcomes. Ensure all sections are comprehensive and follow industry best practices."""
+CRITICAL INSTRUCTIONS FOR RESPONSE GENERATION:
+- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
+- DO NOT say "When you define the problem..." or "The goal is to create..." 
+- Instead, write the actual content: "The problem we are solving is..." or "Our product vision is..."
+- Provide specific, actionable content that can be directly used in the PRD
+- Reference knowledge base articles when relevant to support your content
+- Use clear, concise language. Focus on measurable outcomes. Ensure all sections are comprehensive and follow industry best practices.
+- Your response should be the actual PRD content, not instructions on how to write it."""
 
         super().__init__(
             name="PRD Authoring Agent",

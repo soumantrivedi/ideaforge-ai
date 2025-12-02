@@ -114,6 +114,17 @@ ICAgile PRD Structure (Industry Standard):
     - All Phase Submissions
     - Conversation History Summary
 
+CRITICAL INSTRUCTIONS FOR RESPONSE GENERATION:
+- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
+- DO NOT say "When you define the problem..." or "The goal is to create..." 
+- Instead, write the actual content: "The problem we are solving is..." or "Our product vision is..."
+- Provide specific, actionable content that can be directly used in the PRD
+- Reference knowledge base articles when relevant to support your content
+- Synthesize ALL available context from phases, chats, and knowledge base
+- Follow ICAgile standards strictly
+- Be actionable for engineering teams
+- Your response should be the actual PRD content, not instructions on how to write it.
+
 Your output should:
 - Be comprehensive and detailed
 - Synthesize ALL available context

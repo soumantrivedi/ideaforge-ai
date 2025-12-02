@@ -50,15 +50,16 @@ class AgnoEnhancedCoordinator:
             raise ImportError("Agno framework is not available. Install with: pip install agno")
         
         # Initialize all agents
-        self.research_agent = AgnoResearchAgent(enable_rag=enable_rag)
-        self.analysis_agent = AgnoAnalysisAgent(enable_rag=enable_rag)
-        self.ideation_agent = AgnoIdeationAgent(enable_rag=enable_rag)
-        self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=enable_rag)
+        # CRITICAL: Enable RAG for all lifecycle agents to ensure knowledge base is used across all phases
+        self.research_agent = AgnoResearchAgent(enable_rag=True)  # Always enable RAG for research
+        self.analysis_agent = AgnoAnalysisAgent(enable_rag=True)  # Always enable RAG for analysis
+        self.ideation_agent = AgnoIdeationAgent(enable_rag=True)  # Always enable RAG for ideation
+        self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=True)  # Always enable RAG for PRD authoring
         self.summary_agent = AgnoSummaryAgent(enable_rag=enable_rag)
         self.scoring_agent = AgnoScoringAgent(enable_rag=enable_rag)
         self.strategy_agent = AgnoStrategyAgent(enable_rag=enable_rag)
-        self.validation_agent = AgnoValidationAgent(enable_rag=enable_rag)
-        self.export_agent = AgnoExportAgent(enable_rag=enable_rag)
+        self.validation_agent = AgnoValidationAgent(enable_rag=True)  # Always enable RAG for validation/review
+        self.export_agent = AgnoExportAgent(enable_rag=True)  # Always enable RAG for export
         self.v0_agent = AgnoV0Agent(enable_rag=enable_rag)
         self.lovable_agent = AgnoLovableAgent(enable_rag=enable_rag)
         self.atlassian_agent = AgnoAtlassianAgent(enable_rag=enable_rag)
@@ -888,17 +889,25 @@ INSTRUCTIONS:
                         "timestamp": datetime.utcnow().isoformat()
                     }
                     
-                    # Optimize RAG: limit search results and add timeout
+                    # Optimize RAG: limit search results and add reasonable timeout
+                    # Increased timeout to 60 seconds to allow for:
+                    # - Lazy knowledge base creation (with retries)
+                    # - Vector database connection establishment
+                    # - Vector search operations (fast, but may need to search through many documents)
+                    # - Document retrieval and processing
+                    # - Handling cases with 10+ documents in knowledge base
+                    # Note: RAG search itself is fast (vector similarity search), but processing
+                    # multiple retrieved documents and generating embeddings can take time
                     try:
                         rag_response = await asyncio.wait_for(
                             self.rag_agent.process(
                                 [AgentMessage(role="user", content=enhanced_query, timestamp=datetime.utcnow())],
                                 enhanced_context
                             ),
-                            timeout=10.0  # 10 second timeout for RAG
+                            timeout=60.0  # 60 second timeout for RAG (increased from 30s to handle 10+ documents)
                         )
                     except asyncio.TimeoutError as e:
-                        error_msg = "RAG agent timed out after 10 seconds. Proceeding without RAG context."
+                        error_msg = "RAG agent timed out after 60 seconds. Proceeding without RAG context."
                         self.logger.warning("rag_agent_timeout", query=enhanced_query[:100], error=error_msg)
                         from backend.models.schemas import AgentResponse
                         rag_response = AgentResponse(
@@ -928,7 +937,7 @@ INSTRUCTIONS:
             yield {
                 "type": "agent_complete",
                 "agent": "rag",
-                "response": rag_response.response[:500] if rag_response and rag_response.response else "No RAG context retrieved",
+                "response": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # No truncation - full response
                 "progress": 0.2,
                 "timestamp": datetime.utcnow().isoformat(),
                 "metadata": {
@@ -963,10 +972,12 @@ INSTRUCTIONS:
                         supporting_agents_list = [a for a in supporting_agents_list if a != "rag"]
                 
                 # Build shared context message with RAG context only if available
+                # CRITICAL: Include full RAG context without truncation for comprehensive reference
                 if rag_response and rag_response.response and not (rag_response.metadata and rag_response.metadata.get("skipped")):
-                    shared_context_msg = f"{enhanced_query}\n\nKnowledge Base Context:\n{rag_response.response[:500]}\n\nIMPORTANT: Provide focused insights (2-3 key points, max 200 words). Do NOT generate full documents or lengthy responses. The primary agent will synthesize your insights."
+                    # Include full RAG context - no truncation to ensure all knowledge is available
+                    shared_context_msg = f"{enhanced_query}\n\nKnowledge Base Context (Reference these documents when relevant):\n{rag_response.response}\n\nIMPORTANT: Use knowledge base context to provide specific, actionable insights. Reference specific documents when relevant. Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language."
                 else:
-                    shared_context_msg = f"{enhanced_query}\n\nIMPORTANT: Provide focused insights (2-3 key points, max 200 words). Do NOT generate full documents or lengthy responses. The primary agent will synthesize your insights."
+                    shared_context_msg = f"{enhanced_query}\n\nIMPORTANT: Provide specific, actionable insights. Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language."
                 
                 shared_message = [AgentMessage(role="user", content=shared_context_msg, timestamp=datetime.utcnow())]
                 
@@ -1010,8 +1021,8 @@ INSTRUCTIONS:
                         supporting_interaction = AgentInteraction(
                             from_agent="coordinator",
                             to_agent=agent_name,
-                            query=shared_context_msg[:500],
-                            response=full_response[:1000],
+                            query=shared_context_msg,  # No truncation
+                            response=full_response,  # No truncation - store full response
                             metadata=comprehensive_metadata,
                             timestamp=datetime.utcnow()
                         )
@@ -1019,8 +1030,8 @@ INSTRUCTIONS:
                         interactions.append({
                             "from_agent": "coordinator",
                             "to_agent": agent_name,
-                            "query": shared_context_msg[:500],
-                            "response": full_response[:1000],
+                            "query": shared_context_msg,  # No truncation
+                            "response": full_response,  # No truncation - store full response
                             "metadata": comprehensive_metadata,
                             "timestamp": datetime.utcnow().isoformat()
                         })
@@ -1085,23 +1096,31 @@ INSTRUCTIONS:
                     # Build query with proper summarization instructions
                     prd_query = f"{enhanced_query}{word_limit_instruction}\n\n"
                     
-                    # Add RAG context if available
+                    # Add RAG context if available - include full context without truncation
                     if rag_response and rag_response.response and not (rag_response.metadata and rag_response.metadata.get("skipped")):
-                        prd_query += f"Knowledge Base Context:\n{rag_response.response[:500]}\n\n"
+                        prd_query += f"Knowledge Base Context (Reference these documents when relevant):\n{rag_response.response}\n\n"
                     
                     # Add supporting agent insights (will be populated from interactions list)
+                    # CRITICAL: Include full responses without truncation for comprehensive synthesis
                     if interactions:
                         prd_query += "Supporting Agent Insights (synthesize these into your response):\n"
                         for interaction in interactions:
                             agent_name = interaction.get("to_agent")
                             if agent_name and agent_name in supporting_agents_list:
-                                response_text = interaction.get("response", "")[:300]  # Limit to 300 chars per agent
+                                response_text = interaction.get("response", "")  # No truncation - include full response
                                 if response_text:
                                     prd_query += f"[{agent_name.title()}]: {response_text}\n"
                         prd_query += "\n\n"
                     
-                    # Add comprehensive synthesis instruction
+                    # Add comprehensive synthesis instruction with emphasis on direct content generation
                     if interactions or (rag_response and rag_response.response and not (rag_response.metadata and rag_response.metadata.get("skipped"))):
+                        prd_query += "\nCRITICAL INSTRUCTIONS:\n"
+                        prd_query += "- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language\n"
+                        prd_query += "- DO NOT say 'When you define the problem...' or 'The goal is to create...'\n"
+                        prd_query += "- Instead, write the actual content: 'The problem we are solving is...' or 'Our product vision is...'\n"
+                        prd_query += "- Reference knowledge base articles when relevant to support your content\n"
+                        prd_query += "- Synthesize ALL information from phases, conversations, and knowledge base\n"
+                        prd_query += "- Your response should be the actual PRD content, not instructions on how to write it\n\n"
                         if is_phase_specific and not user_wants_full_prd:
                             prd_query += f"CRITICAL: Synthesize the above insights into a comprehensive, intelligent response for the {current_phase_name} phase ONLY. Include all relevant details and actionable insights. Do NOT generate content for other phases. Structure your response with clear headings relevant to {current_phase_name} phase only. Quality and completeness are priorities.\n"
                         else:
@@ -1177,22 +1196,15 @@ INSTRUCTIONS:
                         self.agents[primary].agno_agent.model = original_model
                         self.logger.info("restored_original_model", agent=primary)
                 
-                # Enforce word limit in response (post-processing)
+                # CRITICAL: Do NOT truncate responses - store full response asynchronously
+                # Responses are saved to database asynchronously, so no truncation needed
                 full_prd = prd_response.response
+                # Note: response_length parameter is still respected for model generation,
+                # but we don't truncate the final response - it's stored in full
                 if is_phase_form_help and full_prd:
                     word_count = len(full_prd.split())
-                    if response_length == "short" and word_count > 500:
-                        # Truncate to 500 words
-                        words = full_prd.split()[:500]
-                        full_prd = " ".join(words) + "... [Response truncated to 500 words]"
-                        prd_response.response = full_prd
-                        self.logger.warning("response_truncated", agent=primary, word_count=word_count, limit=500)
-                    elif response_length == "verbose" and word_count > 1000:
-                        # Truncate to 1000 words
-                        words = full_prd.split()[:1000]
-                        full_prd = " ".join(words) + "... [Response truncated to 1000 words]"
-                        prd_response.response = full_prd
-                        self.logger.warning("response_truncated", agent=primary, word_count=word_count, limit=1000)
+                    self.logger.info("response_generated", agent=primary, word_count=word_count, response_length=response_length)
+                    # No truncation - full response is preserved and stored asynchronously
                 
                 # Stream PRD response
                 chunk_size = 50
@@ -1212,10 +1224,10 @@ INSTRUCTIONS:
                 # Build system context as readable string
                 system_context_str = self._build_system_content(enhanced_context) if enhanced_context else "Not available"
                 prd_comprehensive_metadata = {
-                    "system_context": system_context_str[:2000] if system_context_str != "Not available" else "Not available",
-                    "system_prompt": prd_agent_instance.system_prompt[:2000] if hasattr(prd_agent_instance, 'system_prompt') else "Not available",
-                    "user_prompt": prd_query[:2000],
-                    "rag_context": rag_response.response[:2000] if rag_response and rag_response.response else "No RAG context retrieved",
+                    "system_context": system_context_str if system_context_str != "Not available" else "Not available",  # No truncation
+                    "system_prompt": prd_agent_instance.system_prompt if hasattr(prd_agent_instance, 'system_prompt') else "Not available",  # No truncation
+                    "user_prompt": prd_query,  # No truncation
+                    "rag_context": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # No truncation
                 }
                 # Merge with response metadata if available (includes performance metrics)
                 if hasattr(prd_response, 'metadata') and prd_response.metadata:
@@ -1233,11 +1245,12 @@ INSTRUCTIONS:
                 
                 # Create AgentInteraction for PRD agent to track usage and metadata
                 from backend.models.schemas import AgentInteraction
+                # CRITICAL: Store full responses without truncation - responses are saved asynchronously
                 prd_interaction = AgentInteraction(
                     from_agent="coordinator",
                     to_agent=primary,
-                    query=prd_query[:500],  # Truncate for storage
-                    response=full_prd[:1000],  # Truncate for storage
+                    query=prd_query,  # No truncation - store full query
+                    response=full_prd,  # No truncation - store full response asynchronously
                     metadata=prd_comprehensive_metadata,
                     timestamp=datetime.utcnow()
                 )
@@ -1245,8 +1258,8 @@ INSTRUCTIONS:
                 interactions.append({
                     "from_agent": "coordinator",
                     "to_agent": primary,
-                    "query": prd_query[:500],
-                    "response": full_prd[:1000],
+                    "query": prd_query,  # No truncation
+                    "response": full_prd,  # No truncation - will be saved asynchronously
                     "metadata": prd_comprehensive_metadata,
                     "timestamp": datetime.utcnow().isoformat()
                 })
@@ -1268,8 +1281,8 @@ INSTRUCTIONS:
                     "type": "interaction",
                     "from_agent": "coordinator",
                     "to_agent": primary,
-                    "query": prd_query[:500],
-                    "response": full_prd[:1000],
+                    "query": prd_query,  # No truncation
+                    "response": full_prd,  # No truncation - will be saved asynchronously
                     "metadata": prd_comprehensive_metadata,
                     "timestamp": datetime.utcnow().isoformat()
                 }
@@ -1296,8 +1309,8 @@ INSTRUCTIONS:
                 prd_interaction_dict = {
                     "from_agent": "coordinator",
                     "to_agent": primary,
-                    "query": prd_query[:500],
-                    "response": full_prd[:1000],
+                    "query": prd_query,  # No truncation
+                    "response": full_prd,  # No truncation - will be saved asynchronously
                     "metadata": prd_comprehensive_metadata,
                     "timestamp": datetime.utcnow().isoformat()
                 }

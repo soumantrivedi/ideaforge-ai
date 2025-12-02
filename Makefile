@@ -1,4 +1,4 @@
-.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace
+.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-test-agents kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace eks-setup-hpa eks-prewarm eks-performance-test
 
 # Get git SHA for versioning
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -722,6 +722,34 @@ kind-status: ## Show status of kind cluster deployment
 	@echo "💾 Persistent Volumes:"
 	@kubectl get pvc -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) || echo "⚠️  No PVCs found"
 
+kind-test-agents: ## Run comprehensive agent verification tests in kind cluster
+	@echo "🧪 Running Agent Verification Tests..."
+	@echo "   This will test all lifecycle agents for:"
+	@echo "   - RAG integration"
+	@echo "   - Coaching mode removal"
+	@echo "   - Response completeness (no truncation)"
+	@echo "   - Knowledge base usage"
+	@echo ""
+	@BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make kind-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying test script to pod..."; \
+	kubectl cp backend/tests/test_agent_verification.py $(K8S_NAMESPACE)/$$BACKEND_POD:/tmp/test_agent_verification.py --context kind-$(KIND_CLUSTER_NAME) --container=backend; \
+	echo "   Running agent verification tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend -- \
+		python /tmp/test_agent_verification.py || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Agent verification tests completed"
+
 kind-test: ## Test service-to-service interactions in kind cluster
 	@echo "🧪 Testing service-to-service interactions in kind cluster..."
 	@echo ""
@@ -1241,3 +1269,56 @@ eks-agno-init: ## Initialize Agno framework in EKS cluster
 		echo "⚠️  Backend not ready after $$max_attempts attempts"; \
 	fi
 	@echo "✅ Agno initialization complete"
+
+eks-setup-hpa: eks-prepare-namespace ## Setup Horizontal Pod Autoscaler for backend and frontend (use EKS_NAMESPACE=your-namespace)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-setup-hpa EKS_NAMESPACE=your-namespace"; \
+		exit 1; \
+	fi
+	@echo "📈 Setting up HPA for 100 concurrent users..."
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@kubectl apply -f $(K8S_DIR)/eks/hpa-backend.yaml
+	@kubectl apply -f $(K8S_DIR)/eks/hpa-frontend.yaml
+	@echo "✅ HPA configured"
+	@echo "   Backend: 5-20 replicas (CPU/Memory based)"
+	@echo "   Frontend: 3-10 replicas (CPU/Memory based)"
+	@kubectl get hpa -n $(EKS_NAMESPACE)
+
+eks-prewarm: ## Pre-warm deployments for 100 concurrent users (use EKS_NAMESPACE=your-namespace)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-prewarm EKS_NAMESPACE=your-namespace"; \
+		exit 1; \
+	fi
+	@echo "🔥 Pre-warming deployments for 100 concurrent users..."
+	@echo "   Scaling backend to 5 replicas..."
+	@kubectl scale deployment backend -n $(EKS_NAMESPACE) --replicas=5
+	@echo "   Scaling frontend to 3 replicas..."
+	@kubectl scale deployment frontend -n $(EKS_NAMESPACE) --replicas=3
+	@echo "⏳ Waiting for pods to be ready..."
+	@kubectl wait --for=condition=ready pod -l app=backend -n $(EKS_NAMESPACE) --timeout=300s || echo "⚠️  Some backend pods may still be starting"
+	@kubectl wait --for=condition=ready pod -l app=frontend -n $(EKS_NAMESPACE) --timeout=300s || echo "⚠️  Some frontend pods may still be starting"
+	@echo "✅ Pre-warming complete"
+	@echo "📊 Current status:"
+	@kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (backend,frontend)' --no-headers | wc -l | xargs echo "   Total pods:"
+	@kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (backend,frontend)' | grep Running | wc -l | xargs echo "   Running pods:"
+
+eks-performance-test: ## Run performance test with 100 concurrent users (use EKS_NAMESPACE=your-namespace, BASE_URL=url, AUTH_TOKEN=token, PRODUCT_ID=id)
+	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BASE_URL)" ] || [ -z "$(AUTH_TOKEN)" ] || [ -z "$(PRODUCT_ID)" ]; then \
+		echo "❌ Required parameters: EKS_NAMESPACE, BASE_URL, AUTH_TOKEN, PRODUCT_ID"; \
+		echo "   Usage: make eks-performance-test EKS_NAMESPACE=ns BASE_URL=https://... AUTH_TOKEN=token PRODUCT_ID=uuid"; \
+		echo "   Example: make eks-performance-test EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BASE_URL=https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud AUTH_TOKEN=xxx PRODUCT_ID=abc-123"; \
+		exit 1; \
+	fi
+	@echo "🧪 Running performance test..."
+	@echo "   Users: 100"
+	@echo "   Base URL: $(BASE_URL)"
+	@echo "   Product ID: $(PRODUCT_ID)"
+	@python3 scripts/performance-test.py \
+		--url $(BASE_URL) \
+		--token $(AUTH_TOKEN) \
+		--product-id $(PRODUCT_ID) \
+		--users 100 \
+		--ramp-up 30 \
+		--output performance-metrics-$$(date +%Y%m%d-%H%M%S).json

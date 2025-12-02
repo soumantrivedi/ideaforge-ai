@@ -2,12 +2,12 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend
-  namespace: 20890-ideaforge-ai-dev-58a50
+  namespace: 20890-ideaforge-ai-stg-60df9
   labels:
     app: backend
     component: api
 spec:
-  replicas: 5  # Pre-warmed for 100 concurrent users (min 5, scales to 20 via HPA)
+  replicas: 2  # Starting with 2 pods, will scale to 5 after verification
   selector:
     matchLabels:
       app: backend
@@ -385,36 +385,15 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
-      initContainers:
-      - name: wait-for-postgres
-        image: busybox:1.36
-        command:
-        - sh
-        - -c
-        - |
-          until nc -z postgres 5432; do
-            echo "Waiting for postgres..."
-            sleep 2
-          done
-          echo "Postgres is ready!"
-      - name: wait-for-redis
-        image: busybox:1.36
-        command:
-        - sh
-        - -c
-        - |
-          until nc -z redis 6379; do
-            echo "Waiting for redis..."
-            sleep 2
-          done
-          echo "Redis is ready!"
+      # Init containers removed - migrations run as separate k8s jobs
+      # Database and Redis are checked via readiness/liveness probes instead
 
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: backend
-  namespace: 20890-ideaforge-ai-dev-58a50
+  namespace: 20890-ideaforge-ai-stg-60df9
   labels:
     app: backend
     component: api

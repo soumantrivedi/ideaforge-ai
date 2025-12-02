@@ -1,0 +1,147 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-restore-stg
+  namespace: 20890-ideaforge-ai-stg-60df9
+  labels:
+    app: db-restore
+    component: database
+    environment: staging
+spec:
+  template:
+    metadata:
+      labels:
+        app: db-restore
+        component: database
+        environment: staging
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: db-restore
+        image: pgvector/pgvector:pg15
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          echo "🔄 Starting database restore from DEV dump..."
+          
+          # Wait for PostgreSQL to be ready
+          echo "⏳ Waiting for PostgreSQL to be ready..."
+          until pg_isready -h postgres-ha -U agentic_pm -d agentic_pm_db; do
+            echo "   PostgreSQL not ready, waiting..."
+            sleep 2
+          done
+          echo "✅ PostgreSQL is ready"
+          
+          # Check if database dump file exists
+          if [ ! -f /db-dump/db_backup.sql ]; then
+            echo "❌ Database dump file not found at /db-dump/db_backup.sql"
+            echo "   Please ensure the dump file is available in the ConfigMap"
+            exit 1
+          fi
+          
+          echo "📦 Found database dump file"
+          DUMP_SIZE=$$(du -h /db-dump/db_backup.sql | cut -f1)
+          echo "   Dump file size: $$DUMP_SIZE"
+          
+          # Drop existing database objects (if any) and recreate
+          echo "🗑️  Dropping existing database objects..."
+          psql -h postgres-ha -U agentic_pm -d agentic_pm_db -c "
+            DO \$\$ DECLARE
+                r RECORD;
+            BEGIN
+                -- Drop all tables
+                FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP
+                    EXECUTE 'DROP TABLE IF EXISTS ' || quote_ident(r.tablename) || ' CASCADE';
+                END LOOP;
+                -- Drop all sequences
+                FOR r IN (SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public') LOOP
+                    EXECUTE 'DROP SEQUENCE IF EXISTS ' || quote_ident(r.sequence_name) || ' CASCADE';
+                END LOOP;
+                -- Drop all functions
+                FOR r IN (SELECT proname, oidvectortypes(proargtypes) as argtypes 
+                          FROM pg_proc INNER JOIN pg_namespace ON pg_proc.pronamespace = pg_namespace.oid 
+                          WHERE pg_namespace.nspname = 'public') LOOP
+                    EXECUTE 'DROP FUNCTION IF EXISTS ' || quote_ident(r.proname) || '(' || r.argtypes || ') CASCADE';
+                END LOOP;
+            END \$\$;
+          " 2>&1 | grep -v "NOTICE" || true
+          echo "✅ Existing objects dropped"
+          
+          # Restore database from dump
+          echo "📥 Restoring database from dump file..."
+          echo "   This may take several minutes depending on dump size..."
+          
+          # Use pg_restore if it's a custom format dump, otherwise use psql
+          if file /db-dump/db_backup.sql | grep -q "PostgreSQL custom"; then
+            echo "   Detected custom format dump, using pg_restore..."
+            pg_restore -h postgres-ha -U agentic_pm -d agentic_pm_db --clean --if-exists --verbose /db-dump/db_backup.sql 2>&1 | \
+              grep -v "NOTICE" | grep -v "already exists" | tail -50 || true
+          else
+            echo "   Detected SQL format dump, using psql..."
+            psql -h postgres-ha -U agentic_pm -d agentic_pm_db -f /db-dump/db_backup.sql 2>&1 | \
+              grep -v "NOTICE" | grep -v "already exists" | grep -v "^$" | tail -100 || true
+          fi
+          
+          echo "✅ Database restore complete"
+          
+          # Verify restore
+          echo "📊 Verifying restored database..."
+          psql -h postgres-ha -U agentic_pm -d agentic_pm_db -c "
+            SELECT 
+              (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public') as tables,
+              (SELECT COUNT(*) FROM products) as products,
+              (SELECT COUNT(*) FROM user_profiles) as users,
+              (SELECT COUNT(*) FROM tenants) as tenants;
+          " 2>&1 | grep -E "[0-9]+" || true
+          
+          echo "✅ Database restore and verification complete!"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_DB
+        volumeMounts:
+        - name: db-dump
+          mountPath: /db-dump
+          readOnly: true
+      volumes:
+      - name: db-dump
+        configMap:
+          name: db-dump-stg
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h postgres-ha -U agentic_pm; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          echo "PostgreSQL is ready!"
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+

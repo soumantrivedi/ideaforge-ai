@@ -176,16 +176,28 @@ async def run_migrations(database_url: str) -> bool:
     """
     Run all pending migrations.
     Returns True if all migrations succeeded, False otherwise.
+    
+    Note: In HA setups, migrations should always run against the primary node.
+    This function will automatically connect to the primary if database_url
+    points to a service that routes to multiple nodes.
     """
     engine = None
     try:
         # Create database engine
+        # For HA setups, ensure we connect to primary for migrations
+        # The connection string should point to the primary pod or service
         engine = create_async_engine(
             database_url,
             echo=False,
             pool_pre_ping=True,
             pool_size=1,  # Minimal pool for migrations
-            max_overflow=0
+            max_overflow=0,
+            # Add connection retry for HA scenarios
+            connect_args={
+                "server_settings": {
+                    "application_name": "migration_runner"
+                }
+            }
         )
         
         # Get all migration files

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: 20890-ideaforge-ai-stg-60df9
+  labels:
+    name: 20890-ideaforge-ai-stg-60df9
+    app: ideaforge-ai
+    environment: staging
+
