@@ -189,8 +189,36 @@ kubectl get endpoints -n ideaforge-ai
 ## Next Steps
 
 1. **Update Secrets**: Edit `k8s/secrets.yaml` with production values
-2. **Update Images**: Update image references in `backend.yaml` and `frontend.yaml`
-3. **Update Ingress**: Configure domain and certificate in `ingress.yaml`
-4. **Test Locally**: Use `make kind-deploy` and `make kind-test`
-5. **Deploy to EKS**: Use `make eks-deploy` after testing
+2. **Configure McKinsey SSO**: Set up McKinsey SSO secrets (see [McKinsey SSO Secrets Setup](MCKINSEY_SSO_SECRETS_SETUP.md))
+3. **Update Images**: Update image references in `backend.yaml` and `frontend.yaml`
+4. **Update Ingress**: Configure domain and certificate in `ingress.yaml`
+5. **Test Locally**: Use `make kind-deploy` and `make kind-test`
+6. **Deploy to EKS**: Use `make eks-deploy` after testing
+
+## Additional Configuration
+
+### McKinsey SSO Setup
+
+For McKinsey deployments, configure SSO authentication:
+
+1. **Obtain Credentials**: Contact McKinsey Identity Platform team for OAuth credentials
+2. **Generate Encryption Key**: Create 32-byte Fernet key for token encryption
+3. **Create Kubernetes Secret**: Store credentials securely in `mckinsey-sso-secrets`
+4. **Configure Backend**: Ensure backend deployment references the secret
+
+See detailed instructions: [McKinsey SSO Secrets Setup Guide](MCKINSEY_SSO_SECRETS_SETUP.md)
+
+Quick setup:
+```bash
+# Generate encryption key
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+
+# Create secret
+kubectl create secret generic mckinsey-sso-secrets \
+  --from-literal=MCKINSEY_CLIENT_ID='your-client-id' \
+  --from-literal=MCKINSEY_CLIENT_SECRET='your-client-secret' \
+  --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/api/auth/mckinsey/callback' \
+  --from-literal=MCKINSEY_TOKEN_ENCRYPTION_KEY='your-encryption-key' \
+  --namespace=your-namespace
+```
 
