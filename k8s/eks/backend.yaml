@@ -22,7 +22,7 @@ spec:
       containers:
       - name: backend
         # Image pulled from GitHub Container Registry
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:78407a6
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:2a7f544
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -271,7 +271,7 @@ spec:
           failureThreshold: 3
       initContainers:
       - name: run-migrations
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:78407a6
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:2a7f544
         imagePullPolicy: IfNotPresent
         command: ["python3", "-m", "backend.database.migrate"]
         env:

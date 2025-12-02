@@ -168,17 +168,31 @@ async def stream_design_prompt_generation(
                 submission_row = submission_result.fetchone()
                 if submission_row:
                     form_data = submission_row[0] or {}
+                    # Ensure form_data is a dict, not a list
+                    if isinstance(form_data, list):
+                        logger.warning("form_data_is_list_in_existing_prompt_stream", 
+                                     phase_submission_id=request.phase_submission_id)
+                        form_data = {}
                     if isinstance(form_data, dict):
                         v0_lovable_prompts = form_data.get("v0_lovable_prompts", "")
                         if v0_lovable_prompts:
                             try:
                                 import json
                                 prompts_obj = json.loads(v0_lovable_prompts) if isinstance(v0_lovable_prompts, str) else v0_lovable_prompts
-                                if request.provider == "v0":
-                                    existing_prompt = prompts_obj.get("v0_prompt", "")
-                                elif request.provider == "lovable":
-                                    existing_prompt = prompts_obj.get("lovable_prompt", "")
-                            except:
+                                # Ensure prompts_obj is a dict before calling .get()
+                                if isinstance(prompts_obj, dict):
+                                    if request.provider == "v0":
+                                        existing_prompt = prompts_obj.get("v0_prompt", "")
+                                    elif request.provider == "lovable":
+                                        existing_prompt = prompts_obj.get("lovable_prompt", "")
+                                else:
+                                    logger.warning("prompts_obj_not_dict_stream", 
+                                                 prompts_obj_type=type(prompts_obj).__name__,
+                                                 phase_submission_id=request.phase_submission_id)
+                            except Exception as parse_error:
+                                logger.warning("error_parsing_prompts_obj_stream", 
+                                             error=str(parse_error),
+                                             phase_submission_id=request.phase_submission_id)
                                 pass
             except Exception as e:
                 logger.warning("error_loading_existing_prompt", error=str(e))
@@ -413,17 +427,31 @@ async def generate_design_prompt(
                 submission_row = submission_result.fetchone()
                 if submission_row:
                     form_data = submission_row[0] or {}
+                    # Ensure form_data is a dict, not a list
+                    if isinstance(form_data, list):
+                        logger.warning("form_data_is_list_in_existing_prompt", 
+                                     phase_submission_id=request.phase_submission_id)
+                        form_data = {}
                     if isinstance(form_data, dict):
                         v0_lovable_prompts = form_data.get("v0_lovable_prompts", "")
                         if v0_lovable_prompts:
                             try:
                                 import json
                                 prompts_obj = json.loads(v0_lovable_prompts) if isinstance(v0_lovable_prompts, str) else v0_lovable_prompts
-                                if request.provider == "v0":
-                                    existing_prompt = prompts_obj.get("v0_prompt", "")
-                                elif request.provider == "lovable":
-                                    existing_prompt = prompts_obj.get("lovable_prompt", "")
-                            except:
+                                # Ensure prompts_obj is a dict before calling .get()
+                                if isinstance(prompts_obj, dict):
+                                    if request.provider == "v0":
+                                        existing_prompt = prompts_obj.get("v0_prompt", "")
+                                    elif request.provider == "lovable":
+                                        existing_prompt = prompts_obj.get("lovable_prompt", "")
+                                else:
+                                    logger.warning("prompts_obj_not_dict", 
+                                                 prompts_obj_type=type(prompts_obj).__name__,
+                                                 phase_submission_id=request.phase_submission_id)
+                            except Exception as parse_error:
+                                logger.warning("error_parsing_prompts_obj", 
+                                             error=str(parse_error),
+                                             phase_submission_id=request.phase_submission_id)
                                 pass
             except Exception as e:
                 logger.warning("error_loading_existing_prompt", error=str(e))
