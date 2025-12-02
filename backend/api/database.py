@@ -249,12 +249,18 @@ async def create_knowledge_article(
             RETURNING id, created_at
         """)
         
+        import json
+        metadata = article.get("metadata", {})
+        # Ensure metadata is a dict, then JSON-encode it for JSONB column
+        if not isinstance(metadata, dict):
+            metadata = {}
+        
         result = await db.execute(query, {
             "product_id": product_id,
             "title": article.get("title"),
             "content": article.get("content"),
             "source": article.get("source", "manual"),
-            "metadata": article.get("metadata", {}),
+            "metadata": json.dumps(metadata),  # JSON-encode for JSONB column
         })
         
         await db.commit()

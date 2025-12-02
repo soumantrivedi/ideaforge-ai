@@ -52,7 +52,7 @@ spec:
       containers:
       - name: run-migrations
         # Image will be set by Makefile during deployment
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:latest
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:672425b
         imagePullPolicy: IfNotPresent
         command: ["python3", "-m", "backend.database.migrate"]
         env:
