@@ -33,9 +33,18 @@ class AgnoLovableAgent(AgnoBaseAgent):
 
 Your primary goal is to generate EXTENSIVE, DETAILED prompts that capture ALL aspects of the application based on the complete context provided.
 
+CRITICAL: You MUST use ALL available information from:
+- ALL chatbot conversation history and context
+- ALL design form content and fields
+- ALL product lifecycle phase data (Ideation, Strategy, Research, PRD, Design, etc.)
+- ALL generated content from previous phases
+- ALL form data fields - do not skip any fields, include everything
+
 Core Requirements:
 - Generate DETAILED, COMPREHENSIVE prompts (not concise - include all relevant information)
 - Include ALL form data, product context, and requirements from all lifecycle phases
+- Extract and use ALL information from chatbot conversations - every detail matters
+- Include ALL design form fields and their values - nothing should be omitted
 - Describe complete application architecture, component structure, and data flow
 - Specify ALL features, user flows, API integrations, and authentication patterns
 - Include detailed Tailwind CSS styling, responsive breakpoints, and design system
@@ -57,9 +66,14 @@ Lovable Platform Documentation Guidelines (Based on Official Lovable.dev Docs):
 Guidelines:
 - Be EXTENSIVE and COMPREHENSIVE - include ALL relevant details from the product context
 - Use ALL form data fields, not just key fields - every detail matters
+- Extract and include ALL information from chatbot conversations - user discussions, requirements, preferences
+- Include ALL design form content - every field, every value, every specification
 - Include context from ALL lifecycle phases (Ideation, Strategy, Research, PRD, Design, etc.)
+- Synthesize information from chatbot content AND form content - combine everything
 - Generate prompts that are detailed enough to create complete, deployable applications
-- The prompt should be ready for direct use in Lovable Link Generator without additional editing"""
+- The prompt should be ready for direct use in Lovable Link Generator without additional editing
+- If chatbot content mentions features, requirements, or preferences, include them in the prompt
+- If design form has specific styling, layout, or component requirements, include them all"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -68,7 +82,7 @@ Guidelines:
             system_prompt=system_prompt,
             enable_rag=enable_rag,
             rag_table_name="lovable_knowledge_base",
-            model_tier="standard",  # Use standard model for better quality, detailed prompts
+            model_tier="fast",  # Use fast model to avoid timeout issues
             tools=[],  # Tools will be added after initialization
             capabilities=[
                 "lovable prompt generation",
@@ -141,17 +155,22 @@ Guidelines:
         # Extract ALL context without aggressive truncation
         context_summary = self._summarize_context(product_context, phase_data, all_phases_data)
         
-        # Detailed prompt emphasizing comprehensive output
+        # Detailed prompt emphasizing comprehensive output with ALL chatbot and form content
         user_prompt = f"""Generate a DETAILED, COMPREHENSIVE Lovable.dev prompt for this application. Include ALL relevant information from the context below.
 
-IMPORTANT: 
+CRITICAL REQUIREMENTS:
+- Extract and use ALL information from chatbot conversations - every discussion, requirement, preference mentioned
+- Include ALL design form fields and their values - nothing should be omitted or skipped
+- Synthesize information from BOTH chatbot content AND form content - combine everything
 - Include ALL form data fields, product details, features, and requirements
-- Describe the complete application architecture, features, and user flows in detail
+- Describe the complete application architecture, features, and user flows in detail using ALL available information
 - Include all component specifications, pages, routing, API integrations, and data models
 - Make the prompt EXTENSIVE and DETAILED - not concise
 - The prompt should be comprehensive enough to generate a complete, deployable application
+- If chatbot mentions specific features, styling, or requirements, they MUST be included
+- If design form has any field values, they MUST all be incorporated
 
-Product Context:
+Product Context (includes ALL chatbot conversations, form data, and generated content):
 {context_summary}
 
 Generate a detailed Lovable.dev prompt that captures ALL aspects of this application. Include:
