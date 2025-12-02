@@ -246,11 +246,11 @@ async def stream_phase_form_help(
         
         system_context += f"\n\nCRITICAL REQUIREMENTS:\n- Return PLAIN TEXT only (NO HTML, NO markdown formatting)\n- Be {response_style}\n- {response_guidance}\n- Use natural language, no formatting codes\n- Write as if speaking directly to the user\n- Structure your response clearly with logical flow"
         
-        # Build user prompt - KEEP IT MINIMAL
-        # Just the question, nothing else
+        # Build user prompt - Include FULL user input (Option E: preserve all details)
+        # Include the complete user input to preserve critical details like addresses, requirements, etc.
         if request.user_input and request.user_input.strip():
-            # If user provided input, use it but keep it very short (100 chars max)
-            user_prompt = f"User input: {request.user_input[:100]}\n\nQuestion: {request.current_prompt}"
+            # Include FULL user input (no truncation) - Option E enhancement
+            user_prompt = f"User input for {request.current_field}:\n{request.user_input}\n\nQuestion: {request.current_prompt}"
         else:
             user_prompt = f"Question: {request.current_prompt}"
         
@@ -301,12 +301,23 @@ async def stream_phase_form_help(
             ]
             
             # Process with agent (SINGLE AGENT - not multi-agent)
-            logger.info("phase_form_help_processing", agent=agent_name, query_length=len(user_prompt))
-            response = await agent.process(messages, {
+            # Option E Enhancement: Include form_data in context so enhanced system prompt can use it
+            context = {
                 "phase_name": request.phase_name,
                 "current_field": request.current_field,
                 "response_length": request.response_length,
-            })
+            }
+            
+            # Add form_data if user_input is provided (Option E: preserve all form details)
+            if request.user_input and request.user_input.strip():
+                # Create form_data dict with the current field's content
+                # This allows the enhanced system prompt to include it in context
+                context["form_data"] = {
+                    request.current_field: request.user_input
+                }
+            
+            logger.info("phase_form_help_processing", agent=agent_name, query_length=len(user_prompt), has_form_data=bool(context.get("form_data")))
+            response = await agent.process(messages, context)
             
             response_text = response.response if hasattr(response, 'response') else str(response)
             

@@ -517,11 +517,13 @@ Your response MUST show that you've used this context. Generic responses that ig
         # Option E Enhancement: Build enhanced system prompt if context is provided
         original_instructions = None
         if context and hasattr(self, 'agno_agent') and self.agno_agent:
-            enhanced_prompt = self._build_enhanced_system_prompt(self.system_prompt, context)
+            # Build enhanced prompt with messages and context
+            enhanced_prompt = self._build_enhanced_system_prompt(self.system_prompt, messages, context)
             # Temporarily update agent instructions
             original_instructions = self.agno_agent.instructions if hasattr(self.agno_agent, 'instructions') else None
             if hasattr(self.agno_agent, 'instructions'):
                 self.agno_agent.instructions = enhanced_prompt
+        
         try:
             # Generate cache key for response caching
             cache_key = self._generate_cache_key(messages, context)
@@ -872,6 +874,60 @@ Your response MUST show that you've used this context. Generic responses that ig
             await cache.set(key, response_dict)
         except Exception as e:
             self.logger.warning("cache_storage_error", error=str(e), key=key[:20])
+    
+    def _build_enhanced_system_prompt(self, base_prompt: str, messages: List[AgentMessage], context: Optional[Dict[str, Any]]) -> str:
+        """Build enhanced system prompt that emphasizes context usage (Option E - Phase 1).
+        
+        This method enhances the base system prompt with explicit instructions
+        to use ALL provided context, ensuring no critical information is lost.
+        """
+        enhanced_parts = [base_prompt]
+        
+        # Add detailed conversation summary from messages
+        if messages:
+            conversation_summary = self._summarize_context(messages)
+            if conversation_summary:
+                enhanced_parts.append(f"\n=== CONVERSATION HISTORY SUMMARY ===\n{conversation_summary}")
+        
+        # Add other relevant context from the coordinator or direct call
+        if context:
+            context_summary_parts = []
+            for key, value in context.items():
+                if key not in ["messages", "query", "user_id", "product_id", "session_ids", "db"] and value:
+                    # Option E: Preserve full form_data content (no truncation for form_data)
+                    if key == "form_data" and isinstance(value, dict):
+                        # Include full form_data without truncation to preserve all user details
+                        form_data_str = "\n".join([f"  {k.replace('_', ' ').title()}: {str(v)}" for k, v in value.items() if v])
+                        context_summary_parts.append(f"{key.replace('_', ' ').title()}:\n{form_data_str}")
+                    elif isinstance(value, (dict, list)):
+                        context_summary_parts.append(f"{key.replace('_', ' ').title()}: {json.dumps(value, indent=2)[:2000]}")  # Increased from 500
+                    else:
+                        # Increase limit for other context values too (Option E)
+                        context_summary_parts.append(f"{key.replace('_', ' ').title()}: {str(value)[:2000]}")  # Increased from 500
+            if context_summary_parts:
+                enhanced_parts.append(f"\n=== ADDITIONAL CONTEXT ===\n" + "\n".join(context_summary_parts))
+        
+        # Add critical context usage instructions
+        if context or messages:
+            enhanced_parts.append("""
+=== CRITICAL CONTEXT USAGE INSTRUCTIONS ===
+You MUST use ALL provided context in your response. This includes:
+- Conversation history and previous messages
+- Form data and user inputs
+- Phase context and product information
+- Knowledge base content
+
+CRITICAL REQUIREMENTS:
+- You MUST reference specific details from the conversation history when relevant
+- If the user mentioned X in chat, you MUST incorporate it in your response
+- Use ALL form data fields provided - nothing should be omitted or skipped
+- Reference specific phase content when relevant
+- If context contains specific requirements, preferences, or decisions, you MUST use them
+- Demonstrate context awareness by referencing specific details from the provided context
+
+Your response MUST show that you've used this context. Generic responses that ignore context are not acceptable.""")
+        
+        return "\n\n".join(enhanced_parts)
     
     def _summarize_context(self, messages: List[AgentMessage]) -> str:
         """Summarize older message context for history limiting.
