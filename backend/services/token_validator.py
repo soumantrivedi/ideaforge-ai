@@ -186,10 +186,12 @@ class McKinseyTokenValidator:
 
             # Decode and verify token
             # Note: We only verify signature here, claims are verified separately
+            # Add leeway to handle clock skew between servers (up to 120 seconds)
             claims = jwt.decode(
                 token,
                 signing_key.key,
                 algorithms=self.ALLOWED_ALGORITHMS,
+                leeway=120,  # Allow 120 seconds clock skew
                 options={
                     "verify_signature": True,
                     "verify_exp": False,  # We verify expiration separately
