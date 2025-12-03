@@ -26,6 +26,9 @@ data:
   AGENT_MODEL_SECONDARY: "claude-sonnet-4-20250522"  # Claude 4 Sonnet: Advanced reasoning and ideation
   AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
   
+  # AI Gateway Configuration (enabled by default)
+  AI_GATEWAY_ENABLED: "true"  # Enable AI Gateway by default for AI provider
+  
   # Frontend Configuration
   # Use relative path /api so frontend nginx proxies to backend service internally
   # The frontend nginx.conf already has: location /api { proxy_pass http://backend:8000; }

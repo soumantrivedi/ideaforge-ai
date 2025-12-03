@@ -144,10 +144,9 @@ spec:
               optional: true
         - name: AI_GATEWAY_ENABLED
           valueFrom:
-            secretKeyRef:
-              name: ideaforge-ai-secrets
+            configMapKeyRef:
+              name: ideaforge-ai-config
               key: AI_GATEWAY_ENABLED
-              optional: true
         - name: AI_GATEWAY_DEFAULT_MODEL
           valueFrom:
             secretKeyRef:
