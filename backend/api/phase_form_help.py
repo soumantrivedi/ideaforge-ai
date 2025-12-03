@@ -436,26 +436,64 @@ VAGUE INPUT HANDLING:
 - Respond with: "To generate precise, implementation-ready requirements, I need the following missing inputs: …"
 """
         
-        # Add instructions for formatted response with bullet points and paragraphs
+        # Add instructions for formatted response with emphasis on quality, completeness, and usability
         if request.response_length == "short":
             response_style = "concise and direct"
-            response_guidance = """Provide a brief, focused answer that directly addresses the question. Format your response with:
-- Clear paragraphs (2-3 sentences each)
-- Bullet points for key items or lists (use "- " prefix)
-- Logical structure with clear flow
-- Actionable guidance that the user can immediately use
-Keep it concise but well-structured."""
+            response_guidance = """CRITICAL: Your response must be COMPLETE, USABLE, and WELL-FORMATTED.
+
+QUALITY REQUIREMENTS:
+- Provide a complete answer that fully addresses the question - do not leave it incomplete
+- Format with clear paragraphs (2-3 sentences each, separated by blank lines)
+- Use bullet points (prefix with '- ') for lists, key items, or actionable steps
+- Ensure logical structure with clear flow from introduction to conclusion
+- Make it immediately actionable - the user should be able to use your answer directly
+- Be concise but comprehensive - every sentence should add value
+- Avoid repetition or filler content
+
+USABILITY REQUIREMENTS:
+- Write content that the user can copy and use directly in their form
+- Provide specific, concrete guidance (not vague suggestions)
+- Include relevant context from previous phases when it directly helps answer the question
+- Structure so the user can easily scan and find what they need
+- End with a clear summary or next steps if helpful"""
         else:
             response_style = "detailed and thorough"
-            response_guidance = """Provide a comprehensive answer that includes: key points, context, relevant considerations, and practical guidance. Format your response with:
-- Well-structured paragraphs (3-5 sentences each, separated by blank lines)
-- Bullet points for lists, key considerations, or actionable items (use "- " prefix)
-- Clear sections with logical flow
-- Examples or specific details where helpful
-- Actionable guidance that helps the user proceed with their work
-Be thorough but focused - avoid unnecessary repetition or rambling."""
+            response_guidance = """CRITICAL: Your response must be COMPLETE, USABLE, WELL-FORMATTED, and COMPREHENSIVE.
+
+QUALITY REQUIREMENTS:
+- Provide a complete, comprehensive answer that fully addresses all aspects of the question
+- Format with well-structured paragraphs (3-5 sentences each, separated by blank lines)
+- Use bullet points (prefix with '- ') for lists, key considerations, or actionable items
+- Organize into clear sections with logical flow (Introduction → Main Content → Summary/Next Steps)
+- Include relevant context from previous phases when it directly helps answer the question
+- Provide examples or specific details where helpful
+- Be thorough but focused - every section should add unique value
+- Avoid unnecessary repetition, rambling, or filler content
+- Ensure the response is complete and self-contained
+
+USABILITY REQUIREMENTS:
+- Write content that the user can copy and use directly in their form
+- Provide specific, concrete guidance with actionable steps
+- Synthesize information from context intelligently - don't just dump everything
+- Structure so the user can easily scan, understand, and apply your guidance
+- Include practical considerations and real-world applicability
+- End with a clear summary or actionable next steps"""
         
-        system_context += f"\n\nCRITICAL REQUIREMENTS:\n- Format your response with clear paragraphs and bullet points\n- Use bullet points (prefix with '- ') for lists, key items, or actionable steps\n- Separate paragraphs with blank lines for readability\n- Be {response_style}\n- {response_guidance}\n- Write as if speaking directly to the user\n- Ensure responses are actionable and help the user proceed with their work\n- Structure your response clearly with logical flow"
+        system_context += f"""
+
+CRITICAL RESPONSE REQUIREMENTS:
+1. COMPLETENESS: Provide a complete answer that fully addresses the question - do not leave it incomplete or truncated
+2. USABILITY: Write content that the user can directly use in their form - make it actionable and practical
+3. FORMATTING: 
+   - Use clear paragraphs (separated by blank lines)
+   - Use bullet points (prefix with '- ') for lists, key items, or actionable steps
+   - Structure logically with clear flow
+4. QUALITY: Every sentence should add value - avoid repetition, filler, or rambling
+5. CONTEXT USAGE: Use context from previous phases intelligently - only include what directly helps answer the question
+6. STYLE: Be {response_style} - {response_style == 'concise and direct' and 'keep it focused' or 'be comprehensive but organized'}
+7. ACTIONABILITY: Ensure the user can immediately use your response to proceed with their work
+
+{response_guidance}"""
         
         # Build user prompt - Include FULL user input (CRITICAL: preserve all details)
         # Include the complete user input to preserve critical details like addresses, requirements, etc.
@@ -471,11 +509,29 @@ CRITICAL: Use ALL details from the user input above. Preserve specific numbers, 
         else:
             user_prompt = f"Question: {request.current_prompt}"
         
-        # Add formatting reminder with mode-specific guidance
+        # Add quality and usability instructions
         if request.response_length == "verbose":
-            user_prompt += f"\n\nProvide a detailed, comprehensive answer formatted with clear paragraphs and bullet points. Use bullet points (prefix with '- ') for lists and key items. Separate paragraphs with blank lines. Include context, key considerations, and practical guidance. Aim for thoroughness while staying focused and relevant."
+            user_prompt += f"""
+
+RESPONSE REQUIREMENTS:
+- Provide a COMPLETE, comprehensive answer that fully addresses the question
+- Format with clear paragraphs (separated by blank lines) and bullet points (prefix with '- ')
+- Use context from previous phases intelligently - only include what directly helps answer the question
+- Make it USABLE - write content the user can copy and use directly in their form
+- Be thorough but organized - avoid repetition or rambling
+- Structure logically: Introduction → Main Content → Summary/Next Steps
+- Ensure every section adds unique value
+- Stop when you've provided a complete, comprehensive answer - do not continue generating beyond what's needed"""
         else:
-            user_prompt += f"\n\nProvide a clear, concise answer formatted with paragraphs and bullet points where appropriate. Use bullet points (prefix with '- ') for lists or key items. Keep it brief but well-structured."
+            user_prompt += f"""
+
+RESPONSE REQUIREMENTS:
+- Provide a COMPLETE, concise answer that fully addresses the question
+- Format with clear paragraphs (separated by blank lines) and bullet points (prefix with '- ') where appropriate
+- Use context from previous phases when it directly helps answer the question
+- Make it USABLE - write content the user can copy and use directly in their form
+- Be focused and well-structured - every sentence should add value
+- Stop when you've answered the question completely - do not continue beyond what's needed"""
         
         # Temporarily switch to fast model if short mode
         original_model = None
@@ -584,8 +640,18 @@ CRITICAL: Use ALL details from the user input above. Preserve specific numbers, 
             )
             
             # Process with agent - wrap in try-except to catch any processing errors
+            # Add timeout protection to prevent infinite loops (60 seconds max)
             try:
-                response = await agent.process(messages, context)
+                response = await asyncio.wait_for(
+                    agent.process(messages, context),
+                    timeout=60.0  # 60 second timeout for phase form help
+                )
+            except asyncio.TimeoutError:
+                logger.error("phase_form_help_timeout",
+                           agent=agent_name,
+                           timeout_seconds=60)
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Agent processing timed out. Please try again with a shorter question or use short mode.'})}\n\n"
+                return
             except Exception as process_error:
                 logger.error(
                     "phase_form_help_agent_process_error",
@@ -602,16 +668,104 @@ CRITICAL: Use ALL details from the user input above. Preserve specific numbers, 
                 yield f"data: {json.dumps({'type': 'error', 'error': 'Agent returned empty response'})}\n\n"
                 return
             
-            # Extract response text - try multiple attributes
+            # Extract response text - try multiple attributes (enhanced extraction like base_agent)
             response_text = None
-            if hasattr(response, 'response'):
-                response_text = response.response
-            elif hasattr(response, 'content'):
-                response_text = response.content
-            elif hasattr(response, 'text'):
+            
+            # Try different ways to extract content from Agno response
+            if hasattr(response, "response"):
+                content = response.response
+                if content:
+                    if isinstance(content, str):
+                        response_text = content
+                    elif isinstance(content, list) and len(content) > 0:
+                        # Handle Anthropic-style response with content array
+                        if hasattr(content[0], "text"):
+                            response_text = content[0].text
+                        elif isinstance(content[0], str):
+                            response_text = content[0]
+                        else:
+                            response_text = str(content[0])
+                    else:
+                        response_text = str(content) if content else ""
+            
+            # Try .content attribute
+            if not response_text and hasattr(response, "content") and response.content:
+                content = response.content
+                if isinstance(content, str):
+                    response_text = content
+                elif isinstance(content, list) and len(content) > 0:
+                    if hasattr(content[0], "text"):
+                        response_text = content[0].text
+                    elif isinstance(content[0], str):
+                        response_text = content[0]
+                    else:
+                        response_text = str(content[0])
+                else:
+                    response_text = str(content) if content else ""
+            
+            # Try .text attribute
+            if not response_text and hasattr(response, "text") and response.text:
                 response_text = response.text
-            else:
+            
+            # Try .message attribute
+            if not response_text and hasattr(response, "message"):
+                message = response.message
+                if message:
+                    if hasattr(message, "content") and message.content:
+                        response_text = message.content
+                    elif isinstance(message, str):
+                        response_text = message
+                    else:
+                        response_text = str(message)
+            
+            # Try .messages attribute (RunOutput-style response)
+            if not response_text and hasattr(response, "messages") and response.messages:
+                # Find the last assistant message
+                for msg in reversed(response.messages):
+                    if hasattr(msg, "role") and msg.role == "assistant":
+                        if hasattr(msg, "content") and msg.content:
+                            if isinstance(msg.content, str) and msg.content.strip():
+                                response_text = msg.content
+                                break
+                        elif isinstance(msg, str):
+                            response_text = msg
+                            break
+            
+            # Fallback to string conversion
+            if not response_text:
                 response_text = str(response)
+            
+            # Check if response_text is a RunOutput string representation
+            if isinstance(response_text, str) and ("RunOutput" in response_text or "run_id=" in response_text):
+                # Try to extract from the underlying agno agent's last run
+                if hasattr(agent, 'agno_agent') and agent.agno_agent:
+                    try:
+                        if hasattr(agent.agno_agent, 'last_run') and agent.agno_agent.last_run:
+                            last_run = agent.agno_agent.last_run
+                            if hasattr(last_run, 'messages') and last_run.messages:
+                                # Find the last assistant message with actual content
+                                for msg in reversed(last_run.messages):
+                                    if hasattr(msg, 'role') and msg.role == 'assistant':
+                                        content = None
+                                        if hasattr(msg, 'content'):
+                                            content = msg.content
+                                        elif hasattr(msg, 'text'):
+                                            content = msg.text
+                                        elif isinstance(msg, str):
+                                            content = msg
+                                        
+                                        if content:
+                                            if isinstance(content, str) and content.strip():
+                                                if "RunOutput" not in content and "run_id=" not in content and len(content) > 50:
+                                                    response_text = content
+                                                    logger.info("phase_form_help_extracted_from_messages", 
+                                                              agent=agent_name,
+                                                              extracted_length=len(response_text))
+                                                    break
+                    except Exception as extract_error:
+                        logger.warning("phase_form_help_run_extraction_failed", 
+                                     error=str(extract_error),
+                                     agent=agent_name)
             
             # Log response structure for debugging
             logger.info(
@@ -622,7 +776,8 @@ CRITICAL: Use ALL details from the user input above. Preserve specific numbers, 
                 has_text_attr=hasattr(response, 'text'),
                 response_type=type(response).__name__,
                 response_text_length=len(response_text) if response_text else 0,
-                response_text_preview=response_text[:100] if response_text else None
+                response_text_preview=response_text[:100] if response_text else None,
+                is_runoutput_string="RunOutput" in str(response_text)[:200] if response_text else False
             )
             
             if not response_text or not response_text.strip():
@@ -630,24 +785,89 @@ CRITICAL: Use ALL details from the user input above. Preserve specific numbers, 
                     "phase_form_help_empty_response_text",
                     agent=agent_name,
                     response_type=type(response).__name__,
-                    response_attrs=dir(response),
+                    response_attrs=[attr for attr in dir(response) if not attr.startswith("_")],
                     response_str=str(response)[:200]
                 )
                 yield f"data: {json.dumps({'type': 'error', 'error': 'Agent returned empty response text'})}\n\n"
                 return
             
+            # Check if still a RunOutput string after extraction
+            if isinstance(response_text, str) and ("RunOutput" in response_text or len(response_text) < 50):
+                logger.error("phase_form_help_runoutput_extraction_failed",
+                           agent=agent_name,
+                           response_preview=response_text[:200],
+                           response_length=len(response_text))
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Could not extract response from agent. Please try again.'})}\n\n"
+                return
+            
             # Log initial response length
             initial_word_count = len(response_text.split())
+            initial_char_count = len(response_text)
             logger.info(
                 "phase_form_help_response_received",
                 agent=agent_name,
                 initial_words=initial_word_count,
+                initial_chars=initial_char_count,
                 response_length=request.response_length
             )
             
             # Extract plain text from response (handles HTML, markdown, or plain text)
             # The agent might return HTML documents, markdown, or plain text
             plain_text = extract_plain_text(response_text)
+            
+            # Apply hard character limits to prevent excessive generation
+            # Short mode: max 2000 characters, Verbose mode: max 8000 characters
+            MAX_CHARS_SHORT = 2000
+            MAX_CHARS_VERBOSE = 8000
+            
+            def truncate_at_complete_thought(text: str, max_chars: int) -> str:
+                """Truncate text at a complete sentence or paragraph boundary to maintain usability."""
+                if len(text) <= max_chars:
+                    return text
+                
+                # Try to find a good truncation point
+                truncated = text[:max_chars]
+                
+                # First, try to find the end of a paragraph (double newline)
+                last_paragraph = truncated.rfind('\n\n')
+                if last_paragraph > max_chars * 0.8:  # If we can find a paragraph break in the last 20%
+                    return text[:last_paragraph] + "\n\n[Response truncated - content exceeded length limit]"
+                
+                # Second, try to find the end of a sentence (period, exclamation, question mark followed by space)
+                sentence_endings = ['. ', '.\n', '! ', '!\n', '? ', '?\n']
+                last_sentence = -1
+                for ending in sentence_endings:
+                    pos = truncated.rfind(ending)
+                    if pos > max_chars * 0.8 and pos > last_sentence:
+                        last_sentence = pos + len(ending)
+                
+                if last_sentence > 0:
+                    return text[:last_sentence] + "\n\n[Response truncated - content exceeded length limit]"
+                
+                # Third, try to find a word boundary
+                last_space = truncated.rfind(' ')
+                if last_space > max_chars * 0.9:  # If we can find a space in the last 10%
+                    return text[:last_space] + "\n\n[Response truncated - content exceeded length limit]"
+                
+                # Last resort: truncate at character boundary
+                return truncated + "\n\n[Response truncated - content exceeded length limit]"
+            
+            if request.response_length == "short":
+                if len(plain_text) > MAX_CHARS_SHORT:
+                    logger.warning("phase_form_help_response_truncated",
+                                 agent=agent_name,
+                                 original_length=len(plain_text),
+                                 truncated_to=MAX_CHARS_SHORT,
+                                 mode="short")
+                    plain_text = truncate_at_complete_thought(plain_text, MAX_CHARS_SHORT)
+            else:  # verbose mode
+                if len(plain_text) > MAX_CHARS_VERBOSE:
+                    logger.warning("phase_form_help_response_truncated",
+                                 agent=agent_name,
+                                 original_length=len(plain_text),
+                                 truncated_to=MAX_CHARS_VERBOSE,
+                                 mode="verbose")
+                    plain_text = truncate_at_complete_thought(plain_text, MAX_CHARS_VERBOSE)
             
             # Count final words for logging
             word_count = len(plain_text.split())

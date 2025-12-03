@@ -1140,11 +1140,30 @@ INSTRUCTIONS:
             
             # Add instructions based on context type
             if is_phase_form_help:
-                # Phase form help - enforce strict word limits for inline help
+                # Phase form help - emphasize quality, completeness, and usability
                 if response_length == "short":
-                    concise_instruction = "\n\nCRITICAL: Maximum 500 words. Be concise and direct. Answer ONLY the specific question asked. Do NOT generate full PRD sections or other content. Stay within word limit."
+                    concise_instruction = """
+CRITICAL REQUIREMENTS FOR PHASE FORM HELP:
+1. COMPLETENESS: Provide a complete answer that fully addresses the question - do not leave it incomplete
+2. USABILITY: Write content the user can copy and use directly in their form - make it actionable
+3. FORMATTING: Use clear paragraphs (separated by blank lines) and bullet points (prefix with '- ') for lists
+4. QUALITY: Every sentence should add value - avoid repetition or filler
+5. CONTEXT: Use context from previous phases intelligently - only include what directly helps answer the question
+6. LENGTH: Maximum 500 words (approximately 2000 characters) - be concise but complete
+7. STOP: Stop generating once you've answered the question completely - do not continue beyond what's needed
+Answer ONLY the specific question asked. Do NOT generate full PRD sections or other content."""
                 else:
-                    concise_instruction = "\n\nCRITICAL: Maximum 1000 words. Be detailed but focused. Answer ONLY the specific question asked. Do NOT generate full PRD sections or other content. Stay within word limit."
+                    concise_instruction = """
+CRITICAL REQUIREMENTS FOR PHASE FORM HELP:
+1. COMPLETENESS: Provide a complete, comprehensive answer that fully addresses all aspects of the question
+2. USABILITY: Write content the user can copy and use directly in their form - make it actionable and practical
+3. FORMATTING: Use well-structured paragraphs (separated by blank lines) and bullet points (prefix with '- ') for lists
+4. QUALITY: Every section should add unique value - avoid repetition, rambling, or filler content
+5. CONTEXT: Use context from previous phases intelligently - synthesize information, don't just dump everything
+6. STRUCTURE: Organize logically: Introduction → Main Content → Summary/Next Steps
+7. LENGTH: Maximum 1500 words (approximately 8000 characters) - be comprehensive but organized
+8. STOP: Stop generating once you've provided a complete, comprehensive answer - do not continue beyond what's needed
+Answer ONLY the specific question asked. Do NOT generate full PRD sections or other content."""
                 enhanced_query = enhanced_query + concise_instruction
             elif is_phase_specific and not user_wants_full_prd:
                 # User is in a specific phase - only generate content for that phase
@@ -1607,9 +1626,26 @@ INSTRUCTIONS:
                 word_limit_instruction = ""
                 if is_phase_form_help:
                     if response_length == "short":
-                        word_limit_instruction = "\n\nCRITICAL WORD LIMIT: Maximum 500 words. Be concise and direct. Answer ONLY the specific question. Do NOT generate full PRD sections."
+                        word_limit_instruction = """
+CRITICAL REQUIREMENTS FOR PHASE FORM HELP:
+1. COMPLETENESS: Provide a complete answer - do not leave it incomplete
+2. USABILITY: Write content the user can copy and use directly - make it actionable
+3. FORMATTING: Use clear paragraphs and bullet points (prefix with '- ')
+4. QUALITY: Every sentence should add value - avoid repetition
+5. LENGTH: Maximum 500 words (approximately 2000 characters) - be concise but complete
+6. STOP: Stop once you've answered the question completely
+Answer ONLY the specific question. Do NOT generate full PRD sections."""
                     else:
-                        word_limit_instruction = "\n\nCRITICAL WORD LIMIT: Maximum 1000 words. Be detailed but focused. Answer ONLY the specific question. Do NOT generate full PRD sections."
+                        word_limit_instruction = """
+CRITICAL REQUIREMENTS FOR PHASE FORM HELP:
+1. COMPLETENESS: Provide a complete, comprehensive answer addressing all aspects
+2. USABILITY: Write content the user can copy and use directly - make it actionable and practical
+3. FORMATTING: Use well-structured paragraphs and bullet points (prefix with '- ')
+4. QUALITY: Every section should add unique value - avoid repetition or rambling
+5. STRUCTURE: Organize logically: Introduction → Main Content → Summary
+6. LENGTH: Maximum 1500 words (approximately 8000 characters) - be comprehensive but organized
+7. STOP: Stop once you've provided a complete, comprehensive answer
+Answer ONLY the specific question. Do NOT generate full PRD sections."""
                 elif is_phase_specific and not user_wants_full_prd:
                     # Add phase-specific restriction to primary agent query
                     word_limit_instruction = f"\n\nCRITICAL: The user is currently working on the {current_phase_name} phase. Generate content ONLY for the {current_phase_name} phase. Do NOT generate content for other phases (Market Research, Requirements, Design, etc.) unless explicitly requested. Focus your response on {current_phase_name} phase content only."
