@@ -294,9 +294,15 @@ export function getSessionStorageInfo(): { used: number; quota: number; percenta
 // Expose utility functions to window for debugging
 if (typeof window !== 'undefined') {
   (window as any).ideaforgeDebug = {
+    // Core functions
     clearProductSession,
     clearAllSessionStorage,
     getSessionStorageInfo,
+    getProductsWithSessionData,
+    resetProductState,
+    clearAppState,
+    loadAppState,
+    // Convenience functions
     clearStorageForProduct: (productId: string) => {
       clearProductSession(productId);
       console.log(`✅ Cleared storage for product: ${productId}`);
@@ -316,6 +322,9 @@ if (typeof window !== 'undefined') {
       return info;
     }
   };
+  console.log('💡 IdeaForge debug utilities available at window.ideaforgeDebug');
+  console.log('   Try: window.ideaforgeDebug.showStorageInfo()');
+  console.log('   Or: window.ideaforgeDebug.clearAllStorage()');
 }
 
 /**
@@ -372,16 +381,4 @@ export function clearAppState(): void {
   }
 }
 
-// Expose utility functions to window for debugging
-if (typeof window !== 'undefined') {
-  (window as any).ideaforgeDebug = {
-    resetProductState,
-    clearAppState,
-    clearProductSession,
-    clearAllSessionStorage,
-    getProductsWithSessionData,
-    loadAppState,
-  };
-  console.log('IdeaForge debug utilities available at window.ideaforgeDebug');
-}
 
