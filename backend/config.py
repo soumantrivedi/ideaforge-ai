@@ -140,6 +140,15 @@ class Settings(BaseSettings):
     agent_model_tertiary: str = os.getenv(
         "AGENT_MODEL_TERTIARY", "gemini-3.0-pro"
     )  # Gemini 3.0 Pro
+    
+    # Model tier overrides for direct OpenAI API (Dec 2025 GPT-5.1 models)
+    # Official GPT-5.1 models as of December 2025:
+    # - Fast: gpt-5.1-nano (fastest, most economical - for most agents)
+    # - Standard: gpt-5.1-mini (balanced performance/cost - for coordinators)
+    # - Premium: gpt-5.1 (flagship model - for critical reasoning)
+    agent_model_fast: Optional[str] = os.getenv("AGENT_MODEL_FAST", "gpt-5.1-nano")
+    agent_model_standard: Optional[str] = os.getenv("AGENT_MODEL_STANDARD", "gpt-5.1-mini")
+    agent_model_premium: Optional[str] = os.getenv("AGENT_MODEL_PREMIUM", "gpt-5.1")
 
     # AI Response Timeout (seconds) - Set to 50s to avoid Cloudflare 60s timeout
     agent_response_timeout: float = float(os.getenv("AGENT_RESPONSE_TIMEOUT", "50.0"))
