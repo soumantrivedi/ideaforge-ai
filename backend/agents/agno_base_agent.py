@@ -1147,9 +1147,33 @@ Your response MUST show that you've used this context. Generic responses that ig
                     elif hasattr(nested_response, "text") and nested_response.text:
                         response_content = nested_response.text
             
+            # Try .messages attribute (RunOutput-style response)
+            if not response_content and hasattr(response, "messages") and response.messages:
+                # Find the last assistant message
+                for msg in reversed(response.messages):
+                    if hasattr(msg, "role") and msg.role == "assistant":
+                        if hasattr(msg, "content") and msg.content:
+                            if isinstance(msg.content, str) and msg.content.strip():
+                                response_content = msg.content
+                                break
+                        elif isinstance(msg, str):
+                            response_content = msg
+                            break
+            
             # Fallback to string conversion
             if not response_content:
                 response_content = str(response)
+            
+            # Final check: if response_content is a RunOutput string representation, try to extract from it
+            if isinstance(response_content, str) and "RunOutput" in response_content and hasattr(response, "messages"):
+                # Try to extract from messages if available
+                if response.messages:
+                    for msg in reversed(response.messages):
+                        if hasattr(msg, "role") and msg.role == "assistant":
+                            if hasattr(msg, "content") and msg.content:
+                                if isinstance(msg.content, str) and msg.content.strip() and "RunOutput" not in msg.content:
+                                    response_content = msg.content
+                                    break
             
             # Log if content is still empty after all attempts
             if not response_content or not response_content.strip():

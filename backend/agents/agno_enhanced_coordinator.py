@@ -21,6 +21,7 @@ from backend.agents.agno_base_agent import AgnoBaseAgent
 from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
 from backend.agents.agno_ideation_agent import AgnoIdeationAgent
 from backend.agents.agno_research_agent import AgnoResearchAgent
+from backend.agents.agno_requirements_agent import AgnoRequirementsAgent
 from backend.agents.agno_analysis_agent import AgnoAnalysisAgent
 from backend.agents.agno_summary_agent import AgnoSummaryAgent
 from backend.agents.agno_scoring_agent import AgnoScoringAgent
@@ -54,6 +55,7 @@ class AgnoEnhancedCoordinator:
         self.research_agent = AgnoResearchAgent(enable_rag=True)  # Always enable RAG for research
         self.analysis_agent = AgnoAnalysisAgent(enable_rag=True)  # Always enable RAG for analysis
         self.ideation_agent = AgnoIdeationAgent(enable_rag=True)  # Always enable RAG for ideation
+        self.requirements_agent = AgnoRequirementsAgent(enable_rag=True)  # Always enable RAG for requirements
         self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=True)  # Always enable RAG for PRD authoring
         self.summary_agent = AgnoSummaryAgent(enable_rag=enable_rag)
         self.scoring_agent = AgnoScoringAgent(enable_rag=enable_rag)
@@ -70,6 +72,7 @@ class AgnoEnhancedCoordinator:
             "research": self.research_agent,
             "analysis": self.analysis_agent,
             "ideation": self.ideation_agent,
+            "requirements": self.requirements_agent,
             "prd_authoring": self.prd_agent,
             "summary": self.summary_agent,
             "scoring": self.scoring_agent,
@@ -714,10 +717,17 @@ INSTRUCTIONS:
             "ideation": "ideation",
             "market research": "research",
             "market_research": "research",
-            "requirements": "prd_authoring",
-            "requirements phase": "prd_authoring",
+            "research": "research",  # Handle "research" as phase name
+            "requirements": "requirements",  # Changed from prd_authoring to requirements
+            "requirements phase": "requirements",
+            "development planning": "prd_authoring",
+            "development_planning": "prd_authoring",
+            "prd": "prd_authoring",
             "design": "prd_authoring",  # Design phase may need PRD content
             "strategy": "strategy",
+            "go-to-market": "strategy",
+            "go_to_market": "strategy",
+            "gtm": "strategy",
             "analysis": "analysis",
             "validation": "validation",
             "review": "validation",
@@ -731,12 +741,22 @@ INSTRUCTIONS:
         # If user is in a specific phase, prioritize agents for that phase
         phase_agent = None
         if phase_name:
+            # Normalize phase name (remove "phase", extra spaces, etc.)
+            normalized_phase = phase_name.replace(" phase", "").replace("_", " ").strip()
+            
             # Direct match
-            if phase_name in phase_agent_mapping:
+            if normalized_phase in phase_agent_mapping:
+                phase_agent = phase_agent_mapping[normalized_phase]
+            elif phase_name in phase_agent_mapping:
                 phase_agent = phase_agent_mapping[phase_name]
             else:
                 # Partial match (e.g., "Market Research Phase" -> "research")
                 for phase_key, agent_type in phase_agent_mapping.items():
+                    # Check if phase_key is contained in normalized_phase or vice versa
+                    if phase_key in normalized_phase or normalized_phase in phase_key:
+                        phase_agent = agent_type
+                        break
+                    # Also check original phase_name
                     if phase_key in phase_name or phase_name in phase_key:
                         phase_agent = agent_type
                         break
@@ -784,8 +804,24 @@ INSTRUCTIONS:
             
             agent_scores[agent_type] = score
         
+        # CRITICAL: If phase context exists and user confirms analysis, ALWAYS use phase agent
+        # Check if this is a confirmation response (yes, proceed, etc.)
+        is_confirmation = any(phrase in query_lower for phrase in [
+            "yes", "proceed", "go ahead", "continue", "ok", "okay", "sure", "confirm", "ready"
+        ])
+        
+        # If we have phase context and user confirms, force phase agent
+        if phase_agent and is_confirmation:
+            best_agent = phase_agent
+            best_confidence = 0.95  # Very high confidence for phase-matched confirmation
+            self.logger.info(
+                "phase_agent_forced_for_confirmation",
+                phase_name=phase_name,
+                phase_agent=phase_agent,
+                query_preview=query[:100]
+            )
         # Find best agent
-        if agent_scores:
+        elif agent_scores:
             best_agent = max(agent_scores.items(), key=lambda x: x[1])[0]
             best_confidence = agent_scores[best_agent]
         
@@ -1126,10 +1162,21 @@ INSTRUCTIONS:
                     "generate prd", "create prd", "build prd", "complete analysis"
                 ])
                 is_confirmation = any(phrase in query_lower for phrase in [
-                    "yes", "proceed", "go ahead", "continue", "ok", "okay", "sure", "confirm"
+                    "yes", "proceed", "go ahead", "continue", "ok", "okay", "sure", "confirm", "ready"
                 ])
                 
-                if wants_analysis or is_confirmation:
+                # Check if there's form data from a phase submission
+                has_form_data = enhanced_context.get("form_data") and len([k for k, v in enhanced_context.get("form_data", {}).items() if v]) > 0
+                current_phase_name = enhanced_context.get("phase_name")
+                
+                # If user confirms and we have form data, we should have already asked probing questions
+                # Now proceed with full analysis using the correct phase agent
+                if (wants_analysis or is_confirmation) and has_form_data and current_phase_name:
+                    # User confirmed analysis after we've gathered information
+                    # Use the phase-specific agent for comprehensive analysis
+                    phase_instruction = f"\n\nCRITICAL: The user has confirmed they want to perform analysis. They are in the {current_phase_name} phase and have submitted form data. Use the {current_phase_name} phase agent as the primary agent and provide a comprehensive, intelligent, and detailed analysis. Include all relevant context from the form data, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. Leverage all available agents and knowledge to provide the best possible analysis for the {current_phase_name} phase."
+                    enhanced_query = enhanced_query + phase_instruction
+                elif wants_analysis or is_confirmation:
                     # User wants analysis - provide comprehensive response using agent army
                     quality_instruction = "\n\nIMPORTANT: The user wants to perform analysis. Use the agent army to provide a comprehensive, intelligent, and detailed analysis. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. Leverage all available agents and knowledge to provide the best possible analysis."
                     enhanced_query = enhanced_query + quality_instruction
@@ -1156,7 +1203,37 @@ INSTRUCTIONS:
 - Format with clear paragraphs and bullet points"""
                         enhanced_query = enhanced_query + v0_instruction
                     else:
-                        conversational_instruction = """\n\nCONVERSATIONAL MODE - CRITICAL INSTRUCTIONS:
+                        # Check if we have form data from phase submission - need to pre-analyze and ask probing questions
+                        has_form_data = enhanced_context.get("form_data") and len([k for k, v in enhanced_context.get("form_data", {}).items() if v]) > 0
+                        current_phase_name = enhanced_context.get("phase_name")
+                        
+                        if has_form_data and current_phase_name:
+                            # User has submitted form data from a phase - pre-analyze and ask probing questions
+                            form_data_summary = "\n".join([
+                                f"- {k.replace('_', ' ').title()}: {str(v)[:200]}"
+                                for k, v in list(enhanced_context.get("form_data", {}).items())[:5]
+                                if v and str(v).strip()
+                            ])
+                            
+                            conversational_instruction = f"""\n\nCONVERSATIONAL MODE WITH PHASE CONTEXT - CRITICAL INSTRUCTIONS:
+- The user is in the {current_phase_name} phase and has submitted form data
+- FIRST: Pre-analyze the submitted form data to understand what they've provided
+- Form data summary:
+{form_data_summary}
+- Ask 2-3 SHORT, SPECIFIC probing questions (1-2 sentences each) to:
+  * Clarify any ambiguities in their submission
+  * Understand their specific goals and priorities
+  * Gather additional context needed for comprehensive analysis
+- Keep your questions focused on the {current_phase_name} phase context
+- After asking probing questions, wait for user responses
+- Once you have sufficient information, ask: "I have a good understanding now. Would you like me to perform a comprehensive {current_phase_name} analysis using our agent army?"
+- Only proceed with full analysis when user explicitly confirms
+- Be friendly, conversational, and helpful
+- Use bullet points for lists, but keep them concise
+- Format responses with clear paragraphs"""
+                            enhanced_query = enhanced_query + conversational_instruction
+                        else:
+                            conversational_instruction = """\n\nCONVERSATIONAL MODE - CRITICAL INSTRUCTIONS:
 - Be friendly and conversational, like ChatGPT or Claude
 - Keep responses SHORT and contextual (2-4 sentences for simple questions, 1-2 paragraphs max for complex ones)
 - Ask clarifying questions when needed (1-2 sentences)
@@ -1173,7 +1250,7 @@ INSTRUCTIONS:
 - Format responses with clear paragraphs and bullet points where helpful
 - Make it feel like a natural conversation, not a Q&A session
 - Remember: Forms are just to collect information - the real analysis happens in the chatbot when user confirms"""
-                        enhanced_query = enhanced_query + conversational_instruction
+                            enhanced_query = enhanced_query + conversational_instruction
             
             # Skip RAG if requested (for fast phase form help)
             if skip_rag:

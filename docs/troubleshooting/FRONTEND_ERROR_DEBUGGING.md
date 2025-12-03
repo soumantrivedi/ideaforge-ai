@@ -124,3 +124,4 @@ make kind-update-images
 kubectl rollout restart deployment/frontend -n ideaforge-ai
 ```
 
+

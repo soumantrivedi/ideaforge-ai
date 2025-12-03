@@ -312,8 +312,42 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             response = await self.process([message], context={"task": "v0_prompt_generation", "disable_tools": True})
             prompt_text = response.response
             
+            # If response is a RunOutput object (string representation), extract actual content
+            # The base agent should handle most cases, but we do additional cleanup here
+            if isinstance(prompt_text, str) and ("RunOutput" in prompt_text or "run_id=" in prompt_text):
+                # Try to extract from the underlying agno agent's last run
+                if hasattr(self, 'agno_agent') and self.agno_agent:
+                    try:
+                        # Get the last run from the agent
+                        if hasattr(self.agno_agent, 'last_run') and self.agno_agent.last_run:
+                            last_run = self.agno_agent.last_run
+                            if hasattr(last_run, 'messages') and last_run.messages:
+                                # Find the last assistant message with actual content
+                                for msg in reversed(last_run.messages):
+                                    if hasattr(msg, 'role') and msg.role == 'assistant':
+                                        if hasattr(msg, 'content') and msg.content:
+                                            content = msg.content
+                                            if isinstance(content, str) and content.strip():
+                                                # Make sure it's not the RunOutput string representation
+                                                if "RunOutput" not in content and "run_id=" not in content:
+                                                    prompt_text = content
+                                                    logger.info("v0_prompt_extracted_from_messages", 
+                                                              extracted_length=len(prompt_text))
+                                                    break
+                    except Exception as run_extract_error:
+                        logger.warning("v0_prompt_run_extraction_failed", error=str(run_extract_error))
+                        # If extraction fails, we'll try to clean what we have
+            
             # Clean the prompt - remove headers/footers that AI might add
             prompt_text = self._clean_v0_prompt(prompt_text)
+            
+            # Final validation: ensure we have actual prompt text, not RunOutput representation
+            if isinstance(prompt_text, str) and ("RunOutput" in prompt_text or len(prompt_text) < 50):
+                logger.error("v0_prompt_extraction_failed", 
+                           prompt_preview=prompt_text[:200],
+                           prompt_length=len(prompt_text))
+                # Return a helpful error message instead of the RunOutput string
+                return "Error: Could not extract V0 prompt from agent response. Please try again or contact support."
             
             return prompt_text
         finally:
