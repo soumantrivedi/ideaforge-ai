@@ -1,4 +1,4 @@
-.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-test-agents kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace eks-setup-hpa eks-prewarm eks-performance-test eks-rollout-images
+.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-test-agents kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace eks-setup-hpa eks-prewarm eks-performance-test eks-rollout-images kind-test-coordinator eks-test-coordinator kind-test-integration eks-test-integration
 
 # Get git SHA for versioning
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -1322,6 +1322,129 @@ eks-performance-test: ## Run performance test with 100 concurrent users (use EKS
 		--users 100 \
 		--ramp-up 30 \
 		--output performance-metrics-$$(date +%Y%m%d-%H%M%S).json
+
+kind-test-coordinator: ## Test coordinator agent selection in kind cluster (use K8S_NAMESPACE=your-namespace)
+	@if [ -z "$(K8S_NAMESPACE)" ]; then \
+		echo "❌ K8S_NAMESPACE is required"; \
+		echo "   Usage: make kind-test-coordinator K8S_NAMESPACE=ideaforge-ai"; \
+		exit 1; \
+	fi
+	@echo "🧪 Testing Coordinator Agent Selection in Kind Cluster..."
+	@echo "   Namespace: $(K8S_NAMESPACE)"
+	@BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make kind-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying test script to pod..."; \
+	kubectl cp backend/tests/test_coordinator_agent_selection.py $(K8S_NAMESPACE)/$$BACKEND_POD:/tmp/test_coordinator_agent_selection.py --context kind-$(KIND_CLUSTER_NAME) --container=backend; \
+	echo "   Running coordinator agent selection tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend -- \
+		python -m pytest /tmp/test_coordinator_agent_selection.py -v || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Coordinator agent selection tests completed"
+
+eks-test-coordinator: ## Test coordinator agent selection in EKS cluster (use EKS_NAMESPACE=your-namespace, KUBECONFIG=path)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-test-coordinator EKS_NAMESPACE=ns [KUBECONFIG=path]"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "🧪 Testing Coordinator Agent Selection in EKS Cluster..."
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@BACKEND_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make eks-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying test script to pod..."; \
+	kubectl cp backend/tests/test_coordinator_agent_selection.py $(EKS_NAMESPACE)/$$BACKEND_POD:/tmp/test_coordinator_agent_selection.py; \
+	echo "   Running coordinator agent selection tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD --container=backend -- \
+		python -m pytest /tmp/test_coordinator_agent_selection.py -v || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(EKS_NAMESPACE) $$BACKEND_POD --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Coordinator agent selection tests completed"
+
+kind-test-integration: ## Run comprehensive integration tests in kind cluster (coordinator, V0, chatbot) - use K8S_NAMESPACE=your-namespace
+	@if [ -z "$(K8S_NAMESPACE)" ]; then \
+		echo "❌ K8S_NAMESPACE is required"; \
+		echo "   Usage: make kind-test-integration K8S_NAMESPACE=ideaforge-ai"; \
+		exit 1; \
+	fi
+	@echo "🧪 Running Comprehensive Integration Tests in Kind Cluster..."
+	@echo "   Tests: Coordinator Agent Selection, V0 Project Retention, V0 Prompt Format, Chatbot Content"
+	@echo "   Namespace: $(K8S_NAMESPACE)"
+	@BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make kind-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying integration test script to pod..."; \
+	kubectl cp backend/tests/test_v0_coordinator_integration.py $(K8S_NAMESPACE)/$$BACKEND_POD:/tmp/test_v0_coordinator_integration.py --context kind-$(KIND_CLUSTER_NAME) --container=backend; \
+	echo "   Running integration tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend -- \
+		python /tmp/test_v0_coordinator_integration.py || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Integration tests completed"
+
+eks-test-integration: ## Run comprehensive integration tests in EKS cluster (coordinator, V0, chatbot) - use EKS_NAMESPACE=ns, KUBECONFIG=path
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-test-integration EKS_NAMESPACE=ns [KUBECONFIG=path]"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "🧪 Running Comprehensive Integration Tests in EKS Cluster..."
+	@echo "   Tests: Coordinator Agent Selection, V0 Project Retention, V0 Prompt Format, Chatbot Content"
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@echo "   ⚡ Latency-optimized for 100+ concurrent users"
+	@BACKEND_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make eks-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying integration test script to pod..."; \
+	kubectl cp backend/tests/test_v0_coordinator_integration.py $(EKS_NAMESPACE)/$$BACKEND_POD:/tmp/test_v0_coordinator_integration.py; \
+	echo "   Running integration tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD --container=backend -- \
+		python /tmp/test_v0_coordinator_integration.py || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(EKS_NAMESPACE) $$BACKEND_POD --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Integration tests completed"
 
 eks-rollout-images: ## Deploy new images with verification, database dump, and cleanup (use EKS_NAMESPACE=ns, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag, KUBECONFIG=path, BASE_URL=url)
 	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BACKEND_IMAGE_TAG)" ] || [ -z "$(FRONTEND_IMAGE_TAG)" ]; then \

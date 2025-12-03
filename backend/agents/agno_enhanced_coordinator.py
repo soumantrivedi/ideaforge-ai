@@ -620,55 +620,266 @@ INSTRUCTIONS:
         """Get shared context."""
         return self.shared_context.copy()
     
-    def determine_primary_agent(self, query: str) -> tuple[str, float]:
-        """Determine the best agent to handle a query."""
+    def determine_primary_agent(self, query: str, context: Optional[Dict[str, Any]] = None) -> tuple[str, float]:
+        """
+        Intelligently determine the best agent to handle a query based on:
+        1. Phase context (if user is in a specific phase)
+        2. Query content and keywords
+        3. Agent capabilities
+        
+        CRITICAL: Only selects agents relevant to the current phase and query content.
+        """
         query_lower = query.lower()
         best_agent = None
         best_confidence = 0.0
         
-        for agent_type, agent in self.agents.items():
-            confidence = agent.get_confidence(query)
-            if confidence > best_confidence:
-                best_confidence = confidence
-                best_agent = agent_type
+        # Phase-to-agent mapping for intelligent routing
+        phase_agent_mapping = {
+            "ideation": "ideation",
+            "market research": "research",
+            "market_research": "research",
+            "requirements": "prd_authoring",
+            "requirements phase": "prd_authoring",
+            "design": "prd_authoring",  # Design phase may need PRD content
+            "strategy": "strategy",
+            "analysis": "analysis",
+            "validation": "validation",
+            "review": "validation",
+        }
         
-        # Default to ideation if no clear match
-        if best_confidence < 0.3:
-            best_agent = "ideation"
-            best_confidence = 0.5
+        # Check phase context first - this is the most reliable indicator
+        phase_name = None
+        if context:
+            phase_name = context.get("phase_name", "").lower() if context.get("phase_name") else None
+        
+        # If user is in a specific phase, prioritize agents for that phase
+        phase_agent = None
+        if phase_name:
+            # Direct match
+            if phase_name in phase_agent_mapping:
+                phase_agent = phase_agent_mapping[phase_name]
+            else:
+                # Partial match (e.g., "Market Research Phase" -> "research")
+                for phase_key, agent_type in phase_agent_mapping.items():
+                    if phase_key in phase_name or phase_name in phase_key:
+                        phase_agent = agent_type
+                        break
+        
+        # Query-based agent detection with phase awareness
+        # Phase-specific keywords that override general keyword matching
+        phase_specific_keywords = {
+            "ideation": ["ideation", "idea", "brainstorm", "concept", "innovation", "problem statement", "what problem"],
+            "research": ["market research", "competitive analysis", "trend", "market trend", "competitor", "industry analysis", "user research"],
+            "prd_authoring": ["requirement", "prd", "user story", "acceptance criteria", "functional requirement", "non-functional", "specification"],
+            "strategy": ["strategy", "roadmap", "go-to-market", "gtm", "business model", "positioning"],
+            "analysis": ["analyze", "analysis", "swot", "feasibility", "risk analysis", "gap analysis"],
+            "validation": ["validate", "validation", "review", "quality check", "verify"],
+        }
+        
+        # Score agents based on query content and phase context
+        agent_scores = {}
+        for agent_type, agent in self.agents.items():
+            if agent_type == "rag":  # Skip RAG as primary agent
+                continue
+            
+            score = 0.0
+            
+            # Phase context boost (high priority)
+            if phase_agent == agent_type:
+                score += 0.5  # Strong boost for phase-matched agent
+            
+            # Query keyword matching
+            agent_confidence = agent.get_confidence(query)
+            score += agent_confidence * 0.4
+            
+            # Phase-specific keyword matching
+            if agent_type in phase_specific_keywords:
+                keywords = phase_specific_keywords[agent_type]
+                matches = sum(1 for kw in keywords if kw in query_lower)
+                if matches > 0:
+                    score += (matches / len(keywords)) * 0.3
+            
+            # Negative scoring: if query explicitly mentions a different phase, reduce score
+            if phase_name:
+                for other_phase, other_agent in phase_agent_mapping.items():
+                    if other_agent != agent_type and other_phase in phase_name:
+                        # If we're in a different phase, reduce score for this agent
+                        score *= 0.3
+            
+            agent_scores[agent_type] = score
+        
+        # Find best agent
+        if agent_scores:
+            best_agent = max(agent_scores.items(), key=lambda x: x[1])[0]
+            best_confidence = agent_scores[best_agent]
+        
+        # Only default to ideation if:
+        # 1. No phase context is available AND
+        # 2. Confidence is very low AND
+        # 3. Query doesn't explicitly mention other phases
+        if best_confidence < 0.3 and not phase_name:
+            # Check if query mentions other phases
+            mentions_research = any(kw in query_lower for kw in ["research", "market", "competitive", "trend"])
+            mentions_requirements = any(kw in query_lower for kw in ["requirement", "prd", "specification", "user story"])
+            mentions_strategy = any(kw in query_lower for kw in ["strategy", "roadmap", "gtm", "go-to-market"])
+            
+            if mentions_research:
+                best_agent = "research"
+                best_confidence = 0.6
+            elif mentions_requirements:
+                best_agent = "prd_authoring"
+                best_confidence = 0.6
+            elif mentions_strategy:
+                best_agent = "strategy"
+                best_confidence = 0.6
+            else:
+                # Last resort: default to ideation only if truly ambiguous
+                best_agent = "ideation"
+                best_confidence = 0.4
+        
+        self.logger.info(
+            "primary_agent_determined",
+            agent=best_agent,
+            confidence=best_confidence,
+            phase_name=phase_name,
+            phase_agent=phase_agent,
+            query_preview=query[:100]
+        )
         
         return best_agent, best_confidence
     
-    def determine_supporting_agents(self, query: str, primary_agent: str) -> List[str]:
-        """Determine which supporting agents should be consulted.
-        Automatically includes RAG, Atlassian (for Confluence/Jira), and Export (for PRD generation) when relevant.
-        ALWAYS includes RAG agent for knowledge base context.
+    def determine_supporting_agents(
+        self, 
+        query: str, 
+        primary_agent: str, 
+        context: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Intelligently determine which supporting agents should be consulted.
+        
+        CRITICAL: Only includes agents that are relevant to:
+        1. The current phase context
+        2. The query content
+        3. The primary agent's needs
+        
+        Does NOT automatically include ideation/research/analysis for all queries.
         """
         query_lower = query.lower()
         supporting = []
         
-        # ALWAYS include RAG agent first (unless it's the primary agent)
+        # Get phase context
+        phase_name = None
+        if context:
+            phase_name = context.get("phase_name", "").lower() if context.get("phase_name") else None
+        
+        # Phase-to-agent mapping
+        phase_agent_mapping = {
+            "ideation": "ideation",
+            "market research": "research",
+            "market_research": "research",
+            "requirements": "prd_authoring",
+            "requirements phase": "prd_authoring",
+            "design": "prd_authoring",
+            "strategy": "strategy",
+            "analysis": "analysis",
+            "validation": "validation",
+            "review": "validation",
+        }
+        
+        # RAG agent: Only include if there's actual knowledge base content or documents
+        # Check if RAG has knowledge (will be checked later in stream_route_query)
+        # For now, include RAG but it will be skipped if no knowledge is available
         if primary_agent != "rag":
             supporting.append("rag")
         
-        # Keywords that suggest multi-agent collaboration
-        if any(kw in query_lower for kw in ["research", "market", "competitive", "trend"]):
-            if primary_agent != "research":
-                supporting.append("research")
+        # Phase-aware agent selection
+        # Only add supporting agents if they're relevant to the current phase or query
         
-        if any(kw in query_lower for kw in ["analyze", "swot", "feasibility", "risk"]):
-            if primary_agent != "analysis":
-                supporting.append("analysis")
+        # Research agent: Only for market research phase or explicit research queries
+        should_include_research = False
+        if phase_name and ("research" in phase_name or "market" in phase_name):
+            should_include_research = True
+        elif any(kw in query_lower for kw in ["market research", "competitive analysis", "trend analysis", "industry analysis"]):
+            should_include_research = True
         
-        # Include Atlassian agent for Confluence/Jira operations
+        if should_include_research and primary_agent != "research":
+            supporting.append("research")
+        
+        # Analysis agent: Only for analysis phase or explicit analysis queries
+        should_include_analysis = False
+        if phase_name and "analysis" in phase_name:
+            should_include_analysis = True
+        elif any(kw in query_lower for kw in ["swot", "feasibility analysis", "risk analysis", "gap analysis", "strategic analysis"]):
+            should_include_analysis = True
+        
+        if should_include_analysis and primary_agent != "analysis":
+            supporting.append("analysis")
+        
+        # Ideation agent: Only for ideation phase or explicit ideation queries
+        # CRITICAL: Do NOT include ideation for market research or requirements phases
+        should_include_ideation = False
+        if phase_name and "ideation" in phase_name:
+            should_include_ideation = True
+        elif any(kw in query_lower for kw in ["ideation", "brainstorm", "idea generation", "innovation", "problem statement"]) and not phase_name:
+            # Only include if NOT in a different phase
+            should_include_ideation = True
+        
+        # Explicitly exclude ideation for non-ideation phases
+        if phase_name and "ideation" not in phase_name and "research" in phase_name:
+            should_include_ideation = False
+        if phase_name and "ideation" not in phase_name and "requirement" in phase_name:
+            should_include_ideation = False
+        
+        if should_include_ideation and primary_agent != "ideation":
+            supporting.append("ideation")
+        
+        # Strategy agent: Only for strategy phase or explicit strategy queries
+        should_include_strategy = False
+        if phase_name and "strategy" in phase_name:
+            should_include_strategy = True
+        elif any(kw in query_lower for kw in ["strategy", "roadmap", "go-to-market", "gtm", "business model", "positioning"]):
+            should_include_strategy = True
+        
+        if should_include_strategy and primary_agent != "strategy":
+            supporting.append("strategy")
+        
+        # Validation agent: Only for validation/review phase or explicit validation queries
+        should_include_validation = False
+        if phase_name and ("validation" in phase_name or "review" in phase_name):
+            should_include_validation = True
+        elif any(kw in query_lower for kw in ["validate", "validation", "review", "quality check", "verify"]):
+            should_include_validation = True
+        
+        if should_include_validation and primary_agent != "validation":
+            supporting.append("validation")
+        
+        # PRD Authoring agent: Only for requirements phase or explicit PRD queries
+        should_include_prd = False
+        if phase_name and ("requirement" in phase_name or "prd" in phase_name):
+            should_include_prd = True
+        elif any(kw in query_lower for kw in ["prd", "product requirements", "requirements document", "specification", "user story"]):
+            should_include_prd = True
+        
+        if should_include_prd and primary_agent != "prd_authoring":
+            supporting.append("prd_authoring")
+        
+        # Atlassian agent: Only for explicit Confluence/Jira operations
         if any(kw in query_lower for kw in ["confluence", "jira", "atlassian", "publish", "page", "space", "documentation"]):
             if primary_agent != "atlassian_mcp":
                 supporting.append("atlassian_mcp")
         
-        # Include Export agent for PRD/document generation
-        if any(kw in query_lower for kw in ["export", "prd", "document", "generate document", "publish document"]):
+        # Export agent: Only for explicit export/document generation
+        if any(kw in query_lower for kw in ["export", "generate document", "publish document", "download prd"]):
             if primary_agent != "export":
                 supporting.append("export")
+        
+        self.logger.info(
+            "supporting_agents_determined",
+            primary_agent=primary_agent,
+            supporting_agents=supporting,
+            phase_name=phase_name,
+            query_preview=query[:100]
+        )
         
         return supporting
     
@@ -1022,8 +1233,17 @@ INSTRUCTIONS:
                     # User specified agents - use them (but exclude RAG if it was skipped)
                     supporting_agents_list = [a for a in supporting_agents if a != "rag" or (rag_response and rag_response.metadata and not rag_response.metadata.get("skipped"))]
                 else:
-                    # Auto-determine based on query and primary agent
-                    supporting_agents_list = self.determine_supporting_agents(enhanced_query, primary_agent or "ideation")
+                    # Auto-determine based on query, primary agent, and phase context
+                    # CRITICAL: Pass context to determine_supporting_agents for phase-aware selection
+                    if not primary_agent:
+                        # Determine primary agent with context
+                        primary_agent, _ = self.determine_primary_agent(enhanced_query, enhanced_context)
+                    
+                    supporting_agents_list = self.determine_supporting_agents(
+                        enhanced_query, 
+                        primary_agent or "ideation",
+                        enhanced_context  # Pass context for phase-aware selection
+                    )
                     # Remove RAG from auto-determined list if it was skipped
                     if rag_response and rag_response.metadata and rag_response.metadata.get("skipped"):
                         supporting_agents_list = [a for a in supporting_agents_list if a != "rag"]
@@ -1113,8 +1333,11 @@ INSTRUCTIONS:
                         "internal": True  # Mark as internal
                     }
             
-            # Final primary agent
-            primary = primary_agent or "ideation"
+            # Final primary agent - determine intelligently if not provided
+            if not primary_agent:
+                primary, _ = self.determine_primary_agent(enhanced_query, enhanced_context)
+            else:
+                primary = primary_agent
             if primary in self.agents:
                 yield {
                     "type": "agent_start",
@@ -1182,11 +1405,25 @@ INSTRUCTIONS:
                             prd_query += f"CRITICAL: Synthesize the above insights into a comprehensive, intelligent response for the {current_phase_name} phase ONLY. Include all relevant details and actionable insights. Do NOT generate content for other phases. Structure your response with clear headings relevant to {current_phase_name} phase only. Quality and completeness are priorities.\n"
                         else:
                             # For regular chat queries, emphasize comprehensive, quality responses
-                            prd_query += "CRITICAL: Synthesize the above insights into a comprehensive, intelligent, and detailed response. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. If combining multiple agents (e.g., Ideation + Research), structure your response with clear headings like:\n"
-                            prd_query += "- ## Ideation Insights\n"
-                            prd_query += "- ## Research Findings\n"
-                            prd_query += "- ## Analysis & Recommendations\n"
-                            prd_query += "- ## Summary & Next Steps\n"
+                            # CRITICAL: Only structure response with headings for agents that were actually invoked
+                            agent_headings = []
+                            if any(i.get("to_agent") == "ideation" for i in interactions):
+                                agent_headings.append("- ## Ideation Insights")
+                            if any(i.get("to_agent") == "research" for i in interactions):
+                                agent_headings.append("- ## Research Findings")
+                            if any(i.get("to_agent") == "analysis" for i in interactions):
+                                agent_headings.append("- ## Analysis & Recommendations")
+                            if any(i.get("to_agent") == "strategy" for i in interactions):
+                                agent_headings.append("- ## Strategy & Recommendations")
+                            if any(i.get("to_agent") == "prd_authoring" for i in interactions):
+                                agent_headings.append("- ## Requirements & Specifications")
+                            
+                            if agent_headings:
+                                prd_query += "CRITICAL: Synthesize the above insights into a comprehensive, intelligent, and detailed response. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. Structure your response with clear headings:\n"
+                                prd_query += "\n".join(agent_headings) + "\n"
+                                prd_query += "- ## Summary & Next Steps\n"
+                            else:
+                                prd_query += "CRITICAL: Synthesize the above insights into a comprehensive, intelligent, and detailed response. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful.\n"
                             prd_query += "\nProvide a comprehensive response that leverages all available insights.\n"
                 
                 # Determine model tier based on query type
@@ -1487,9 +1724,22 @@ INSTRUCTIONS:
                 )
             elif coordination_mode == "collaborative":
                 # Handle collaborative mode similar to AgnoCoordinatorAgent
+                # Build context if available
+                enhanced_context = {}
+                if context:
+                    try:
+                        enhanced_context = await self._build_comprehensive_context(
+                            product_id=context.get("product_id"),
+                            session_ids=context.get("session_ids"),
+                            user_context=context,
+                            db=db
+                        )
+                    except:
+                        enhanced_context = context or {}
+                
                 if not primary_agent:
-                    primary_agent, confidence = self.determine_primary_agent(query)
-                    self.logger.info("auto_routed", primary_agent=primary_agent, confidence=confidence)
+                    primary_agent, confidence = self.determine_primary_agent(query, enhanced_context)
+                    self.logger.info("auto_routed", primary_agent=primary_agent, confidence=confidence, phase_name=enhanced_context.get("phase_name"))
                 
                 # Get primary agent
                 if primary_agent not in self.agents:
@@ -1497,9 +1747,9 @@ INSTRUCTIONS:
                 
                 primary = self.agents[primary_agent]
                 
-                # Get supporting agents
+                # Get supporting agents with phase context
                 if not supporting_agents:
-                    supporting_agents = self.determine_supporting_agents(query, primary_agent)
+                    supporting_agents = self.determine_supporting_agents(query, primary_agent, enhanced_context)
                 
                 # ALWAYS ensure RAG agent is included in supporting agents
                 if "rag" not in supporting_agents and primary_agent != "rag":

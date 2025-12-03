@@ -378,6 +378,59 @@ export function PhaseFormModal({
           }
         }
         
+        // Fetch V0 project details if available
+        let v0ProjectDetails = null;
+        try {
+          const mockupsResponse = await fetch(`${API_URL}/api/design/mockups/${productId}?provider=v0`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+          });
+          if (mockupsResponse.ok) {
+            const mockupsData = await mockupsResponse.json();
+            const v0Mockups = mockupsData.mockups?.filter((m: any) => m.provider === 'v0') || [];
+            if (v0Mockups.length > 0) {
+              // Get the most recent V0 project
+              const latestV0Mockup = v0Mockups.sort((a: any, b: any) => 
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              )[0];
+              v0ProjectDetails = {
+                project_id: latestV0Mockup.v0_project_id || latestV0Mockup.projectId,
+                project_url: latestV0Mockup.project_url,
+                project_status: latestV0Mockup.project_status,
+              };
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to fetch V0 project details:', error);
+          // Continue without V0 project details
+        }
+        
+        // Include form content (all design phase fields)
+        phase.required_fields.forEach((field, index) => {
+          if (field !== 'v0_lovable_prompts' && field !== 'design_mockups') {
+            const fieldValue = formData[field] || '';
+            if (fieldValue.trim()) {
+              const prompt = phase.template_prompts?.[index] || field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+              const cleanValue = fieldValue.replace(/<[^>]*>/g, '').trim();
+              chatbotMessage += `### ${prompt}\n${cleanValue}\n\n`;
+            }
+          }
+        });
+        
+        // Include V0 project details if available
+        if (v0ProjectDetails && v0ProjectDetails.project_id) {
+          chatbotMessage += `### V0 Project Details\n`;
+          chatbotMessage += `**Project ID:** ${v0ProjectDetails.project_id}\n`;
+          if (v0ProjectDetails.project_url) {
+            chatbotMessage += `**Project URL:** ${v0ProjectDetails.project_url}\n`;
+          }
+          if (v0ProjectDetails.project_status) {
+            chatbotMessage += `**Status:** ${v0ProjectDetails.project_status}\n`;
+          }
+          chatbotMessage += `\n`;
+        }
+        
         if (v0Prompt.trim()) {
           // Clean any raw HTML tags but preserve markdown formatting
           const cleanV0Prompt = v0Prompt.replace(/<[^>]*>/g, '').trim();
@@ -429,6 +482,28 @@ export function PhaseFormModal({
         interactionMetadata.lovable_score = promptScores.lovable;
         if (maxScore > 0) {
           interactionMetadata.design_phase_score = maxScore;
+        }
+        // Include V0 project details in metadata if available
+        try {
+          const mockupsResponse = await fetch(`${API_URL}/api/design/mockups/${productId}?provider=v0`, {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+            },
+          });
+          if (mockupsResponse.ok) {
+            const mockupsData = await mockupsResponse.json();
+            const v0Mockups = mockupsData.mockups?.filter((m: any) => m.provider === 'v0') || [];
+            if (v0Mockups.length > 0) {
+              const latestV0Mockup = v0Mockups.sort((a: any, b: any) => 
+                new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              )[0];
+              interactionMetadata.v0_project_id = latestV0Mockup.v0_project_id || latestV0Mockup.projectId;
+              interactionMetadata.v0_project_url = latestV0Mockup.project_url;
+              interactionMetadata.v0_project_status = latestV0Mockup.project_status;
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to fetch V0 project details for metadata:', error);
         }
       }
 

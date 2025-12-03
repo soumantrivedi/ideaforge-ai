@@ -1494,6 +1494,9 @@ async def create_design_project(
         # For create-project, we only create/get project, no prompt enhancement needed yet
         # Prompt will be used in submit-chat endpoint
         
+        # Import json for metadata serialization
+        import json
+        
         # Create/get project using appropriate agent
         if request.provider == "v0":
             # Prioritize user's API key over global settings
