@@ -606,7 +606,7 @@ INSTRUCTIONS:
         query: str,
         context: Optional[Dict[str, Any]] = None
     ) -> AgentInteraction:
-        """Route consultation with shared context."""
+        """Route consultation with shared context. Ensures agent-to-agent interactions are focused and useful."""
         # Enhance context with shared context
         enhanced_context = {**(context or {}), **self.shared_context}
         
@@ -615,9 +615,37 @@ INSTRUCTIONS:
         
         target_agent = self.agents[to_agent]
         
+        # Build structured consultation message for better agent-to-agent communication
+        # Extract relevant context for the consultation
+        relevant_context_parts = []
+        
+        # Include product context if available
+        if enhanced_context.get("product_id"):
+            relevant_context_parts.append(f"Product ID: {enhanced_context['product_id']}")
+        
+        # Include phase context if available
+        if enhanced_context.get("phase_name"):
+            relevant_context_parts.append(f"Current Phase: {enhanced_context['phase_name']}")
+        
+        # Include form data if available (for requirements/research)
+        if enhanced_context.get("form_data"):
+            form_summary = "\n".join([f"- {k}: {str(v)[:200]}" for k, v in list(enhanced_context["form_data"].items())[:5]])
+            if form_summary:
+                relevant_context_parts.append(f"Form Data:\n{form_summary}")
+        
+        # Include conversation history summary if available
+        if enhanced_context.get("conversation_history"):
+            recent_messages = enhanced_context["conversation_history"][-3:]  # Last 3 messages
+            conv_summary = "\n".join([f"- {msg.get('role', 'user')}: {msg.get('content', '')[:200]}" for msg in recent_messages])
+            if conv_summary:
+                relevant_context_parts.append(f"Recent Conversation:\n{conv_summary}")
+        
+        # Build structured consultation message
+        context_section = f"\n\nRelevant Context:\n" + "\n".join(relevant_context_parts) if relevant_context_parts else ""
+        
         consultation_message = AgentMessage(
             role="user",
-            content=f"[Consultation from {from_agent}]: {query}\n\nShared Context: {self.shared_context}",
+            content=f"[Agent Consultation Request from {from_agent}]\n\nQuery: {query}{context_section}\n\nPlease provide a focused, actionable response that directly addresses the consultation query. Be concise but thorough.",
             timestamp=datetime.utcnow()
         )
         
@@ -931,6 +959,11 @@ INSTRUCTIONS:
             if primary_agent != "export":
                 supporting.append("export")
         
+        # V0 agent: For UI/code generation requests
+        if any(kw in query_lower for kw in ["v0", "generate code", "create ui", "build interface", "design ui", "ui design", "generate prompt for v0", "submit to v0", "use v0"]):
+            if primary_agent != "v0":
+                supporting.append("v0")
+        
         self.logger.info(
             "supporting_agents_determined",
             primary_agent=primary_agent,
@@ -1085,9 +1118,62 @@ INSTRUCTIONS:
                 quality_instruction = "\n\nIMPORTANT: Provide a comprehensive, intelligent response with all relevant details. Use the agent army to gather insights from all relevant agents. Be thorough and include actionable insights. Quality over brevity - ensure the response is complete and useful."
                 enhanced_query = enhanced_query + quality_instruction
             else:
-                # Regular chat response - use agent army for comprehensive, quality responses
-                quality_instruction = "\n\nIMPORTANT: This is a chat response. Use the agent army to provide a comprehensive, intelligent, and detailed response. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. Leverage all available agents and knowledge to provide the best possible answer."
-                enhanced_query = enhanced_query + quality_instruction
+                # Regular chat response - CONVERSATIONAL MODE
+                # Check if user wants to perform analysis or just chat
+                query_lower = query.lower()
+                wants_analysis = any(phrase in query_lower for phrase in [
+                    "perform analysis", "do analysis", "run analysis", "analyze", "analysis",
+                    "generate prd", "create prd", "build prd", "complete analysis"
+                ])
+                is_confirmation = any(phrase in query_lower for phrase in [
+                    "yes", "proceed", "go ahead", "continue", "ok", "okay", "sure", "confirm"
+                ])
+                
+                if wants_analysis or is_confirmation:
+                    # User wants analysis - provide comprehensive response using agent army
+                    quality_instruction = "\n\nIMPORTANT: The user wants to perform analysis. Use the agent army to provide a comprehensive, intelligent, and detailed analysis. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. Leverage all available agents and knowledge to provide the best possible analysis."
+                    enhanced_query = enhanced_query + quality_instruction
+                else:
+                    # Conversational mode - be friendly, ask questions, keep responses shorter
+                    # Check if user wants v0 agent integration
+                    wants_v0 = any(phrase in query_lower for phrase in [
+                        "v0", "generate code", "create ui", "build interface", "design ui", "ui design",
+                        "generate prompt for v0", "submit to v0", "use v0"
+                    ])
+                    
+                    if wants_v0:
+                        # User wants v0 agent - guide them through prompt generation
+                        v0_instruction = """\n\nV0 AGENT INTEGRATION MODE:
+- The user wants to use the v0 agent to generate UI/code
+- First, help them build a comprehensive prompt by asking clarifying questions about:
+  * What type of application/interface they want
+  * Key features and functionality
+  * Design preferences (if any)
+  * Target users
+- Once you have enough information, use the v0 agent to generate the prompt
+- Ask the user if they want to submit the prompt to v0
+- Keep responses conversational and helpful
+- Format with clear paragraphs and bullet points"""
+                        enhanced_query = enhanced_query + v0_instruction
+                    else:
+                        conversational_instruction = """\n\nCONVERSATIONAL MODE - CRITICAL INSTRUCTIONS:
+- Be friendly and conversational, like ChatGPT or Claude
+- Keep responses SHORT and contextual (2-4 sentences for simple questions, 1-2 paragraphs max for complex ones)
+- Ask clarifying questions when needed (1-2 sentences)
+- Build understanding through conversation - don't overwhelm with information
+- Only provide comprehensive analysis when user explicitly asks or confirms
+- If user mentions an idea or product, compliment them and ask 1-2 follow-up questions
+- Guide the user step-by-step through their product lifecycle phase
+- Use bullet points for lists, but keep them concise
+- Be helpful and supportive, not overwhelming
+- If user says "help me with idea" or similar, ask: "That's a great start! Can you tell me a bit more about [specific aspect]?" 
+- Build context gradually through conversation
+- When user has provided enough information, ask: "Would you like me to perform a comprehensive analysis now?"
+- Only then use the full agent army for analysis
+- Format responses with clear paragraphs and bullet points where helpful
+- Make it feel like a natural conversation, not a Q&A session
+- Remember: Forms are just to collect information - the real analysis happens in the chatbot when user confirms"""
+                        enhanced_query = enhanced_query + conversational_instruction
             
             # Skip RAG if requested (for fast phase form help)
             if skip_rag:

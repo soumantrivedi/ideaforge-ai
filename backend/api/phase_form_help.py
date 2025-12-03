@@ -23,6 +23,7 @@ from backend.agents.agno_orchestrator import AgnoAgenticOrchestrator
 from backend.models.schemas import AgentMessage
 from backend.services.provider_registry import provider_registry
 from backend.services.api_key_loader import load_user_api_keys_from_db
+from backend.config import settings
 
 # Import orchestrator using dependency injection pattern (avoid circular import)
 _orchestrator = None
@@ -435,15 +436,26 @@ VAGUE INPUT HANDLING:
 - Respond with: "To generate precise, implementation-ready requirements, I need the following missing inputs: …"
 """
         
-        # Add instructions for plain text response (NO HTML, NO word limits)
+        # Add instructions for formatted response with bullet points and paragraphs
         if request.response_length == "short":
             response_style = "concise and direct"
-            response_guidance = "Provide a brief, focused answer that directly addresses the question. Be clear and to the point."
+            response_guidance = """Provide a brief, focused answer that directly addresses the question. Format your response with:
+- Clear paragraphs (2-3 sentences each)
+- Bullet points for key items or lists (use "- " prefix)
+- Logical structure with clear flow
+- Actionable guidance that the user can immediately use
+Keep it concise but well-structured."""
         else:
             response_style = "detailed and thorough"
-            response_guidance = "Provide a comprehensive answer that includes: key points, context, relevant considerations, and practical guidance. Be thorough but focused - aim for 3-5 paragraphs with clear structure. Include examples or specific details where helpful, but avoid unnecessary repetition or rambling."
+            response_guidance = """Provide a comprehensive answer that includes: key points, context, relevant considerations, and practical guidance. Format your response with:
+- Well-structured paragraphs (3-5 sentences each, separated by blank lines)
+- Bullet points for lists, key considerations, or actionable items (use "- " prefix)
+- Clear sections with logical flow
+- Examples or specific details where helpful
+- Actionable guidance that helps the user proceed with their work
+Be thorough but focused - avoid unnecessary repetition or rambling."""
         
-        system_context += f"\n\nCRITICAL REQUIREMENTS:\n- Return PLAIN TEXT only (NO HTML, NO markdown formatting)\n- Be {response_style}\n- {response_guidance}\n- Use natural language, no formatting codes\n- Write as if speaking directly to the user\n- Structure your response clearly with logical flow"
+        system_context += f"\n\nCRITICAL REQUIREMENTS:\n- Format your response with clear paragraphs and bullet points\n- Use bullet points (prefix with '- ') for lists, key items, or actionable steps\n- Separate paragraphs with blank lines for readability\n- Be {response_style}\n- {response_guidance}\n- Write as if speaking directly to the user\n- Ensure responses are actionable and help the user proceed with their work\n- Structure your response clearly with logical flow"
         
         # Build user prompt - Include FULL user input (CRITICAL: preserve all details)
         # Include the complete user input to preserve critical details like addresses, requirements, etc.
@@ -459,11 +471,11 @@ CRITICAL: Use ALL details from the user input above. Preserve specific numbers, 
         else:
             user_prompt = f"Question: {request.current_prompt}"
         
-        # Add plain text reminder with mode-specific guidance
+        # Add formatting reminder with mode-specific guidance
         if request.response_length == "verbose":
-            user_prompt += f"\n\nProvide a detailed, comprehensive answer in plain text (no HTML, no markdown). Include context, key considerations, and practical guidance. Aim for thoroughness while staying focused and relevant."
+            user_prompt += f"\n\nProvide a detailed, comprehensive answer formatted with clear paragraphs and bullet points. Use bullet points (prefix with '- ') for lists and key items. Separate paragraphs with blank lines. Include context, key considerations, and practical guidance. Aim for thoroughness while staying focused and relevant."
         else:
-            user_prompt += f"\n\nProvide a clear, concise answer in plain text (no HTML, no markdown)."
+            user_prompt += f"\n\nProvide a clear, concise answer formatted with paragraphs and bullet points where appropriate. Use bullet points (prefix with '- ') for lists or key items. Keep it brief but well-structured."
         
         # Temporarily switch to fast model if short mode
         original_model = None
