@@ -10,6 +10,7 @@ import structlog
 from backend.agents.agno_coordinator_agent import AgnoCoordinatorAgent
 from backend.agents.agno_enhanced_coordinator import AgnoEnhancedCoordinator
 from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
+from backend.agents.agno_requirements_agent import AgnoRequirementsAgent
 from backend.agents.agno_ideation_agent import AgnoIdeationAgent
 from backend.agents.agno_research_agent import AgnoResearchAgent
 from backend.agents.agno_analysis_agent import AgnoAnalysisAgent
@@ -49,6 +50,7 @@ class AgnoAgenticOrchestrator:
             "research": AgnoResearchAgent(enable_rag=self.enable_rag),
             "analysis": AgnoAnalysisAgent(enable_rag=self.enable_rag),
             "prd_authoring": AgnoPRDAuthoringAgent(enable_rag=self.enable_rag),
+            "requirements": AgnoRequirementsAgent(enable_rag=self.enable_rag),  # Dedicated requirements agent
             "ideation": AgnoIdeationAgent(enable_rag=self.enable_rag),
             "summary": AgnoSummaryAgent(enable_rag=self.enable_rag),
             "scoring": AgnoScoringAgent(enable_rag=self.enable_rag),

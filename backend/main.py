@@ -47,7 +47,7 @@ from backend.agents import AGNO_AVAILABLE
 from backend.database import init_db, check_db_health, get_db
 from backend.api.database import router as db_router
 from backend.api.design import router as design_router
-from backend.api.auth import router as auth_router, get_current_user
+from backend.api.auth import router as auth_router, callback_router as auth_callback_router, get_current_user
 from backend.api.users import router as users_router
 from backend.api.products import router as products_router
 from backend.api.conversations import router as conversations_router
@@ -395,6 +395,7 @@ setup_rate_limiting(app)
 # Include routers
 from backend.api.api_keys import router as api_keys_router
 app.include_router(auth_router)
+app.include_router(auth_callback_router)  # Callback router without /api prefix for McKinsey SSO
 app.include_router(users_router)
 app.include_router(products_router)
 app.include_router(conversations_router)

@@ -4,12 +4,12 @@ metadata:
   name: ideaforge-ai-config
   namespace: ideaforge-ai
 data:
-  # Database Configuration
-  POSTGRES_HOST: postgres
+  # Database Configuration (using PostgreSQL HA primary service)
+  POSTGRES_HOST: postgres-ha-primary
   POSTGRES_PORT: "5432"
   POSTGRES_USER: agentic_pm
   POSTGRES_DB: agentic_pm_db
-  DATABASE_URL: postgresql://agentic_pm:$(POSTGRES_PASSWORD)@postgres:5432/agentic_pm_db
+  DATABASE_URL: postgresql://agentic_pm:$(POSTGRES_PASSWORD)@postgres-ha-primary:5432/agentic_pm_db
   
   # Redis Configuration
   REDIS_URL: redis://redis:6379/0

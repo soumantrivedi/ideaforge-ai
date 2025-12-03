@@ -14,6 +14,7 @@ from .orchestrator import AgenticOrchestrator
 try:
     from .agno_base_agent import AgnoBaseAgent
     from .agno_prd_authoring_agent import AgnoPRDAuthoringAgent
+    from .agno_requirements_agent import AgnoRequirementsAgent
     from .agno_ideation_agent import AgnoIdeationAgent
     from .agno_research_agent import AgnoResearchAgent
     from .agno_analysis_agent import AgnoAnalysisAgent
@@ -27,6 +28,7 @@ except ImportError:
     # Define placeholders if Agno is not available
     AgnoBaseAgent = None
     AgnoPRDAuthoringAgent = None
+    AgnoRequirementsAgent = None
     AgnoIdeationAgent = None
     AgnoResearchAgent = None
     AgnoAnalysisAgent = None
@@ -52,6 +54,7 @@ __all__ = [
     # Agno
     "AgnoBaseAgent",
     "AgnoPRDAuthoringAgent",
+    "AgnoRequirementsAgent",
     "AgnoIdeationAgent",
     "AgnoResearchAgent",
     "AgnoAnalysisAgent",
