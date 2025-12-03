@@ -1147,32 +1147,84 @@ Your response MUST show that you've used this context. Generic responses that ig
                     elif hasattr(nested_response, "text") and nested_response.text:
                         response_content = nested_response.text
             
-            # Try .messages attribute (RunOutput-style response)
+            # Try .messages attribute (RunOutput-style response) - CHECK THIS EARLY, BEFORE STRING CONVERSION
             if not response_content and hasattr(response, "messages") and response.messages:
-                # Find the last assistant message
+                # Find the last assistant message with actual content
                 for msg in reversed(response.messages):
                     if hasattr(msg, "role") and msg.role == "assistant":
+                        # Try content first
                         if hasattr(msg, "content") and msg.content:
-                            if isinstance(msg.content, str) and msg.content.strip():
-                                response_content = msg.content
+                            content = msg.content
+                            if isinstance(content, str) and content.strip():
+                                response_content = content
                                 break
+                        # Try reasoning_content if content is empty
+                        elif hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                            reasoning = msg.reasoning_content
+                            if isinstance(reasoning, str) and reasoning.strip():
+                                response_content = reasoning
+                                break
+                        # Try text attribute
+                        elif hasattr(msg, "text") and msg.text:
+                            text = msg.text
+                            if isinstance(text, str) and text.strip():
+                                response_content = text
+                                break
+                        # Try string representation
                         elif isinstance(msg, str):
                             response_content = msg
                             break
+            
+            # Try model_provider_data if still no content (for cases where content is stored in model response)
+            if not response_content and hasattr(response, "model_provider_data") and response.model_provider_data:
+                try:
+                    model_data = response.model_provider_data
+                    if isinstance(model_data, dict):
+                        # Check common response fields
+                        for field in ['content', 'text', 'message', 'choices', 'response']:
+                            if field in model_data:
+                                field_value = model_data[field]
+                                if isinstance(field_value, str) and field_value.strip():
+                                    response_content = field_value
+                                    break
+                        # Check nested choices[0].message.content (OpenAI format)
+                        if not response_content and 'choices' in model_data and isinstance(model_data['choices'], list) and len(model_data['choices']) > 0:
+                            choice = model_data['choices'][0]
+                            if isinstance(choice, dict) and 'message' in choice:
+                                msg = choice['message']
+                                if isinstance(msg, dict) and 'content' in msg:
+                                    content = msg['content']
+                                    if isinstance(content, str) and content.strip():
+                                        response_content = content
+                except Exception as model_data_error:
+                    self.logger.warning("model_provider_data_extraction_failed", error=str(model_data_error))
             
             # Fallback to string conversion
             if not response_content:
                 response_content = str(response)
             
             # Final check: if response_content is a RunOutput string representation, try to extract from it
+            # This should rarely happen now since we check messages early, but keep as fallback
             if isinstance(response_content, str) and "RunOutput" in response_content and hasattr(response, "messages"):
                 # Try to extract from messages if available
                 if response.messages:
                     for msg in reversed(response.messages):
                         if hasattr(msg, "role") and msg.role == "assistant":
+                            # Try all content sources
                             if hasattr(msg, "content") and msg.content:
-                                if isinstance(msg.content, str) and msg.content.strip() and "RunOutput" not in msg.content:
-                                    response_content = msg.content
+                                content = msg.content
+                                if isinstance(content, str) and content.strip() and "RunOutput" not in content:
+                                    response_content = content
+                                    break
+                            elif hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                                reasoning = msg.reasoning_content
+                                if isinstance(reasoning, str) and reasoning.strip() and "RunOutput" not in reasoning:
+                                    response_content = reasoning
+                                    break
+                            elif hasattr(msg, "text") and msg.text:
+                                text = msg.text
+                                if isinstance(text, str) and text.strip() and "RunOutput" not in text:
+                                    response_content = text
                                     break
             
             # Log if content is still empty after all attempts
