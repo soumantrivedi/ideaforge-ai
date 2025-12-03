@@ -587,10 +587,37 @@ CRITICAL: Use ALL details from the user input above. Preserve specific numbers, 
                 yield f"data: {json.dumps({'type': 'error', 'error': 'Agent returned empty response'})}\n\n"
                 return
             
-            response_text = response.response if hasattr(response, 'response') else str(response)
+            # Extract response text - try multiple attributes
+            response_text = None
+            if hasattr(response, 'response'):
+                response_text = response.response
+            elif hasattr(response, 'content'):
+                response_text = response.content
+            elif hasattr(response, 'text'):
+                response_text = response.text
+            else:
+                response_text = str(response)
+            
+            # Log response structure for debugging
+            logger.info(
+                "phase_form_help_response_structure",
+                agent=agent_name,
+                has_response_attr=hasattr(response, 'response'),
+                has_content_attr=hasattr(response, 'content'),
+                has_text_attr=hasattr(response, 'text'),
+                response_type=type(response).__name__,
+                response_text_length=len(response_text) if response_text else 0,
+                response_text_preview=response_text[:100] if response_text else None
+            )
             
             if not response_text or not response_text.strip():
-                logger.error("phase_form_help_empty_response_text", agent=agent_name)
+                logger.error(
+                    "phase_form_help_empty_response_text",
+                    agent=agent_name,
+                    response_type=type(response).__name__,
+                    response_attrs=dir(response),
+                    response_str=str(response)[:200]
+                )
                 yield f"data: {json.dumps({'type': 'error', 'error': 'Agent returned empty response text'})}\n\n"
                 return
             
