@@ -80,15 +80,29 @@ export function saveChatMessages(productId: string, messages: any[]): void {
         } catch (finalError) {
           // Last resort: clear old session data and try again
           console.warn('Clearing old session data to free space');
-          clearProductSession(productId);
-          // Try one more time with minimal data
-          const minimalData: ChatSessionData = {
-            messages: messages.slice(-10),
-            agentInteractions: [],
-            activeAgents: [],
-            lastUpdated: new Date().toISOString(),
-          };
-          sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(minimalData));
+          try {
+            clearProductSession(productId);
+            // Wait a bit for storage to clear
+            setTimeout(() => {
+              // Try one more time with minimal data
+              const minimalData: ChatSessionData = {
+                messages: messages.slice(-10),
+                agentInteractions: [],
+                activeAgents: [],
+                lastUpdated: new Date().toISOString(),
+              };
+              try {
+                sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(minimalData));
+                console.log('✅ Successfully saved minimal data after clearing');
+              } catch (e) {
+                console.error('❌ Still unable to save after clearing. Storage may be full. Please clear manually.');
+                console.log('💡 Run in console: window.ideaforgeDebug.clearAllStorage()');
+              }
+            }, 100);
+          } catch (clearError) {
+            console.error('❌ Unable to clear storage. Please clear manually:', clearError);
+            console.log('💡 Run in console: window.ideaforgeDebug.clearAllStorage()');
+          }
         }
       }
     } else {
@@ -157,7 +171,13 @@ export function saveChatSession(productId: string, data: Partial<ChatSessionData
           coordinationMode: data.coordinationMode,
           lastUpdated: new Date().toISOString(),
         };
-        sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(minimalData));
+          try {
+            sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(minimalData));
+            console.log('✅ Successfully saved minimal data after clearing');
+          } catch (e) {
+            console.error('❌ Still unable to save after clearing. Storage may be full. Please clear manually.');
+            console.log('💡 Run in console: window.ideaforgeDebug.clearAllStorage()');
+          }
       }
     } else {
       console.error('Error saving chat session to sessionStorage:', error);
@@ -234,14 +254,68 @@ export function clearAllSessionStorage(): void {
         key.startsWith('agent_interactions_') ||
         key.startsWith('active_agents_') ||
         key.startsWith('coordination_mode_') ||
-        key === 'app_state'
+        key === 'app_state' ||
+        key.startsWith('product_info_')
       ) {
         sessionStorage.removeItem(key);
       }
     });
+    console.log('Cleared all IdeaForge AI session storage');
   } catch (error) {
     console.error('Error clearing session storage:', error);
   }
+}
+
+/**
+ * Get sessionStorage usage information
+ * Returns estimated usage and percentage
+ */
+export function getSessionStorageInfo(): { used: number; quota: number; percentage: number; keys: string[] } {
+  try {
+    let used = 0;
+    const keys: string[] = [];
+    for (let key in sessionStorage) {
+      if (sessionStorage.hasOwnProperty(key)) {
+        const value = sessionStorage[key];
+        used += (value ? value.length : 0) + key.length;
+        keys.push(key);
+      }
+    }
+    // Estimate quota (typically 5-10MB, but varies by browser)
+    const quota = 5 * 1024 * 1024; // 5MB estimate
+    const percentage = (used / quota) * 100;
+    return { used, quota, percentage, keys };
+  } catch (error) {
+    console.error('Error getting sessionStorage info:', error);
+    return { used: 0, quota: 0, percentage: 0, keys: [] };
+  }
+}
+
+// Expose utility functions to window for debugging
+if (typeof window !== 'undefined') {
+  (window as any).ideaforgeDebug = {
+    clearProductSession,
+    clearAllSessionStorage,
+    getSessionStorageInfo,
+    clearStorageForProduct: (productId: string) => {
+      clearProductSession(productId);
+      console.log(`✅ Cleared storage for product: ${productId}`);
+    },
+    clearAllStorage: () => {
+      clearAllSessionStorage();
+      console.log('✅ Cleared all IdeaForge AI storage');
+    },
+    showStorageInfo: () => {
+      const info = getSessionStorageInfo();
+      console.log('📊 SessionStorage Info:', {
+        used: `${(info.used / 1024).toFixed(2)} KB`,
+        quota: `${(info.quota / 1024 / 1024).toFixed(2)} MB`,
+        percentage: `${info.percentage.toFixed(2)}%`,
+        keys: info.keys.filter(k => k.startsWith('chat_messages_') || k.startsWith('product_info_'))
+      });
+      return info;
+    }
+  };
 }
 
 /**
