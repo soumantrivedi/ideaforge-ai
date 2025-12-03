@@ -32,6 +32,7 @@ export interface AppState {
 
 /**
  * Save chat messages for a product
+ * Handles QuotaExceededError by truncating old messages
  */
 export function saveChatMessages(productId: string, messages: any[]): void {
   try {
@@ -43,7 +44,56 @@ export function saveChatMessages(productId: string, messages: any[]): void {
     };
     sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(data));
   } catch (error) {
-    console.error('Error saving chat messages to sessionStorage:', error);
+    if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+      // Quota exceeded - try to save with truncated messages
+      console.warn('SessionStorage quota exceeded, truncating old messages');
+      try {
+        // Keep only the most recent 50 messages
+        const truncatedMessages = messages.slice(-50);
+        const data: ChatSessionData = {
+          messages: truncatedMessages,
+          agentInteractions: [],
+          activeAgents: [],
+          lastUpdated: new Date().toISOString(),
+        };
+        sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(data));
+        console.log(`Saved truncated chat messages (${truncatedMessages.length} messages)`);
+      } catch (truncateError) {
+        // If still failing, try even more aggressive truncation
+        console.warn('Still exceeding quota, trying more aggressive truncation');
+        try {
+          // Keep only last 20 messages and truncate content
+          const truncatedMessages = messages.slice(-20).map((msg: any) => ({
+            ...msg,
+            content: typeof msg.content === 'string' && msg.content.length > 500 
+              ? msg.content.substring(0, 500) + '... [truncated]' 
+              : msg.content
+          }));
+          const data: ChatSessionData = {
+            messages: truncatedMessages,
+            agentInteractions: [],
+            activeAgents: [],
+            lastUpdated: new Date().toISOString(),
+          };
+          sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(data));
+          console.log(`Saved heavily truncated chat messages (${truncatedMessages.length} messages)`);
+        } catch (finalError) {
+          // Last resort: clear old session data and try again
+          console.warn('Clearing old session data to free space');
+          clearProductSession(productId);
+          // Try one more time with minimal data
+          const minimalData: ChatSessionData = {
+            messages: messages.slice(-10),
+            agentInteractions: [],
+            activeAgents: [],
+            lastUpdated: new Date().toISOString(),
+          };
+          sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(minimalData));
+        }
+      }
+    } else {
+      console.error('Error saving chat messages to sessionStorage:', error);
+    }
   }
 }
 
@@ -65,6 +115,7 @@ export function loadChatMessages(productId: string): any[] | null {
 
 /**
  * Save complete chat session data
+ * Handles QuotaExceededError by truncating old messages
  */
 export function saveChatSession(productId: string, data: Partial<ChatSessionData>): void {
   try {
@@ -78,7 +129,39 @@ export function saveChatSession(productId: string, data: Partial<ChatSessionData
     };
     sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(updated));
   } catch (error) {
-    console.error('Error saving chat session to sessionStorage:', error);
+    if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+      // Quota exceeded - truncate messages and try again
+      console.warn('SessionStorage quota exceeded in saveChatSession, truncating messages');
+      try {
+        const existing = loadChatSession(productId);
+        // Limit messages to 50, agentInteractions to 20
+        const truncatedMessages = (data.messages ?? existing?.messages ?? []).slice(-50);
+        const truncatedInteractions = (data.agentInteractions ?? existing?.agentInteractions ?? []).slice(-20);
+        const updated: ChatSessionData = {
+          messages: truncatedMessages,
+          agentInteractions: truncatedInteractions,
+          activeAgents: data.activeAgents ?? existing?.activeAgents ?? [],
+          coordinationMode: data.coordinationMode ?? existing?.coordinationMode,
+          lastUpdated: new Date().toISOString(),
+        };
+        sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(updated));
+        console.log(`Saved truncated chat session (${truncatedMessages.length} messages, ${truncatedInteractions.length} interactions)`);
+      } catch (truncateError) {
+        // If still failing, clear and save minimal data
+        console.warn('Still exceeding quota, clearing and saving minimal data');
+        clearProductSession(productId);
+        const minimalData: ChatSessionData = {
+          messages: (data.messages ?? []).slice(-10),
+          agentInteractions: [],
+          activeAgents: data.activeAgents ?? [],
+          coordinationMode: data.coordinationMode,
+          lastUpdated: new Date().toISOString(),
+        };
+        sessionStorage.setItem(SESSION_KEYS.CHAT_MESSAGES(productId), JSON.stringify(minimalData));
+      }
+    } else {
+      console.error('Error saving chat session to sessionStorage:', error);
+    }
   }
 }
 
