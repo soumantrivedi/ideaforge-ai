@@ -212,27 +212,42 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             # If response is a RunOutput object (string representation), extract actual content
             # The base agent should handle most cases, but we do additional cleanup here
             if isinstance(prompt_text, str) and ("RunOutput" in prompt_text or "run_id=" in prompt_text):
-                # Try to extract from the underlying agno agent's last run
+                # Try multiple extraction strategies
                 if hasattr(self, 'agno_agent') and self.agno_agent:
                     try:
-                        # Get the last run from the agent
-                        if hasattr(self.agno_agent, 'last_run') and self.agno_agent.last_run:
+                        # Strategy 1: Check if response object itself has content (not just response.response)
+                        if hasattr(response, 'content') and response.content:
+                            if isinstance(response.content, str) and response.content.strip() and "RunOutput" not in response.content:
+                                prompt_text = response.content
+                                logger.info("lovable_prompt_extracted_from_response_content", 
+                                          extracted_length=len(prompt_text))
+                            elif not isinstance(response.content, str):
+                                # Try to get string representation
+                                content_str = str(response.content)
+                                if "RunOutput" not in content_str and len(content_str) > 50:
+                                    prompt_text = content_str
+                                    logger.info("lovable_prompt_extracted_from_response_content_str", 
+                                              extracted_length=len(prompt_text))
+                        
+                        # Strategy 2: Get the last run from the agent
+                        if ("RunOutput" in prompt_text or "run_id=" in prompt_text) and hasattr(self.agno_agent, 'last_run') and self.agno_agent.last_run:
                             last_run = self.agno_agent.last_run
-                            if hasattr(last_run, 'messages') and last_run.messages:
+                            
+                            # Check last_run.content directly
+                            if hasattr(last_run, 'content') and last_run.content:
+                                if isinstance(last_run.content, str) and last_run.content.strip() and "RunOutput" not in last_run.content:
+                                    prompt_text = last_run.content
+                                    logger.info("lovable_prompt_extracted_from_last_run_content", 
+                                              extracted_length=len(prompt_text))
+                            
+                            # Strategy 3: Check messages array for assistant message with content
+                            if ("RunOutput" in prompt_text or "run_id=" in prompt_text) and hasattr(last_run, 'messages') and last_run.messages:
                                 # Find the last assistant message with actual content
                                 for msg in reversed(last_run.messages):
                                     if hasattr(msg, 'role') and msg.role == 'assistant':
-                                        # Try multiple ways to get content
-                                        content = None
-                                        if hasattr(msg, 'content'):
+                                        # Try content first
+                                        if hasattr(msg, 'content') and msg.content:
                                             content = msg.content
-                                        elif hasattr(msg, 'text'):
-                                            content = msg.text
-                                        elif isinstance(msg, str):
-                                            content = msg
-                                        
-                                        if content:
-                                            # Handle different content types
                                             if isinstance(content, str) and content.strip():
                                                 # Make sure it's not the RunOutput string representation
                                                 if "RunOutput" not in content and "run_id=" not in content and len(content) > 50:
@@ -241,14 +256,29 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                                                               extracted_length=len(prompt_text),
                                                               content_preview=prompt_text[:100])
                                                     break
-                                            elif hasattr(content, '__str__'):
-                                                # Try to get string representation if it's an object
-                                                content_str = str(content)
-                                                if "RunOutput" not in content_str and "run_id=" not in content_str and len(content_str) > 50:
-                                                    prompt_text = content_str
-                                                    logger.info("lovable_prompt_extracted_from_str", 
-                                                              extracted_length=len(prompt_text))
-                                                    break
+                                        # Try reasoning_content if content is empty
+                                        elif hasattr(msg, 'reasoning_content') and msg.reasoning_content:
+                                            reasoning = msg.reasoning_content
+                                            if isinstance(reasoning, str) and reasoning.strip() and "RunOutput" not in reasoning and len(reasoning) > 50:
+                                                prompt_text = reasoning
+                                                logger.info("lovable_prompt_extracted_from_reasoning", 
+                                                          extracted_length=len(prompt_text))
+                                                break
+                                        # Try text attribute
+                                        elif hasattr(msg, 'text') and msg.text:
+                                            text = msg.text
+                                            if isinstance(text, str) and text.strip() and "RunOutput" not in text and len(text) > 50:
+                                                prompt_text = text
+                                                logger.info("lovable_prompt_extracted_from_text", 
+                                                          extracted_length=len(prompt_text))
+                                                break
+                                        # Try string representation
+                                        elif isinstance(msg, str):
+                                            if "RunOutput" not in msg and len(msg) > 50:
+                                                prompt_text = msg
+                                                logger.info("lovable_prompt_extracted_from_msg_str", 
+                                                          extracted_length=len(prompt_text))
+                                                break
                     except Exception as run_extract_error:
                         logger.warning("lovable_prompt_run_extraction_failed", 
                                      error=str(run_extract_error),
