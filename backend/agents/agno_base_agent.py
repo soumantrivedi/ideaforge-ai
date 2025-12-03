@@ -1093,10 +1093,76 @@ Your response MUST show that you've used this context. Generic responses that ig
                 self.logger.error("agno_agent_error", agent=self.name, error=str(e))
                 raise
 
-            # Extract response content
-            response_content = (
-                response.content if hasattr(response, "content") else str(response)
-            )
+            # Extract response content - try multiple attributes for Agno response
+            response_content = ""
+            
+            # Try different ways to extract content from Agno response
+            if hasattr(response, "content"):
+                content = response.content
+                if content:
+                    if isinstance(content, str):
+                        response_content = content
+                    elif isinstance(content, list) and len(content) > 0:
+                        # Handle Anthropic-style response with content array
+                        if hasattr(content[0], "text"):
+                            response_content = content[0].text
+                        elif isinstance(content[0], str):
+                            response_content = content[0]
+                        else:
+                            response_content = str(content[0])
+                    else:
+                        response_content = str(content) if content else ""
+            
+            # Try .text attribute
+            if not response_content and hasattr(response, "text") and response.text:
+                response_content = response.text
+            
+            # Try .message attribute
+            if not response_content and hasattr(response, "message"):
+                message = response.message
+                if message:
+                    if hasattr(message, "content") and message.content:
+                        response_content = message.content
+                    elif isinstance(message, str):
+                        response_content = message
+                    else:
+                        response_content = str(message)
+            
+            # Try .choices attribute (OpenAI-style)
+            if not response_content and hasattr(response, "choices") and response.choices:
+                if len(response.choices) > 0:
+                    choice = response.choices[0]
+                    if hasattr(choice, "message") and choice.message:
+                        if hasattr(choice.message, "content") and choice.message.content:
+                            response_content = choice.message.content
+            
+            # Try .response attribute (nested response)
+            if not response_content and hasattr(response, "response"):
+                nested_response = response.response
+                if nested_response:
+                    if isinstance(nested_response, str):
+                        response_content = nested_response
+                    elif hasattr(nested_response, "content") and nested_response.content:
+                        response_content = nested_response.content
+                    elif hasattr(nested_response, "text") and nested_response.text:
+                        response_content = nested_response.text
+            
+            # Fallback to string conversion
+            if not response_content:
+                response_content = str(response)
+            
+            # Log if content is still empty after all attempts
+            if not response_content or not response_content.strip():
+                self.logger.warning(
+                    "agno_response_content_empty",
+                    agent=self.name,
+                    response_type=type(response).__name__,
+                    response_attrs=[attr for attr in dir(response) if not attr.startswith("_")],
+                    response_str=str(response)[:500],
+                    has_content=hasattr(response, "content"),
+                    content_type=type(getattr(response, "content", None)).__name__ if hasattr(response, "content") else None,
+                    content_value=str(getattr(response, "content", None))[:200] if hasattr(response, "content") else None
+                )
 
             # Collect metrics
             duration = time.time() - start_time
