@@ -459,9 +459,9 @@ async def mckinsey_authorize():
                 has_client_secret=bool(settings.mckinsey_client_secret),
                 client_secret_empty=client_secret_empty,
             )
-            error_logger.log_authorization_error(
+            error_logger.log_oauth_error(
+                error_type=OAuthErrorType.MISSING_CONFIGURATION,
                 error_message="McKinsey SSO not configured. MCKINSEY_CLIENT_ID and MCKINSEY_CLIENT_SECRET must be set.",
-                error_type=OAuthErrorType.CONFIGURATION_ERROR,
                 provider="mckinsey",
             )
             raise HTTPException(
