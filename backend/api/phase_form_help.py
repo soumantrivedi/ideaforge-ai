@@ -288,7 +288,6 @@ async def stream_phase_form_help(
                 for field, value in form_data.items():
                     if value and str(value).strip():
                         if isinstance(value, (dict, list)):
-                            import json
                             phase_context += f"- {field}: {json.dumps(value, indent=2)}\n"
                         else:
                             phase_context += f"- {field}: {value}\n"

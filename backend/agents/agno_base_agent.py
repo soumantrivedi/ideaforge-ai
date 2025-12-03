@@ -387,6 +387,26 @@ class AgnoBaseAgent(ABC):
         if model_tier == "fast":
             # Fast models for most agents (50-70% latency reduction, lowest cost)
             # Updated Dec 2025: GPT-5.1 Instant (fastest OpenAI model)
+            # Check if AI Gateway is enabled first - if so, use AIGatewayModel
+            if provider_registry.has_ai_gateway():
+                gateway_client = provider_registry.get_ai_gateway_client()
+                if gateway_client:
+                    model_id = getattr(
+                        settings, "ai_gateway_fast_model", "gpt-5.1-chat-latest"
+                    )
+                    try:
+                        return AIGatewayModel(
+                            id=model_id,
+                            client=gateway_client,
+                            max_completion_tokens=2000,
+                        )
+                    except Exception as e:
+                        self.logger.warning(
+                            "ai_gateway_model_creation_failed", error=str(e)
+                        )
+                        # Fall through to other providers
+            
+            # If AI Gateway not enabled or failed, try direct OpenAI
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
@@ -403,27 +423,15 @@ class AgnoBaseAgent(ABC):
                 )
 
                 if api_key:
-                    # For AI Gateway: create custom clients with JWT in Authorization header
+                    # Only use direct OpenAI API if base_url is NOT an AI Gateway URL
+                    # If base_url contains "ai-gateway", we should have used AIGatewayModel above
                     if base_url and "ai-gateway" in base_url:
-                        from openai import OpenAI, AsyncOpenAI
-
-                        self.logger.info("using_ai_gateway_with_custom_clients")
-                        sync_client = OpenAI(
-                            api_key="sk-proj-dummy",
-                            base_url=base_url,
-                            default_headers={"Authorization": f"Bearer {api_key}"},
+                        self.logger.warning(
+                            "ai_gateway_url_but_not_using_gateway_model",
+                            message="AI Gateway URL detected but AIGatewayModel not used. This may cause authentication errors."
                         )
-                        async_client = AsyncOpenAI(
-                            api_key="sk-proj-dummy",
-                            base_url=base_url,
-                            default_headers={"Authorization": f"Bearer {api_key}"},
-                        )
-                        return OpenAIChat(
-                            id=model_id,
-                            client=sync_client,
-                            async_client=async_client,
-                            max_completion_tokens=2000,
-                        )
+                        # Don't create OpenAI clients with AI Gateway URLs - this won't work
+                        # Fall through to other providers
                     else:
                         self.logger.info("using_direct_openai_api")
                         return OpenAIChat(
@@ -440,25 +448,37 @@ class AgnoBaseAgent(ABC):
         elif model_tier == "standard":
             # Standard models for coordinators (balanced performance/cost)
             # Updated Dec 2025: GPT-5.1 (enhanced reasoning)
+            # Check if AI Gateway is enabled first - if so, use AIGatewayModel
+            if provider_registry.has_ai_gateway():
+                gateway_client = provider_registry.get_ai_gateway_client()
+                if gateway_client:
+                    model_id = getattr(settings, "ai_gateway_standard_model", "gpt-5.1")
+                    try:
+                        return AIGatewayModel(
+                            id=model_id,
+                            client=gateway_client,
+                            max_completion_tokens=4000,
+                        )
+                    except Exception as e:
+                        self.logger.warning(
+                            "ai_gateway_model_creation_failed", error=str(e)
+                        )
+                        # Fall through to other providers
+            
+            # If AI Gateway not enabled or failed, try direct OpenAI
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
                 model_id = getattr(settings, "ai_gateway_standard_model", "gpt-5.1")
                 if api_key:
-                    # For AI Gateway: create custom client with JWT in Authorization header
+                    # Only use direct OpenAI API if base_url is NOT an AI Gateway URL
                     if base_url and "ai-gateway" in base_url:
-                        from openai import AsyncOpenAI
-
-                        custom_client = AsyncOpenAI(
-                            api_key="none",
-                            base_url=base_url,
-                            default_headers={"Authorization": f"Bearer {api_key}"},
+                        self.logger.warning(
+                            "ai_gateway_url_but_not_using_gateway_model",
+                            message="AI Gateway URL detected but AIGatewayModel not used. This may cause authentication errors."
                         )
-                        return OpenAIChat(
-                            id=model_id,
-                            async_client=custom_client,
-                            max_completion_tokens=4000,
-                        )
+                        # Don't create OpenAI clients with AI Gateway URLs - this won't work
+                        # Fall through to other providers
                     else:
                         # Direct OpenAI API
                         return OpenAIChat(
@@ -478,6 +498,26 @@ class AgnoBaseAgent(ABC):
         elif model_tier == "premium":
             # Premium models for critical reasoning (most powerful, Nov 2025)
             # GPT-5.1 (Nov 12, 2025), Claude Opus 4.5 (Nov 24, 2025), Gemini 3 Pro (Nov 2025)
+            # Check if AI Gateway is enabled first - if so, use AIGatewayModel
+            if provider_registry.has_ai_gateway():
+                gateway_client = provider_registry.get_ai_gateway_client()
+                if gateway_client:
+                    model_id = getattr(
+                        settings, "ai_gateway_premium_model", settings.agent_model_primary
+                    )
+                    try:
+                        return AIGatewayModel(
+                            id=model_id,
+                            client=gateway_client,
+                            max_completion_tokens=4000,
+                        )
+                    except Exception as e:
+                        self.logger.warning(
+                            "ai_gateway_model_creation_failed", error=str(e)
+                        )
+                        # Fall through to other providers
+            
+            # If AI Gateway not enabled or failed, try direct OpenAI
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
@@ -485,20 +525,14 @@ class AgnoBaseAgent(ABC):
                     settings, "ai_gateway_premium_model", settings.agent_model_primary
                 )
                 if api_key:
-                    # For AI Gateway: create custom client with JWT in Authorization header
+                    # Only use direct OpenAI API if base_url is NOT an AI Gateway URL
                     if base_url and "ai-gateway" in base_url:
-                        from openai import AsyncOpenAI
-
-                        custom_client = AsyncOpenAI(
-                            api_key="none",
-                            base_url=base_url,
-                            default_headers={"Authorization": f"Bearer {api_key}"},
+                        self.logger.warning(
+                            "ai_gateway_url_but_not_using_gateway_model",
+                            message="AI Gateway URL detected but AIGatewayModel not used. This may cause authentication errors."
                         )
-                        return OpenAIChat(
-                            id=model_id,
-                            async_client=custom_client,
-                            max_completion_tokens=4000,
-                        )
+                        # Don't create OpenAI clients with AI Gateway URLs - this won't work
+                        # Fall through to other providers
                     else:
                         # Direct OpenAI API
                         if "gpt-5.1" in model_id.lower() or "gpt-5" in model_id.lower():
