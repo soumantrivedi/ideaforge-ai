@@ -688,14 +688,19 @@ export function PhaseFormModal({
       const conversationHistory = await lifecycleService.getProductConversationHistory(productId);
       
       // Generate conversation summary (last 5 messages)
-      const { generateConversationSummary } = await import('../lib/phase-form-help-client');
+      // Use static import instead of dynamic import to avoid 404 errors
+      const { generateConversationSummary, streamPhaseFormHelp } = await import('../lib/phase-form-help-client').catch((error) => {
+        console.error('Error importing phase-form-help-client:', error);
+        // Fallback: return empty functions
+        return {
+          generateConversationSummary: () => '',
+          streamPhaseFormHelp: async () => {}
+        };
+      });
       const conversationSummary = generateConversationSummary(conversationHistory);
       
       // Get user input if any
       const userInput = formData[currentField]?.trim() || undefined;
-      
-      // Use new single-agent phase form help endpoint
-      const { streamPhaseFormHelp } = await import('../lib/phase-form-help-client');
       
       let accumulatedText = '';
       

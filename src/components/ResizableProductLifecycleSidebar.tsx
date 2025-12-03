@@ -9,6 +9,7 @@ interface ResizableProductLifecycleSidebarProps {
   submissions: PhaseSubmission[];
   currentPhaseId?: string;
   onPhaseSelect: (phase: LifecyclePhase) => void;
+  phasesLoading?: boolean;
 }
 
 export function ResizableProductLifecycleSidebar({
@@ -17,6 +18,7 @@ export function ResizableProductLifecycleSidebar({
   submissions,
   currentPhaseId,
   onPhaseSelect,
+  phasesLoading = false,
 }: ResizableProductLifecycleSidebarProps) {
   const [width, setWidth] = useState(360); // Default ~25% of 1440px screen
   const [isResizing, setIsResizing] = useState(false);
@@ -59,8 +61,27 @@ export function ResizableProductLifecycleSidebar({
     startWidthRef.current = width;
   };
 
-  if (!productId) {
+  // Don't hide sidebar if productId is temporarily empty during state restoration
+  // Only hide if productId is explicitly empty and we're not loading
+  // This prevents flickering during refresh
+  if (!productId && !phasesLoading) {
     return null;
+  }
+  
+  // Show loading state if productId exists but phases are loading
+  if (productId && phasesLoading && (!phases || phases.length === 0)) {
+    return (
+      <div className="hidden lg:block relative z-10" style={{ width: `${width}px`, minWidth: '200px', maxWidth: '25%' }}>
+        <div className="sticky top-0 h-[calc(100vh-8rem)] overflow-y-auto flex flex-col gap-4 bg-white border-r border-gray-200">
+          <div className="p-6 border-b border-gray-200">
+            <h2 className="text-lg font-bold text-gray-900 mb-2">Product Lifecycle</h2>
+            <div className="text-center py-8">
+              <p className="text-sm text-gray-500">Loading phases...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -76,6 +97,7 @@ export function ResizableProductLifecycleSidebar({
           currentPhaseId={currentPhaseId}
           onPhaseSelect={onPhaseSelect}
           productId={productId}
+          phasesLoading={phasesLoading}
         />
         <div className="flex-shrink-0">
           <MyProgress

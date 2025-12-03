@@ -222,6 +222,31 @@ export function ProductChatInterface({ productId, sessionId, phases = [], onPhas
             detectedPhaseName = phaseMatch[1].trim();
             break;
           }
+          // Also check for "I want to work on the **Phase Name** phase" pattern
+          const phaseWorkMatch = msg.content.match(/work on the \*\*([A-Za-z\s]+)\*\* phase/i);
+          if (phaseWorkMatch) {
+            detectedPhaseName = phaseWorkMatch[1].trim();
+            break;
+          }
+        }
+      }
+      
+      // Also detect phase from current query if it mentions phase keywords
+      if (!detectedPhaseName) {
+        const queryLower = fullQuery.toLowerCase();
+        // Phase keyword detection
+        if (queryLower.includes('market research') || queryLower.includes('market trend') || queryLower.includes('competitive analysis')) {
+          detectedPhaseName = 'Market Research';
+        } else if (queryLower.includes('requirement') || queryLower.includes('prd') || queryLower.includes('specification')) {
+          detectedPhaseName = 'Requirements';
+        } else if (queryLower.includes('design') || queryLower.includes('mockup') || queryLower.includes('ui') || queryLower.includes('ux')) {
+          detectedPhaseName = 'Design';
+        } else if (queryLower.includes('development planning') || queryLower.includes('development plan')) {
+          detectedPhaseName = 'Development Planning';
+        } else if (queryLower.includes('go-to-market') || queryLower.includes('gtm') || queryLower.includes('strategy')) {
+          detectedPhaseName = 'Go to Market';
+        } else if (queryLower.includes('ideation') || queryLower.includes('brainstorm') || queryLower.includes('idea generation')) {
+          detectedPhaseName = 'Ideation';
         }
       }
 
@@ -233,9 +258,10 @@ export function ProductChatInterface({ productId, sessionId, phases = [], onPhas
         always_use_rag: true, // Flag to ensure RAG is always considered
       };
       
-      // Add phase_name if detected from conversation
+      // Add phase_name if detected from conversation or query
       if (detectedPhaseName) {
         requestContext.phase_name = detectedPhaseName;
+        console.log('ProductChatInterface: Detected phase from conversation/query:', detectedPhaseName);
       }
 
       const request = {

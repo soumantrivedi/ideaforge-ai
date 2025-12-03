@@ -27,6 +27,11 @@ spec:
           name: http
           protocol: TCP
         env:
+        # Database Connection Pool Configuration (reduced to prevent "too many clients" errors)
+        - name: DB_POOL_SIZE
+          value: "5"
+        - name: DB_MAX_OVERFLOW
+          value: "5"
         # Database Configuration
         # DATABASE_URL is constructed from individual components below
         - name: POSTGRES_HOST

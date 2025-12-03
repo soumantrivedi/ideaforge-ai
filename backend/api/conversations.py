@@ -49,7 +49,7 @@ async def get_conversation_history(
                        ch.content, ch.formatted_content, ch.created_at,
                        cs.title as session_title
                 FROM conversation_history ch
-                JOIN conversation_sessions cs ON ch.session_id = cs.id
+                LEFT JOIN conversation_sessions cs ON ch.session_id = cs.id
                 WHERE ch.product_id = :product_id
                 AND ch.tenant_id = :tenant_id
                 ORDER BY ch.created_at DESC
@@ -68,7 +68,7 @@ async def get_conversation_history(
                        cs.title as session_title, ch.product_id,
                        p.name as product_name
                 FROM conversation_history ch
-                JOIN conversation_sessions cs ON ch.session_id = cs.id
+                LEFT JOIN conversation_sessions cs ON ch.session_id = cs.id
                 LEFT JOIN products p ON ch.product_id = p.id
                 WHERE ch.tenant_id = :tenant_id
                 AND (
@@ -99,9 +99,9 @@ async def get_conversation_history(
                 "content": row[4],
                 "formatted_content": row[5],
                 "created_at": row[6].isoformat() if row[6] else None,
-                "session_title": row[7],
+                "session_title": row[7] if row[7] else None,  # Handle NULL session_title
                 "product_id": str(row[8]) if len(row) > 8 and row[8] else None,
-                "product_name": row[9] if len(row) > 9 else None,
+                "product_name": row[9] if len(row) > 9 and row[9] else None,
             }
             for row in rows
         ]

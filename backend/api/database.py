@@ -523,7 +523,7 @@ async def get_phase_submissions(
             SELECT ps.id, ps.product_id, ps.phase_id, ps.user_id, ps.form_data, ps.generated_content,
                    ps.status, ps.metadata, ps.created_at, ps.updated_at
             FROM phase_submissions ps
-            JOIN products p ON ps.product_id = p.id
+            LEFT JOIN products p ON ps.product_id = p.id
             WHERE ps.tenant_id = :tenant_id
         """
         params = {"tenant_id": current_user["tenant_id"]}

@@ -31,10 +31,10 @@ else:
 
 # Create async engine with optimized pool settings
 # For kind cluster: Reduced pool size to fit within PostgreSQL max_connections=100
-# With 3 backend pods: 3 × (10 + 10) = 60 max connections (leaves room for system connections)
+# With 3 backend pods: 3 × (5 + 5) = 30 max connections (leaves room for system connections)
 # For production: Increase pool_size and max_overflow based on PostgreSQL max_connections
-pool_size = int(os.getenv("DB_POOL_SIZE", "10"))  # Default 10 for kind, can be overridden
-max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))  # Default 10 for kind, can be overridden
+pool_size = int(os.getenv("DB_POOL_SIZE", "5"))  # Reduced from 10 to 5 for kind to prevent connection exhaustion
+max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "5"))  # Reduced from 10 to 5 for kind
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -42,8 +42,14 @@ engine = create_async_engine(
     pool_pre_ping=True,  # Verify connections before using
     pool_size=pool_size,  # Base pool size per pod
     max_overflow=max_overflow,  # Additional connections beyond pool_size
-    pool_recycle=3600,  # Recycle connections after 1 hour
-    pool_timeout=15,  # Timeout for getting connection from pool
+    pool_recycle=1800,  # Recycle connections after 30 minutes (reduced from 1 hour)
+    pool_timeout=10,  # Timeout for getting connection from pool (reduced from 15)
+    connect_args={
+        "server_settings": {
+            "application_name": "ideaforge_ai_backend",
+            "statement_timeout": "30000",  # 30 second statement timeout
+        }
+    }
 )
 
 # Create session factory

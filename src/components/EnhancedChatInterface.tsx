@@ -65,6 +65,8 @@ export function EnhancedChatInterface({
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [expandedMetadataIndex, setExpandedMetadataIndex] = useState<number | null>(null);
   const [productName, setProductName] = useState<string>('');
+  const [productDescription, setProductDescription] = useState<string>('');
+  const [productLoading, setProductLoading] = useState<boolean>(false);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -108,18 +110,36 @@ export function EnhancedChatInterface({
     return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Fetch product name when productId changes
+  // Load product info from sessionStorage on mount, then fetch fresh data
   useEffect(() => {
-    if (productId && token) {
-      fetchProductName();
+    if (productId) {
+      // Try to load from sessionStorage first for instant display
+      const cachedProductInfo = sessionStorage.getItem(`product_info_${productId}`);
+      if (cachedProductInfo) {
+        try {
+          const cached = JSON.parse(cachedProductInfo);
+          setProductName(cached.name || '');
+          setProductDescription(cached.description || '');
+        } catch (e) {
+          console.error('Error parsing cached product info:', e);
+        }
+      }
+      
+      // Then fetch fresh data if token is available
+      if (token) {
+        fetchProductInfo();
+      }
     } else {
+      // Only clear if productId is actually empty (not just loading)
       setProductName('');
+      setProductDescription('');
     }
   }, [productId, token]);
 
-  const fetchProductName = async () => {
+  const fetchProductInfo = async () => {
     if (!productId || !token) return;
     
+    setProductLoading(true);
     try {
       const response = await fetch(`${API_URL}/api/products/${productId}`, {
         headers: {
@@ -130,10 +150,33 @@ export function EnhancedChatInterface({
 
       if (response.ok) {
         const data = await response.json();
-        setProductName(data.name || '');
+        const productInfo = {
+          name: data.name || '',
+          description: data.description || '',
+        };
+        setProductName(productInfo.name);
+        setProductDescription(productInfo.description);
+        
+        // Cache in sessionStorage for instant restore on refresh
+        sessionStorage.setItem(`product_info_${productId}`, JSON.stringify(productInfo));
+      } else {
+        // If product not found, try to keep cached info if available
+        const cachedProductInfo = sessionStorage.getItem(`product_info_${productId}`);
+        if (!cachedProductInfo) {
+          setProductName('');
+          setProductDescription('');
+        }
       }
     } catch (error) {
-      console.error('Error fetching product name:', error);
+      console.error('Error fetching product info:', error);
+      // On error, try to use cached info if available
+      const cachedProductInfo = sessionStorage.getItem(`product_info_${productId}`);
+      if (!cachedProductInfo) {
+        // Only clear if no cached info available
+        // Keep existing values to prevent flickering
+      }
+    } finally {
+      setProductLoading(false);
     }
   };
 
@@ -259,10 +302,24 @@ export function EnhancedChatInterface({
             </div>
             <div>
               <h2 className="text-lg font-bold text-gray-900">
-                {productName || 'Chat with Agents'}
+                {productLoading ? (
+                  <span className="text-gray-400">Loading...</span>
+                ) : productName ? (
+                  productName
+                ) : (
+                  'Chat with Agents'
+                )}
               </h2>
               <p className="text-sm text-gray-600">
-                {activeAgents.length > 0 ? `${activeAgents.length} agents active` : 'AI-powered conversation'}
+                {productLoading ? (
+                  <span className="text-gray-400">Loading product info...</span>
+                ) : productDescription ? (
+                  productDescription
+                ) : activeAgents.length > 0 ? (
+                  `${activeAgents.length} agents active`
+                ) : (
+                  'AI-powered conversation'
+                )}
               </p>
             </div>
           </div>

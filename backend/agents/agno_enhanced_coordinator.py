@@ -200,6 +200,15 @@ class AgnoEnhancedCoordinator:
             # Enhance query with context
             enhanced_query = self._enhance_query_with_context(query, context)
             
+            # Determine primary agent based on phase and query content
+            primary_agent, confidence = self.determine_primary_agent(enhanced_query, context)
+            self.logger.info(
+                "process_with_context_agent_selection",
+                primary_agent=primary_agent,
+                confidence=confidence,
+                phase_name=context.get("phase_name") if context else None
+            )
+            
             # Process with enhanced coordination using agent consultation
             # Start with RAG agent for context (must be first as others depend on it)
             rag_response = await self.rag_agent.process(
@@ -207,45 +216,82 @@ class AgnoEnhancedCoordinator:
                 context
             )
             
-            # Run research, analysis, and ideation agents in parallel after RAG
-            # They can work concurrently since they all use RAG context
-            # Optimization: Parallel execution reduces latency by 60-80%
+            # Determine which agents to run based on phase and primary agent selection
+            # Only run phase-appropriate agents, not all agents for every query
             import asyncio
             shared_context_msg = f"{enhanced_query}\n\nKnowledge Base Context:\n{rag_response.response}"
             shared_message = [AgentMessage(role="user", content=shared_context_msg, timestamp=datetime.utcnow())]
             
-            research_task = self.research_agent.process(shared_message, context)
-            analysis_task = self.analysis_agent.process(shared_message, context)
-            ideation_task = self.ideation_agent.process(shared_message, context)
+            # Get supporting agents based on phase and query
+            supporting_agents = self.determine_supporting_agents(enhanced_query, primary_agent, context)
             
-            # Wait for all parallel agents to complete (60-80% latency reduction)
-            research_response, analysis_response, ideation_response = await asyncio.gather(
-                research_task,
-                analysis_task,
-                ideation_task,
-                return_exceptions=True
+            # Build list of agents to run in parallel (only phase-appropriate ones)
+            agents_to_run = []
+            agent_tasks = {}
+            
+            # Always include primary agent
+            if primary_agent in self.agents:
+                agents_to_run.append(primary_agent)
+                agent_tasks[primary_agent] = self.agents[primary_agent].process(shared_message, context)
+            
+            # Add supporting agents that are phase-appropriate
+            for agent_name in supporting_agents:
+                if agent_name in self.agents and agent_name not in agents_to_run:
+                    agents_to_run.append(agent_name)
+                    agent_tasks[agent_name] = self.agents[agent_name].process(shared_message, context)
+            
+            self.logger.info(
+                "process_with_context_agents_selected",
+                primary_agent=primary_agent,
+                supporting_agents=supporting_agents,
+                agents_to_run=agents_to_run,
+                phase_name=context.get("phase_name") if context else None
             )
             
-            # Handle exceptions from parallel execution
-            if isinstance(research_response, Exception):
-                self.logger.error("research_agent_failed", error=str(research_response))
-                research_response = AgentResponse(agent_type="research", response="Research agent failed", timestamp=datetime.utcnow())
-            if isinstance(analysis_response, Exception):
-                self.logger.error("analysis_agent_failed", error=str(analysis_response))
-                analysis_response = AgentResponse(agent_type="analysis", response="Analysis agent failed", timestamp=datetime.utcnow())
-            if isinstance(ideation_response, Exception):
-                self.logger.error("ideation_agent_failed", error=str(ideation_response))
-                ideation_response = AgentResponse(agent_type="ideation", response="Ideation agent failed", timestamp=datetime.utcnow())
+            # Run selected agents in parallel
+            if agent_tasks:
+                agent_responses = await asyncio.gather(
+                    *agent_tasks.values(),
+                    return_exceptions=True
+                )
+                
+                # Map responses back to agent names
+                agent_results = {}
+                for i, agent_name in enumerate(agents_to_run):
+                    response = agent_responses[i]
+                    if isinstance(response, Exception):
+                        self.logger.error(f"{agent_name}_agent_failed", error=str(response))
+                        agent_results[agent_name] = AgentResponse(
+                            agent_type=agent_name,
+                            response=f"{agent_name} agent failed",
+                            timestamp=datetime.utcnow()
+                        )
+                    else:
+                        agent_results[agent_name] = response
+            else:
+                # Fallback: if no agents selected, use primary agent only
+                if primary_agent in self.agents:
+                    agent_results = {primary_agent: await self.agents[primary_agent].process(shared_message, context)}
+                else:
+                    # Ultimate fallback: use research agent
+                    agent_results = {"research": await self.research_agent.process(shared_message, context)}
             
-            # Finally PRD agent with all context (runs after parallel agents complete)
-            prd_query = f"{enhanced_query}\n\nFull Context:\nKnowledge: {rag_response.response}\nResearch: {research_response.response}\nAnalysis: {analysis_response.response}\nIdeation: {ideation_response.response}"
-            prd_response = await self.prd_agent.process(
-                [AgentMessage(role="user", content=prd_query, timestamp=datetime.utcnow())],
-                context
-            )
+            # Build context string from agent responses
+            context_parts = [f"Knowledge: {rag_response.response}"]
+            for agent_name, response in agent_results.items():
+                context_parts.append(f"{agent_name.capitalize()}: {response.response if hasattr(response, 'response') else str(response)}")
             
-            # Use PRD response as final response (most comprehensive)
-            final_response = prd_response.response
+            # Use primary agent's response as final response, enhanced with other agents' context
+            primary_response = agent_results.get(primary_agent)
+            if primary_response:
+                if hasattr(primary_response, 'response'):
+                    final_response = primary_response.response
+                else:
+                    final_response = str(primary_response)
+            else:
+                # Fallback to first available response
+                first_response = list(agent_results.values())[0]
+                final_response = first_response.response if hasattr(first_response, 'response') else str(first_response)
             
             # Update shared context with latest interaction
             self.shared_context.update({
@@ -719,9 +765,11 @@ INSTRUCTIONS:
         # 3. Query doesn't explicitly mention other phases
         if best_confidence < 0.3 and not phase_name:
             # Check if query mentions other phases
-            mentions_research = any(kw in query_lower for kw in ["research", "market", "competitive", "trend"])
-            mentions_requirements = any(kw in query_lower for kw in ["requirement", "prd", "specification", "user story"])
-            mentions_strategy = any(kw in query_lower for kw in ["strategy", "roadmap", "gtm", "go-to-market"])
+            mentions_research = any(kw in query_lower for kw in ["research", "market", "competitive", "trend", "market trend", "industry", "competitor"])
+            mentions_requirements = any(kw in query_lower for kw in ["requirement", "prd", "specification", "user story", "acceptance criteria", "functional requirement"])
+            mentions_design = any(kw in query_lower for kw in ["design", "mockup", "ui", "ux", "wireframe", "prototype"])
+            mentions_strategy = any(kw in query_lower for kw in ["strategy", "roadmap", "gtm", "go-to-market", "business model", "positioning"])
+            mentions_ideation = any(kw in query_lower for kw in ["ideation", "brainstorm", "idea generation", "innovation", "problem statement", "what problem"])
             
             if mentions_research:
                 best_agent = "research"
@@ -729,12 +777,20 @@ INSTRUCTIONS:
             elif mentions_requirements:
                 best_agent = "prd_authoring"
                 best_confidence = 0.6
+            elif mentions_design:
+                best_agent = "prd_authoring"
+                best_confidence = 0.6
             elif mentions_strategy:
                 best_agent = "strategy"
                 best_confidence = 0.6
-            else:
-                # Last resort: default to ideation only if truly ambiguous
+            elif mentions_ideation:
+                # Only use ideation if query explicitly mentions ideation keywords
                 best_agent = "ideation"
+                best_confidence = 0.6
+            else:
+                # Last resort: default to research (safer than ideation for ambiguous queries)
+                # Only use ideation if query is very vague and has no phase context AND mentions ideation
+                best_agent = "research"  # Changed from ideation to research as safer default
                 best_confidence = 0.4
         
         self.logger.info(
@@ -1237,11 +1293,43 @@ INSTRUCTIONS:
                     # CRITICAL: Pass context to determine_supporting_agents for phase-aware selection
                     if not primary_agent:
                         # Determine primary agent with context
-                        primary_agent, _ = self.determine_primary_agent(enhanced_query, enhanced_context)
+                        primary_agent, confidence = self.determine_primary_agent(enhanced_query, enhanced_context)
+                        self.logger.info(
+                            "auto_determined_primary_agent",
+                            primary_agent=primary_agent,
+                            confidence=confidence,
+                            phase_name=enhanced_context.get("phase_name") if enhanced_context else None
+                        )
+                    
+                    # Use determined primary agent, don't fallback to ideation if we have phase context
+                    # Only fallback to ideation if no phase context and low confidence
+                    if not primary_agent:
+                        phase_name = enhanced_context.get("phase_name") if enhanced_context else None
+                        if phase_name:
+                            # If we have phase context but no primary agent, determine again with stricter criteria
+                            primary_agent, confidence = self.determine_primary_agent(enhanced_query, enhanced_context)
+                            if not primary_agent or confidence < 0.3:
+                                # Map phase to agent directly
+                                phase_lower = phase_name.lower()
+                                if "research" in phase_lower or "market" in phase_lower:
+                                    primary_agent = "research"
+                                elif "requirement" in phase_lower or "prd" in phase_lower:
+                                    primary_agent = "prd_authoring"
+                                elif "design" in phase_lower:
+                                    primary_agent = "prd_authoring"
+                                elif "strategy" in phase_lower or "gtm" in phase_lower or "go-to-market" in phase_lower:
+                                    primary_agent = "strategy"
+                                elif "ideation" in phase_lower:
+                                    primary_agent = "ideation"
+                                else:
+                                    primary_agent = "research"  # Default to research for unknown phases
+                        else:
+                            # No phase context - only then fallback to ideation
+                            primary_agent = "ideation"
                     
                     supporting_agents_list = self.determine_supporting_agents(
                         enhanced_query, 
-                        primary_agent or "ideation",
+                        primary_agent,
                         enhanced_context  # Pass context for phase-aware selection
                     )
                     # Remove RAG from auto-determined list if it was skipped

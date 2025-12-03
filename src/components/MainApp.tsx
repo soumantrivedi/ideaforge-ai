@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { MessageSquare, Settings, Database, FileText, Download, LayoutDashboard, Folder, History, User, LogOut, ChevronLeft, ChevronRight, BarChart3, Star, Bot, Activity, Zap, CheckCircle2, Circle } from 'lucide-react';
 import { ProductChatInterface } from './ProductChatInterface';
 import { AgentStatusPanel } from './AgentStatusPanel';
@@ -51,13 +51,16 @@ export function MainApp() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
+  const [phasesLoading, setPhasesLoading] = useState(true); // Track phases loading state
+  const [phasesLoaded, setPhasesLoaded] = useState(false); // Track if phases have been loaded at least once
 
+  // Load phases when token is available (phases are global, not product-specific)
   useEffect(() => {
-    if (token) {
+    if (token && !phasesLoaded) {
       lifecycleService.setToken(token);
       loadPhases();
     }
-  }, [token]);
+  }, [token, phasesLoaded]);
 
   // Listen for agent interactions updates
   useEffect(() => {
@@ -143,7 +146,15 @@ export function MainApp() {
   }, [productId, phases]);
 
   // Save app state to sessionStorage whenever it changes
+  // Use a ref to track if this is the initial mount to prevent clearing productId during restore
+  const isInitialMount = useRef(true);
   useEffect(() => {
+    // On initial mount, don't overwrite saved state
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    
     saveAppState({
       productId,
       currentPhaseId: currentPhase?.id,
@@ -157,8 +168,11 @@ export function MainApp() {
       console.log('MainApp: Loading data for productId:', productId);
       lifecycleService.setToken(token);
       loadSubmissions();
-      // Also reload phases when product changes to ensure fresh data
-      loadPhases();
+      // Don't reload phases here - they're global and loaded once when token is available
+      // Only reload if phases haven't been loaded yet
+      if (!phasesLoaded) {
+        loadPhases();
+      }
       
       // Reset any corrupted state when switching products
       // This ensures clean state for each product
@@ -167,10 +181,13 @@ export function MainApp() {
         console.log('MainApp: Product changed, resetting previous product state');
         resetProductState(prevProductId);
       }
-    } else {
-      console.log('MainApp: Skipping data load', { productId, hasToken: !!token });
+    } else if (!productId) {
+      // Only clear submissions if productId is explicitly empty
+      // Don't clear during initial load or state restoration
+      console.log('MainApp: No productId, clearing submissions');
+      setSubmissions([]);
     }
-  }, [productId, token]);
+  }, [productId, token, phasesLoaded]);
 
   // Load agents for current phase
   useEffect(() => {
@@ -219,10 +236,20 @@ export function MainApp() {
   }, [currentPhase, token]);
 
   const loadPhases = async () => {
+    if (!token) {
+      console.log('loadPhases: No token, skipping');
+      setPhasesLoading(false);
+      return;
+    }
+    
+    setPhasesLoading(true);
     try {
+      console.log('loadPhases: Loading phases...');
       const loadedPhases = await lifecycleService.getAllPhases();
       const phasesArray = Array.isArray(loadedPhases) ? loadedPhases : [];
+      console.log('loadPhases: Loaded', phasesArray.length, 'phases');
       setPhases(phasesArray);
+      setPhasesLoaded(true);
       
       // Restore current phase from saved state if available
       if (savedPhaseId && phasesArray.length > 0) {
@@ -235,6 +262,8 @@ export function MainApp() {
     } catch (error) {
       console.error('Error loading phases:', error);
       setPhases([]);
+    } finally {
+      setPhasesLoading(false);
     }
   };
 
@@ -746,6 +775,7 @@ export function MainApp() {
                   setCurrentPhase(phase);
                   setIsFormModalOpen(true);
                 }}
+                phasesLoading={phasesLoading}
               />
               
               {/* Product Selector when no product selected */}
