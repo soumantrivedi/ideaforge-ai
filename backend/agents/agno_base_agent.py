@@ -384,7 +384,8 @@ class AgnoBaseAgent(ABC):
             # Fast models for most agents (50-70% latency reduction, lowest cost)
             # Updated Dec 2025: GPT-5.1 Instant (fastest OpenAI model)
             # Check if AI Gateway is enabled first - if so, use AIGatewayModel
-            if provider_registry.has_ai_gateway():
+            # Use the same use_ai_gateway flag from top-level check to avoid duplicate checks
+            if use_ai_gateway:
                 gateway_client = provider_registry.get_ai_gateway_client()
                 if gateway_client:
                     model_id = getattr(
@@ -447,7 +448,8 @@ class AgnoBaseAgent(ABC):
             # Standard models for coordinators (balanced performance/cost)
             # Updated Dec 2025: GPT-5.1 (enhanced reasoning)
             # Check if AI Gateway is enabled first - if so, use AIGatewayModel
-            if provider_registry.has_ai_gateway():
+            # Use the same use_ai_gateway flag from top-level check to avoid duplicate checks
+            if use_ai_gateway:
                 gateway_client = provider_registry.get_ai_gateway_client()
                 if gateway_client:
                     model_id = getattr(settings, "ai_gateway_standard_model", "gpt-5.1")
@@ -498,7 +500,8 @@ class AgnoBaseAgent(ABC):
             # Premium models for critical reasoning (most powerful, Nov 2025)
             # GPT-5.1 (Nov 12, 2025), Claude Opus 4.5 (Nov 24, 2025), Gemini 3 Pro (Nov 2025)
             # Check if AI Gateway is enabled first - if so, use AIGatewayModel
-            if provider_registry.has_ai_gateway():
+            # Use the same use_ai_gateway flag from top-level check to avoid duplicate checks
+            if use_ai_gateway:
                 gateway_client = provider_registry.get_ai_gateway_client()
                 if gateway_client:
                     model_id = getattr(
