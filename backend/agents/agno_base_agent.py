@@ -271,18 +271,14 @@ class AgnoBaseAgent(ABC):
         """
         api_key = None
 
-        # PRIORITY: OpenAI is the primary provider, AI Gateway is secondary fallback
-        # Check if OpenAI is available first (primary)
-        # AI Gateway is only used if OpenAI is not available and AI Gateway is explicitly enabled
-        use_ai_gateway = False
-        if not provider_registry.has_openai_key():
-            # Only use AI Gateway as fallback if OpenAI is not available
-            use_ai_gateway = (
-                getattr(settings, "ai_gateway_enabled", False)
-                and provider_registry.has_ai_gateway()
-            )
+        # PRIORITY: AI Gateway takes precedence when enabled (regardless of has_openai_key status)
+        # Check AI Gateway first if enabled - it should be used when available
+        use_ai_gateway = (
+            getattr(settings, "ai_gateway_enabled", False)
+            and provider_registry.has_ai_gateway()
+        )
 
-        if use_ai_gateway and provider_registry.has_ai_gateway():
+        if use_ai_gateway:
             gateway_client = provider_registry.get_ai_gateway_client()
             if gateway_client:
                 # Try to discover ChatGPT-5 models dynamically
