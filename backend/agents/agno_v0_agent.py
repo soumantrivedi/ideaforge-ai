@@ -309,6 +309,7 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         try:
             # Use fast model tier (already set in __init__)
             # Context explicitly indicates this is prompt generation only, not submission
+            # When tools are disabled, try to call model directly for better response extraction
             response = await self.process([message], context={"task": "v0_prompt_generation", "disable_tools": True})
             prompt_text = response.response
             
@@ -343,7 +344,37 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                                     logger.info("v0_prompt_extracted_from_last_run_content", 
                                               extracted_length=len(prompt_text))
                             
-                            # Strategy 3: Check messages array for assistant message with content
+                            # Strategy 3: Check model_provider_data for actual model response
+                            if ("RunOutput" in prompt_text or "run_id=" in prompt_text) and hasattr(last_run, 'model_provider_data') and last_run.model_provider_data:
+                                try:
+                                    # Try to extract from model provider data
+                                    model_data = last_run.model_provider_data
+                                    if isinstance(model_data, dict):
+                                        # Check common response fields
+                                        for field in ['content', 'text', 'message', 'choices', 'response']:
+                                            if field in model_data:
+                                                field_value = model_data[field]
+                                                if isinstance(field_value, str) and field_value.strip() and "RunOutput" not in field_value and len(field_value) > 50:
+                                                    prompt_text = field_value
+                                                    logger.info("v0_prompt_extracted_from_model_provider_data", 
+                                                              field=field, extracted_length=len(prompt_text))
+                                                    break
+                                        # Check nested choices[0].message.content (OpenAI format)
+                                        if "RunOutput" in prompt_text and 'choices' in model_data and isinstance(model_data['choices'], list) and len(model_data['choices']) > 0:
+                                            choice = model_data['choices'][0]
+                                            if isinstance(choice, dict) and 'message' in choice:
+                                                msg = choice['message']
+                                                if isinstance(msg, dict) and 'content' in msg:
+                                                    content = msg['content']
+                                                    if isinstance(content, str) and content.strip() and "RunOutput" not in content and len(content) > 50:
+                                                        prompt_text = content
+                                                        logger.info("v0_prompt_extracted_from_model_choices", 
+                                                                  extracted_length=len(prompt_text))
+                                except Exception as model_data_error:
+                                    logger.warning("v0_prompt_model_data_extraction_failed", 
+                                                 error=str(model_data_error))
+                            
+                            # Strategy 4: Check messages array for assistant message with content
                             if ("RunOutput" in prompt_text or "run_id=" in prompt_text) and hasattr(last_run, 'messages') and last_run.messages:
                                 # Find the last assistant message with actual content
                                 for msg in reversed(last_run.messages):
@@ -374,6 +405,23 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                                                 logger.info("v0_prompt_extracted_from_text", 
                                                           extracted_length=len(prompt_text))
                                                 break
+                                        
+                                        # Strategy 5: If message has model_provider_data, check it
+                                        if ("RunOutput" in prompt_text or "run_id=" in prompt_text) and hasattr(msg, 'provider_data') and msg.provider_data:
+                                            try:
+                                                provider_data = msg.provider_data
+                                                if isinstance(provider_data, dict):
+                                                    for field in ['content', 'text', 'message']:
+                                                        if field in provider_data:
+                                                            field_value = provider_data[field]
+                                                            if isinstance(field_value, str) and field_value.strip() and "RunOutput" not in field_value and len(field_value) > 50:
+                                                                prompt_text = field_value
+                                                                logger.info("v0_prompt_extracted_from_msg_provider_data", 
+                                                                          field=field, extracted_length=len(prompt_text))
+                                                                break
+                                            except Exception as msg_data_error:
+                                                logger.warning("v0_prompt_msg_provider_data_extraction_failed", 
+                                                             error=str(msg_data_error))
                     except Exception as run_extract_error:
                         logger.warning("v0_prompt_run_extraction_failed", 
                                      error=str(run_extract_error),
