@@ -181,7 +181,7 @@ async def stream_phase_form_help(
                 gemini_key=user_keys.get("gemini"),
             )
         
-        # Get orchestrator
+        # Get orchestrator - use enhanced coordinator for comprehensive context
         orchestrator = get_orchestrator()
         
         # If orchestrator is not Agno but we have user API keys, try to reinitialize
@@ -213,6 +213,72 @@ async def stream_phase_form_help(
                     detail="Agno framework not available. Please configure at least one API key (OpenAI, Claude, or Gemini) in Settings → Integrations."
                 )
         
+        # CRITICAL: Load ALL previous phase submissions (form_data and generated_content)
+        # This ensures the agent has access to ideation, market research, and other phase data
+        from sqlalchemy import text
+        phase_submissions_query = text("""
+            SELECT ps.form_data, ps.generated_content, plp.phase_name, plp.phase_order
+            FROM phase_submissions ps
+            JOIN product_lifecycle_phases plp ON ps.phase_id = plp.id
+            WHERE ps.product_id = :product_id
+            ORDER BY plp.phase_order ASC
+        """)
+        phase_result = await db.execute(phase_submissions_query, {"product_id": str(request.product_id)})
+        phase_rows = phase_result.fetchall()
+        
+        # Build comprehensive phase context
+        previous_phases_context = []
+        current_phase_form_data = {}
+        for row in phase_rows:
+            phase_name = row[2]
+            form_data = row[0] or {}
+            generated_content = row[1] or ""
+            
+            # Skip current phase (we'll add it separately)
+            if phase_name.lower() == request.phase_name.lower():
+                current_phase_form_data = form_data
+                continue
+            
+            # Include all previous phase data
+            phase_context = f"## {phase_name} Phase\n"
+            if form_data:
+                phase_context += "Form Data:\n"
+                for field, value in form_data.items():
+                    if value and str(value).strip():
+                        if isinstance(value, (dict, list)):
+                            import json
+                            phase_context += f"- {field}: {json.dumps(value, indent=2)}\n"
+                        else:
+                            phase_context += f"- {field}: {value}\n"
+            if generated_content:
+                phase_context += f"\nGenerated Content:\n{generated_content}\n"
+            
+            previous_phases_context.append(phase_context)
+        
+        all_previous_phases = "\n".join(previous_phases_context)
+        
+        # Get enhanced coordinator for comprehensive context building
+        from backend.agents.agno_enhanced_coordinator import AgnoEnhancedCoordinator
+        coordinator = AgnoEnhancedCoordinator(enable_rag=True)
+        
+        # Build comprehensive context using coordinator's method
+        comprehensive_context = await coordinator._build_comprehensive_context(
+            product_id=str(request.product_id),
+            session_ids=None,
+            user_context={
+                "phase_name": request.phase_name,
+                "phase_id": request.phase_id,
+                "current_field": request.current_field,
+                "current_prompt": request.current_prompt,
+                "response_length": request.response_length,
+            },
+            db=db
+        )
+        
+        # Add previous phase submissions to context
+        comprehensive_context["previous_phases"] = all_previous_phases
+        comprehensive_context["current_phase_form_data"] = current_phase_form_data
+        
         # Get phase expert agent
         agent_name = get_phase_expert_agent(request.phase_name)
         if agent_name not in orchestrator.agents:
@@ -226,15 +292,56 @@ async def stream_phase_form_help(
         # Log which agent we're using
         logger.info("phase_form_help_agent_selected", agent=agent_name, phase=request.phase_name)
         
-        # Build system context (expert prompt + brief conversation summary)
+        # Build comprehensive system context using coordinator's method
         expert_prompt = get_phase_expert_prompt(request.phase_name)
         
-        # Build minimal system context - just expert role + brief summary
-        system_context = expert_prompt
-        if request.conversation_summary:
-            # Limit summary to 100 chars max (very brief)
-            brief_summary = request.conversation_summary[:100] + "..." if len(request.conversation_summary) > 100 else request.conversation_summary
-            system_context += f"\n\nContext: {brief_summary}"
+        # Build system context with ALL available information
+        system_context_parts = [expert_prompt]
+        
+        # Add previous phases context
+        if all_previous_phases:
+            system_context_parts.append("\n=== PREVIOUS PHASE SUBMISSIONS ===")
+            system_context_parts.append("CRITICAL: Use ALL information from previous phases below. Reference specific details from ideation, market research, and other completed phases.")
+            system_context_parts.append(all_previous_phases)
+        
+        # Add conversation history and ideation from chat
+        if comprehensive_context.get("ideation_from_chat"):
+            system_context_parts.append("\n=== IDEATION FROM CHATBOT ===")
+            system_context_parts.append(comprehensive_context["ideation_from_chat"])
+        
+        # Add knowledge base
+        if comprehensive_context.get("knowledge_base"):
+            system_context_parts.append("\n=== KNOWLEDGE BASE ===")
+            for kb_item in comprehensive_context["knowledge_base"][:10]:
+                kb_content = kb_item.get('content', '')
+                if kb_content:
+                    system_context_parts.append(f"- {kb_content[:500]}")
+        
+        # Add current phase form data (other fields)
+        if current_phase_form_data:
+            current_field = request.current_field
+            other_fields = {k: v for k, v in current_phase_form_data.items() if k != current_field and v and str(v).strip()}
+            if other_fields:
+                system_context_parts.append("\n=== OTHER FIELDS IN CURRENT PHASE (Already Filled) ===")
+                for field, value in other_fields.items():
+                    system_context_parts.append(f"- {field.replace('_', ' ').title()}: {str(value)[:500]}")
+        
+        system_context = "\n".join(system_context_parts)
+        
+        # Add critical instructions for using ALL context
+        system_context += """
+
+CRITICAL INSTRUCTIONS:
+- You MUST use ALL information from previous phases (ideation, market research, etc.) in your response
+- Reference specific details from previous phase submissions when relevant
+- Use knowledge base articles to support your recommendations
+- Provide data-driven, specific responses - NOT generic guidance
+- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
+- DO NOT say "Since the earlier context only states..." or "Because your previous question was..."
+- Instead, directly use the information: "Based on your ideation phase, the problem is X, therefore the functional requirements are Y"
+- Be crisp, specific, and data-driven - use actual information from previous phases
+- Format your response according to the current field requirements (e.g., functional requirements in a structured format)
+"""
         
         # Add instructions for plain text response (NO HTML, NO word limits)
         if request.response_length == "short":
@@ -246,11 +353,11 @@ async def stream_phase_form_help(
         
         system_context += f"\n\nCRITICAL REQUIREMENTS:\n- Return PLAIN TEXT only (NO HTML, NO markdown formatting)\n- Be {response_style}\n- {response_guidance}\n- Use natural language, no formatting codes\n- Write as if speaking directly to the user\n- Structure your response clearly with logical flow"
         
-        # Build user prompt - KEEP IT MINIMAL
-        # Just the question, nothing else
+        # Build user prompt - Include FULL user input (Option E: preserve all details)
+        # Include the complete user input to preserve critical details like addresses, requirements, etc.
         if request.user_input and request.user_input.strip():
-            # If user provided input, use it but keep it very short (100 chars max)
-            user_prompt = f"User input: {request.user_input[:100]}\n\nQuestion: {request.current_prompt}"
+            # Include FULL user input (no truncation) - Option E enhancement
+            user_prompt = f"User input for {request.current_field}:\n{request.user_input}\n\nQuestion: {request.current_prompt}"
         else:
             user_prompt = f"Question: {request.current_prompt}"
         
@@ -300,13 +407,44 @@ async def stream_phase_form_help(
                 )
             ]
             
-            # Process with agent (SINGLE AGENT - not multi-agent)
-            logger.info("phase_form_help_processing", agent=agent_name, query_length=len(user_prompt))
-            response = await agent.process(messages, {
+            # Process with agent using comprehensive context
+            # Use the comprehensive context built above which includes:
+            # - Previous phase submissions (ideation, market research, etc.)
+            # - Conversation history
+            # - Knowledge base
+            # - Current phase form data
+            context = comprehensive_context.copy()
+            context.update({
                 "phase_name": request.phase_name,
+                "phase_id": request.phase_id,
                 "current_field": request.current_field,
+                "current_prompt": request.current_prompt,
                 "response_length": request.response_length,
             })
+            
+            # Add current field's user input to form_data
+            if request.user_input and request.user_input.strip():
+                if "form_data" not in context:
+                    context["form_data"] = {}
+                context["form_data"][request.current_field] = request.user_input
+            
+            # Merge with current phase form data
+            if current_phase_form_data:
+                if "form_data" not in context:
+                    context["form_data"] = {}
+                context["form_data"].update(current_phase_form_data)
+            
+            logger.info(
+                "phase_form_help_processing",
+                agent=agent_name,
+                query_length=len(user_prompt),
+                has_form_data=bool(context.get("form_data")),
+                previous_phases_count=len(previous_phases_context),
+                has_knowledge_base=bool(comprehensive_context.get("knowledge_base")),
+                has_conversation_history=bool(comprehensive_context.get("conversation_history"))
+            )
+            
+            response = await agent.process(messages, context)
             
             response_text = response.response if hasattr(response, 'response') else str(response)
             
@@ -498,6 +636,9 @@ async def stream_phase_form_help_endpoint(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Accel-Charset": "utf-8",
+            # Force HTTP/1.1 for streaming to avoid HTTP/2 protocol errors
+            "Upgrade": "",
         }
     )
 

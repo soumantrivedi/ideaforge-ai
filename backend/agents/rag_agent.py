@@ -79,16 +79,39 @@ Your responses should be:
             List of relevant documents with metadata
         """
         try:
+            # Ensure knowledge base is created (lazy creation on first use)
+            # This may take time on first use, but subsequent calls will be fast
+            self._ensure_knowledge_base()
+            
             if not hasattr(self.agno_agent, 'knowledge') or not self.agno_agent.knowledge:
                 self.logger.warning("knowledge_base_not_available")
                 return []
             
+            # If knowledge base creation failed, return empty results immediately
+            # Don't wait for retries during search - that's handled during creation
+            if hasattr(self, '_knowledge_base_created') and not self._knowledge_base_created:
+                self.logger.warning("knowledge_base_creation_failed_earlier")
+                return []
+            
             # Use Agno's knowledge base search
-            results = self.agno_agent.knowledge.search(
-                query=query,
-                num_documents=top_k,
-                filters=filters
-            )
+            # Note: Agno Knowledge.search() may use different parameter names
+            # Try with limit parameter first, fallback to query only
+            try:
+                results = self.agno_agent.knowledge.search(
+                    query=query,
+                    limit=top_k,
+                    filters=filters if filters else {}
+                )
+            except TypeError:
+                # Fallback: try without filters or with different parameter names
+                try:
+                    results = self.agno_agent.knowledge.search(query=query, limit=top_k)
+                except TypeError:
+                    # Last fallback: just query
+                    results = self.agno_agent.knowledge.search(query=query)
+                    # Limit results manually if needed
+                    if len(results) > top_k:
+                        results = results[:top_k]
             
             # Format results
             formatted_results = []
@@ -122,7 +145,11 @@ Your responses should be:
             True if successful, False otherwise
         """
         try:
-            self.add_to_knowledge_base(content, metadata)
+            # Ensure knowledge base is created before adding content
+            self._ensure_knowledge_base()
+            
+            # Use async method for adding to knowledge base
+            await self.add_to_knowledge_base(content, metadata)
             self.logger.info("knowledge_added", content_length=len(content))
             return True
         except Exception as e:
@@ -138,11 +165,21 @@ Your responses should be:
         Process messages with RAG-enhanced responses.
         Returns empty response if no knowledge base content is available.
         """
+        # Ensure knowledge base is created (lazy creation on first use)
+        self._ensure_knowledge_base()
+        
         # Extract the query from messages
         query = messages[-1].content if messages else ""
         
-        # Search knowledge base first
-        knowledge_results = await self.search_knowledge(query, top_k=5)
+        # CRITICAL: Filter by product_id if available in context
+        # This ensures only documents for the specific product are retrieved
+        filters = {}
+        if context and context.get("product_id"):
+            filters["product_id"] = str(context.get("product_id"))
+            self.logger.info("rag_filtering_by_product_id", product_id=context.get("product_id"))
+        
+        # Search knowledge base first with product_id filter
+        knowledge_results = await self.search_knowledge(query, top_k=5, filters=filters if filters else None)
         
         # If no knowledge results, return empty response immediately (don't process)
         if not knowledge_results:

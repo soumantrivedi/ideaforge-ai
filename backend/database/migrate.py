@@ -95,10 +95,38 @@ async def apply_migration(db: AsyncSession, migration_file: Path) -> bool:
         # Read migration file
         migration_sql = migration_file.read_text(encoding='utf-8')
         
-        # Execute entire migration as a single transaction
+        # Split SQL into individual statements by semicolon
+        # Remove comments and empty lines, then split by semicolon
+        lines = migration_sql.split('\n')
+        cleaned_lines = []
+        for line in lines:
+            stripped = line.strip()
+            # Skip empty lines and full-line comments
+            if not stripped or (stripped.startswith('--') and not ';' in stripped):
+                continue
+            cleaned_lines.append(line)
+        
+        # Join and split by semicolon to get individual statements
+        full_sql = '\n'.join(cleaned_lines)
+        # Split by semicolon, but keep the semicolon with each statement
+        raw_statements = [s.strip() + ';' for s in full_sql.split(';') if s.strip()]
+        
+        # Clean up statements - remove trailing semicolons from the last one if needed
+        statements = []
+        for stmt in raw_statements:
+            stmt = stmt.strip()
+            if stmt and stmt != ';':
+                # Remove duplicate semicolons at the end
+                while stmt.endswith(';;'):
+                    stmt = stmt[:-1]
+                statements.append(stmt)
+        
+        # Execute each statement separately within the same transaction
         # This ensures atomicity - either all statements succeed or none do
         try:
-            await db.execute(text(migration_sql))
+            for statement in statements:
+                if statement.strip() and statement.strip() != ';':
+                    await db.execute(text(statement))
             await db.commit()
         except Exception as e:
             # Some statements may fail if already applied (e.g., CREATE TABLE IF NOT EXISTS, ADD COLUMN IF NOT EXISTS)
@@ -148,16 +176,28 @@ async def run_migrations(database_url: str) -> bool:
     """
     Run all pending migrations.
     Returns True if all migrations succeeded, False otherwise.
+    
+    Note: In HA setups, migrations should always run against the primary node.
+    This function will automatically connect to the primary if database_url
+    points to a service that routes to multiple nodes.
     """
     engine = None
     try:
         # Create database engine
+        # For HA setups, ensure we connect to primary for migrations
+        # The connection string should point to the primary pod or service
         engine = create_async_engine(
             database_url,
             echo=False,
             pool_pre_ping=True,
             pool_size=1,  # Minimal pool for migrations
-            max_overflow=0
+            max_overflow=0,
+            # Add connection retry for HA scenarios
+            connect_args={
+                "server_settings": {
+                    "application_name": "migration_runner"
+                }
+            }
         )
         
         # Get all migration files

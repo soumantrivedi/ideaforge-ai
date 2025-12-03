@@ -27,12 +27,18 @@ Research Areas:
 - Industry benchmarks and standards
 - Regulatory and compliance requirements
 
-Your output should:
+CRITICAL INSTRUCTIONS FOR RESPONSE GENERATION:
+- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
+- DO NOT say "When you define the problem..." or "The goal is to create..." 
+- Instead, write the actual content: "The problem we are solving is..." or "Our product vision is..."
+- Provide specific, actionable research findings that can be directly used
+- Reference knowledge base articles when relevant to support your research
 - Be data-driven and evidence-based
 - Include relevant sources and references
 - Highlight key insights and patterns
 - Identify opportunities and risks
-- Provide actionable recommendations"""
+- Provide actionable recommendations
+- Your response should be the actual research content, not instructions on how to research"""
 
         super().__init__(
             name="Research Agent",

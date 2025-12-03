@@ -12,7 +12,7 @@ from backend.models.schemas import AgentMessage, AgentResponse
 class AgnoValidationAgent(AgnoBaseAgent):
     """Validation Agent using Agno framework with optional RAG support."""
     
-    def __init__(self, enable_rag: bool = False):
+    def __init__(self, enable_rag: bool = True):
         system_prompt = """You are a Quality Assurance and Validation Specialist following industry standards from:
 - BCS (British Computer Society) Product Management Framework
 - ICAgile (International Consortium for Agile) Product Ownership
@@ -44,7 +44,14 @@ Your output format should be:
 4. **Recommendations**: Specific, actionable recommendations for improvement
 5. **User Satisfaction Assessment**: Whether the response adequately addresses the user's form data
 
-Be thorough but constructive. Focus on making responses actionable and aligned with user needs."""
+CRITICAL INSTRUCTIONS FOR RESPONSE GENERATION:
+- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
+- DO NOT say "When you define the problem..." or "The goal is to create..." 
+- Instead, write the actual content: "The problem we are solving is..." or "Our product vision is..."
+- Provide specific, actionable validation feedback that can be directly used
+- Reference knowledge base articles when relevant to support your validation
+- Be thorough but constructive. Focus on making responses actionable and aligned with user needs.
+- Your response should be the actual validation content, not instructions on how to validate."""
 
         super().__init__(
             name="Validation Agent",

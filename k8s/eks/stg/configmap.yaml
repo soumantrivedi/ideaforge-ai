@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ideaforge-ai-config
+  namespace: 20890-ideaforge-ai-stg-60df9
+data:
+  # Database Configuration
+  # Use postgres-ha-primary service which routes only to postgres-ha-0 (primary writable instance)
+  # This ensures all writes go to the primary, not read-only replicas
+  POSTGRES_HOST: postgres-ha-primary
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: agentic_pm
+  POSTGRES_DB: agentic_pm_db
+  # DATABASE_URL will be constructed by backend from POSTGRES_* env vars
+  
+  # Redis Configuration
+  REDIS_URL: redis://redis:6379/0
+  
+  # Backend Configuration
+  BACKEND_PORT: "8000"
+  LOG_LEVEL: "info"
+  SESSION_EXPIRES_IN: "86400"
+  # Updated to latest models as of November 2025
+  # Default to GPT-5.1 for best reasoning, with Gemini 3.0 Pro as fallback
+  # GPT-5.1: Released November 12, 2025 - Enhanced capabilities in writing, data science, and business tasks
+  # GPT-5: Released August 7, 2025 - Enhanced reasoning with "Thinking" mode and 400K token context
+  AGENT_MODEL_PRIMARY: "gpt-5.1"  # GPT-5.1: Best for product requirements, ideation, reasoning, discovery (or gpt-5 as fallback)
+  AGENT_MODEL_SECONDARY: "claude-sonnet-4-20250522"  # Claude 4 Sonnet: Advanced reasoning and ideation
+  AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
+  AGENT_RESPONSE_TIMEOUT: "180.0"  # Timeout in seconds (3 minutes max per agent - keep high to avoid truncating responses)
+  AGENT_MAX_CONCURRENT: "10"  # Maximum concurrent agent calls per pod (prevents resource exhaustion)
+  V0_API_TIMEOUT: "90.0"  # V0 API initial request timeout (90 seconds - returns immediately, background polling continues)
+  V0_POLL_INTERVAL: "10"  # V0 status polling interval in seconds
+  V0_POLL_MAX_DURATION: "900"  # V0 status polling maximum duration in seconds (15 minutes)
+  
+  # AI Gateway Configuration (DISABLED in staging - use OpenAI directly)
+  # AI Gateway is not fully tested in lower environments
+  AI_GATEWAY_ENABLED: "false"
+  
+  # Async Job Processing Configuration
+  JOB_POLL_INTERVAL_MS: "10000"  # Polling interval in milliseconds (10 seconds for 400+ concurrent users)
+  JOB_MAX_POLL_ATTEMPTS: "60"  # Maximum polling attempts (10 minutes at 10s intervals)
+  JOB_TIMEOUT_MS: "600000"  # Job timeout in milliseconds (10 minutes max, but response sent immediately when ready)
+  
+  # Frontend Configuration
+  # Use relative path /api so frontend nginx proxies to backend service internally
+  # The frontend nginx.conf already has: location /api { proxy_pass http://backend:8000; }
+  VITE_API_URL: ""  # Empty string = use relative paths, nginx will proxy /api to backend service
+  FRONTEND_URL: "https://ideaforge-ai-stg-60df9.cf.platform.mckinsey.cloud"  # Frontend URL for CORS
+  CORS_ORIGINS: "https://ideaforge-ai-stg-60df9.cf.platform.mckinsey.cloud,https://api-ideaforge-ai-stg-60df9.cf.platform.mckinsey.cloud,http://localhost,http://localhost:80,http://localhost:8080,http://ideaforge.local,http://api.ideaforge.local"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: 20890-ideaforge-ai-stg-60df9
+data:
+  # This ConfigMap will be mounted to postgres for initialization
+  # In production, consider using a separate init container or job
+

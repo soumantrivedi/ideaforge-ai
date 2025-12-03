@@ -39,6 +39,12 @@ CRITICAL: You MUST use ALL available information from:
 - ALL generated content from previous phases
 - ALL form data fields - do not skip any fields, include everything
 
+IMPORTANT: When generating prompts (not submitting to V0):
+- You are ONLY generating the prompt text - do NOT call any tools or submit to V0
+- Do NOT use create_v0_project or generate_v0_code tools during prompt generation
+- Simply return the prompt text that the user can then use separately to submit to V0
+- The user will submit the prompt to V0 using a separate action/button
+
 Core Requirements:
 - Generate DETAILED, COMPREHENSIVE prompts (not concise - include all relevant information)
 - Include ALL form data, product context, and requirements from all lifecycle phases
@@ -245,7 +251,11 @@ Guidelines:
         self,
         product_context: Dict[str, Any]
     ) -> str:
-        """Generate a detailed, comprehensive V0 prompt based on complete product context."""
+        """Generate a detailed, comprehensive V0 prompt based on complete product context.
+        
+        This method ONLY generates the prompt text - it does NOT submit to V0.
+        Tools are disabled during prompt generation to prevent accidental submission.
+        """
         # Extract ALL context without aggressive truncation
         context_summary = self._summarize_context(product_context)
         
@@ -264,6 +274,8 @@ CRITICAL REQUIREMENTS:
 - If chatbot mentions specific features, styling, or requirements, they MUST be included
 - If design form has any field values, they MUST all be incorporated
 
+IMPORTANT: You are ONLY generating the prompt text. Do NOT call any tools or submit to V0. Just return the prompt text.
+
 Product Context (includes ALL chatbot conversations, form data, and generated content):
 {context_summary}
 
@@ -278,7 +290,7 @@ Generate a detailed V0 prompt that captures ALL aspects of this product design. 
 - Form validations and error handling
 - Animations and transitions
 
-Output ONLY the prompt text - no instructions, notes, or explanations. The prompt should be ready to use directly in V0."""
+Output ONLY the prompt text - no instructions, notes, or explanations. The prompt should be ready to use directly in V0. Do NOT use any tools."""
 
         message = AgentMessage(
             role="user",
@@ -286,18 +298,43 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             timestamp=datetime.utcnow()
         )
 
-        # Use fast model tier (already set in __init__)
-        response = await self.process([message], context={"task": "v0_prompt_generation"})
-        prompt_text = response.response
+        # Temporarily disable tools during prompt generation to prevent accidental submission
+        # Store original tools
+        original_tools = None
+        if hasattr(self.agno_agent, 'tools') and self.agno_agent.tools:
+            original_tools = self.agno_agent.tools.copy()
+            # Clear tools to prevent tool invocation during prompt generation
+            self.agno_agent.tools = []
         
-        # Clean the prompt - remove headers/footers that AI might add
-        prompt_text = self._clean_v0_prompt(prompt_text)
-        
-        return prompt_text
+        try:
+            # Use fast model tier (already set in __init__)
+            # Context explicitly indicates this is prompt generation only, not submission
+            response = await self.process([message], context={"task": "v0_prompt_generation", "disable_tools": True})
+            prompt_text = response.response
+            
+            # Clean the prompt - remove headers/footers that AI might add
+            prompt_text = self._clean_v0_prompt(prompt_text)
+            
+            return prompt_text
+        finally:
+            # Restore original tools after prompt generation
+            if original_tools is not None:
+                self.agno_agent.tools = original_tools
     
     def _summarize_context(self, product_context: Dict[str, Any]) -> str:
         """Extract ALL product context without aggressive truncation - include everything."""
         context_parts = []
+        
+        # Ensure product_context is a dict, not a list
+        if not isinstance(product_context, dict):
+            logger.warning("product_context_not_dict", 
+                         product_context_type=type(product_context).__name__,
+                         product_context_value=str(product_context)[:200])
+            # Convert list to dict or use empty dict
+            if isinstance(product_context, list):
+                product_context = {"context": "\n".join([str(item) for item in product_context if item])}
+            else:
+                product_context = {"context": str(product_context)}
         
         # Get main context (usually contains phase data) - include ALL of it
         main_context = product_context.get("context", "")
@@ -577,8 +614,13 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                         "Content-Type": "application/json"
                     }
                     
-                    # List existing projects
+                    # List existing projects - ONLY use user's private projects (not team/shared)
+                    # According to V0 API docs: GET /v1/projects returns "all v0 projects in your workspace"
+                    # Projects have a 'privacy' field: 'private' (user's own) or 'team' (shared with team)
+                    # We MUST filter to only use 'private' projects to avoid using shared/team projects
+                    projects = []
                     try:
+                        # Get all projects from workspace (includes both private and team projects)
                         projects_resp = await client.get(
                             "https://api.v0.dev/v1/projects",
                             headers=headers
@@ -586,44 +628,135 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                         
                         if projects_resp.status_code == 200:
                             projects_data = projects_resp.json()
-                            projects = projects_data.get("data", [])
+                            all_projects = projects_data.get("data", [])
                             
-                            if isinstance(projects, list) and len(projects) > 0:
-                                # Priority 1: Exact name match
-                                for p in projects:
-                                    if p.get("name") == project_name:
-                                        project_id = p.get("id")
-                                        project_url = p.get("webUrl") or p.get("web_url")
-                                        break
-                                
-                                # Priority 2: Similar name
-                                if not project_id:
-                                    for p in projects:
-                                        if project_name.lower() in p.get("name", "").lower():
-                                            project_id = p.get("id")
-                                            project_url = p.get("webUrl") or p.get("web_url")
-                                            break
-                                
-                                # Priority 3: Most recent
-                                if not project_id:
-                                    project = projects[0]
-                                    project_id = project.get("id")
-                                    project_url = project.get("webUrl") or project.get("web_url")
+                            # CRITICAL: Filter to ONLY private projects (user's own, not team/shared)
+                            # According to V0 API docs: privacy can be 'private' or 'team'
+                            # We only want 'private' projects to ensure prompts go to user's own projects
+                            private_projects = [p for p in all_projects if p.get("privacy") == "private"]
+                            
+                            logger.info("v0_projects_filtered_by_privacy",
+                                       user_id=user_id,
+                                       all_projects_count=len(all_projects),
+                                       private_projects_count=len(private_projects),
+                                       team_projects_count=len(all_projects) - len(private_projects))
+                            
+                            # CRITICAL: Filter to only projects linked to THIS SPECIFIC product_id in database
+                            # This ensures each product has its own V0 project and prompts are posted correctly
+                            # Projects must:
+                            # 1. Be owned by the user (privacy: "private")
+                            # 2. Be linked to this specific product_id in the database
+                            # 3. Be in scope: "mckinsey" (if API returns scope field)
+                            if db and product_id and user_id and len(private_projects) > 0:
+                                try:
+                                    from sqlalchemy import text as sql_text
+                                    # Get V0 project IDs that are linked to THIS SPECIFIC product_id
+                                    # This ensures we only use projects created for this product
+                                    product_projects_query = sql_text("""
+                                        SELECT DISTINCT v0_project_id
+                                        FROM design_mockups
+                                        WHERE product_id = :product_id
+                                          AND user_id = :user_id
+                                          AND provider = 'v0'
+                                          AND v0_project_id IS NOT NULL
+                                    """)
+                                    product_projects_result = await db.execute(product_projects_query, {
+                                        "product_id": product_id,
+                                        "user_id": user_id
+                                    })
+                                    product_project_ids = {str(row[0]) for row in product_projects_result.fetchall()}
+                                    
+                                    # Filter to only private projects that:
+                                    # 1. Are linked to this specific product_id in the database
+                                    # 2. Have scope: "mckinsey" (if API returns scope field)
+                                    filtered_projects = []
+                                    for p in private_projects:
+                                        project_id_str = str(p.get("id"))
+                                        # Must be linked to this specific product_id in database
+                                        if project_id_str in product_project_ids:
+                                            # Check if scope is returned and matches (if available)
+                                            project_scope = p.get("scope")
+                                            if project_scope is None or project_scope == "mckinsey":
+                                                filtered_projects.append(p)
+                                    
+                                    projects = filtered_projects
+                                    
+                                    logger.info("v0_projects_filtered_by_product_id",
+                                               user_id=user_id,
+                                               product_id=product_id,
+                                               all_projects_count=len(all_projects),
+                                               private_projects_count=len(private_projects),
+                                               product_projects_count=len(projects),
+                                               product_project_ids=list(product_project_ids),
+                                               scope_filter="mckinsey")
+                                except Exception as db_error:
+                                    logger.warning("v0_project_database_filter_failed", 
+                                                 error=str(db_error),
+                                                 user_id=user_id,
+                                                 product_id=product_id)
+                                    # If database filter fails, don't use any projects (safer than using wrong ones)
+                                    # Projects must be in database linked to this product_id
+                                    projects = []
+                            else:
+                                # No database/product_id/user_id - cannot safely filter, don't reuse projects
+                                # Projects must be in database linked to this product_id
+                                projects = []
+                                logger.warning("v0_cannot_filter_projects_no_db",
+                                             user_id=user_id,
+                                             product_id=product_id,
+                                             action="will_create_new",
+                                             reason="projects_must_be_linked_to_product_id")
+                        else:
+                            logger.warning("v0_project_list_failed",
+                                         status_code=projects_resp.status_code,
+                                         user_id=user_id)
                     except Exception as list_error:
                         logger.warning("v0_project_list_failed", error=str(list_error))
+                        projects = []
                     
-                    # Create new project if none found
+                    # Process filtered projects (only user's own projects)
+                    if isinstance(projects, list) and len(projects) > 0:
+                        # Priority 1: Exact name match
+                        for p in projects:
+                            if p.get("name") == project_name:
+                                project_id = p.get("id")
+                                project_url = p.get("webUrl") or p.get("web_url")
+                                break
+                        
+                        # Priority 2: Similar name
+                        if not project_id:
+                            for p in projects:
+                                if project_name.lower() in p.get("name", "").lower():
+                                    project_id = p.get("id")
+                                    project_url = p.get("webUrl") or p.get("web_url")
+                                    break
+                        
+                        # Priority 3: Most recent user project
+                        if not project_id:
+                            project = projects[0]
+                            project_id = project.get("id")
+                            project_url = project.get("webUrl") or project.get("web_url")
+                    
+                    # Create new project if none found (will be in user's own projects)
                     if not project_id:
+                        # Create new project with scope: "mckinsey"
+                        # Project will be private by default (user's own project)
+                        # Scope ensures the project is in the mckinsey scope for proper isolation
                         create_resp = await client.post(
                             "https://api.v0.dev/v1/projects",
                             headers=headers,
-                            json={"name": project_name}
+                            json={
+                                "name": project_name,
+                                "scope": "mckinsey"  # Create project in mckinsey scope
+                            }
                         )
                         
                         if create_resp.status_code in [200, 201]:
                             create_result = create_resp.json()
                             project_id = create_result.get("id")
-                            project_url = create_result.get("webUrl") or create_result.get("web_url")
+                            # Get project URL from API response, or construct it
+                            project_web_url = create_result.get("webUrl") or create_result.get("web_url")
+                            project_url = project_web_url or (f"https://v0.dev/project/{project_id}" if project_id else None)
                         else:
                             raise ValueError(f"Failed to create project: {create_resp.status_code}")
                 
@@ -808,8 +941,13 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                         "Content-Type": "application/json"
                     }
                     
-                    # Step 1: List existing projects - ALWAYS reuse if any exist (matches test workflow)
+                    # Step 1: List existing projects - ONLY use user's private projects (not team/shared)
+                    # According to V0 API docs: GET /v1/projects returns "all v0 projects in your workspace"
+                    # Projects have a 'privacy' field: 'private' (user's own) or 'team' (shared with team)
+                    # We MUST filter to only use 'private' projects to avoid using shared/team projects
+                    projects = []
                     try:
+                        # Get all projects from workspace (includes both private and team projects)
                         projects_resp = await client.get(
                             "https://api.v0.dev/v1/projects",
                             headers=headers
@@ -817,54 +955,145 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                         
                         if projects_resp.status_code == 200:
                             projects_data = projects_resp.json()
-                            projects = projects_data.get("data", [])
+                            all_projects = projects_data.get("data", [])
                             
-                            if isinstance(projects, list) and len(projects) > 0:
-                                logger.info("v0_projects_found",
-                                           user_id=user_id,
-                                           product_id=product_id,
-                                           count=len(projects))
-                                
-                                # Priority 1: Look for project with exact matching name
-                                for p in projects:
-                                    if p.get("name") == project_name:
-                                        project_id = p.get("id")
-                                        project_url = p.get("webUrl") or p.get("web_url")
-                                        logger.info("v0_project_found_exact_name",
-                                                   user_id=user_id,
-                                                   product_id=product_id,
-                                                   project_id=project_id,
-                                                   name=project_name)
-                                        break
-                                
-                                # Priority 2: Look for projects containing the name
-                                if not project_id:
-                                    for p in projects:
-                                        if project_name.lower() in p.get("name", "").lower():
-                                            project_id = p.get("id")
-                                            project_url = p.get("webUrl") or p.get("web_url")
-                                            logger.info("v0_project_found_similar_name",
-                                                       user_id=user_id,
-                                                       product_id=product_id,
-                                                       project_id=project_id,
-                                                       name=p.get("name"))
-                                            break
-                                
-                                # Priority 3: ALWAYS reuse the most recent project (first in list)
-                                if not project_id:
-                                    project = projects[0]
-                                    project_id = project.get("id")
-                                    project_url = project.get("webUrl") or project.get("web_url")
-                                    logger.info("v0_project_reusing_most_recent",
+                            # CRITICAL: Filter to ONLY private projects (user's own, not team/shared)
+                            # According to V0 API docs: privacy can be 'private' or 'team'
+                            # We only want 'private' projects to ensure prompts go to user's own projects
+                            private_projects = [p for p in all_projects if p.get("privacy") == "private"]
+                            
+                            logger.info("v0_projects_filtered_by_privacy",
+                                       user_id=user_id,
+                                       product_id=product_id,
+                                       all_projects_count=len(all_projects),
+                                       private_projects_count=len(private_projects),
+                                       team_projects_count=len(all_projects) - len(private_projects))
+                            
+                            # CRITICAL: Filter to only projects linked to THIS SPECIFIC product_id in database
+                            # This ensures each product has its own V0 project and prompts are posted correctly
+                            # Projects must:
+                            # 1. Be owned by the user (privacy: "private")
+                            # 2. Be linked to this specific product_id in the database
+                            # 3. Be in scope: "mckinsey" (if API returns scope field)
+                            if db and product_id and user_id and len(private_projects) > 0:
+                                try:
+                                    from sqlalchemy import text as sql_text
+                                    # Get V0 project IDs that are linked to THIS SPECIFIC product_id
+                                    # This ensures we only use projects created for this product
+                                    product_projects_query = sql_text("""
+                                        SELECT DISTINCT v0_project_id
+                                        FROM design_mockups
+                                        WHERE product_id = :product_id
+                                          AND user_id = :user_id
+                                          AND provider = 'v0'
+                                          AND v0_project_id IS NOT NULL
+                                    """)
+                                    product_projects_result = await db.execute(product_projects_query, {
+                                        "product_id": product_id,
+                                        "user_id": user_id
+                                    })
+                                    product_project_ids = {str(row[0]) for row in product_projects_result.fetchall()}
+                                    
+                                    # Filter to only private projects that:
+                                    # 1. Are linked to this specific product_id in the database
+                                    # 2. Have scope: "mckinsey" (if API returns scope field)
+                                    filtered_projects = []
+                                    for p in private_projects:
+                                        project_id_str = str(p.get("id"))
+                                        # Must be linked to this specific product_id in database
+                                        if project_id_str in product_project_ids:
+                                            # Check if scope is returned and matches (if available)
+                                            project_scope = p.get("scope")
+                                            if project_scope is None or project_scope == "mckinsey":
+                                                filtered_projects.append(p)
+                                    
+                                    projects = filtered_projects
+                                    
+                                    logger.info("v0_projects_filtered_by_product_id",
                                                user_id=user_id,
                                                product_id=product_id,
-                                               project_id=project_id,
-                                               name=project.get("name", "Unnamed"))
+                                               all_projects_count=len(all_projects),
+                                               private_projects_count=len(private_projects),
+                                               product_projects_count=len(projects),
+                                               product_project_ids=list(product_project_ids),
+                                               scope_filter="mckinsey")
+                                except Exception as db_filter_error:
+                                    logger.warning("v0_project_database_filter_failed",
+                                                 error=str(db_filter_error),
+                                                 user_id=user_id,
+                                                 product_id=product_id,
+                                                 fallback="no_projects")
+                                    # If database filter fails, don't use any projects (safer than using wrong ones)
+                                    # Projects must be in database linked to this product_id
+                                    projects = []
+                            else:
+                                # No database/product_id/user_id - cannot safely filter, don't reuse projects
+                                # Projects must be in database linked to this product_id
+                                projects = []
+                                logger.warning("v0_cannot_filter_projects_no_db",
+                                             user_id=user_id,
+                                             product_id=product_id,
+                                             action="will_create_new",
+                                             reason="projects_must_be_linked_to_product_id")
+                        else:
+                            logger.warning("v0_project_list_failed",
+                                         status_code=projects_resp.status_code,
+                                         user_id=user_id,
+                                         product_id=product_id)
                     except Exception as list_error:
                         logger.warning("v0_project_list_failed",
                                      error=str(list_error),
                                      user_id=user_id,
                                      product_id=product_id)
+                    
+                    # Now process filtered projects (only user's own projects)
+                    if isinstance(projects, list) and len(projects) > 0:
+                        logger.info("v0_user_projects_found",
+                                   user_id=user_id,
+                                   product_id=product_id,
+                                   count=len(projects))
+                        
+                        # Priority 1: Look for project with exact matching name
+                        for p in projects:
+                            if p.get("name") == project_name:
+                                project_id = p.get("id")
+                                # Get project URL from API response, or construct it
+                                project_web_url = p.get("webUrl") or p.get("web_url")
+                                project_url = project_web_url or (f"https://v0.dev/project/{project_id}" if project_id else None)
+                                logger.info("v0_project_found_exact_name",
+                                           user_id=user_id,
+                                           product_id=product_id,
+                                           project_id=project_id,
+                                           name=project_name)
+                                break
+                        
+                        # Priority 2: Look for projects containing the name
+                        if not project_id:
+                            for p in projects:
+                                if project_name.lower() in p.get("name", "").lower():
+                                    project_id = p.get("id")
+                                    # Get project URL from API response, or construct it
+                                    project_web_url = p.get("webUrl") or p.get("web_url")
+                                    project_url = project_web_url or (f"https://v0.dev/project/{project_id}" if project_id else None)
+                                    logger.info("v0_project_found_similar_name",
+                                               user_id=user_id,
+                                               product_id=product_id,
+                                               project_id=project_id,
+                                               name=p.get("name"))
+                                    break
+                        
+                        # Priority 3: Use the most recent user project (first in list)
+                        if not project_id:
+                            project = projects[0]
+                            project_id = project.get("id")
+                            # Get project URL from API response, or construct it
+                            project_web_url = project.get("webUrl") or project.get("web_url")
+                            project_url = project_web_url or (f"https://v0.dev/project/{project_id}" if project_id else None)
+                            logger.info("v0_project_reusing_most_recent_user_project",
+                                       user_id=user_id,
+                                       product_id=product_id,
+                                       project_id=project_id,
+                                       name=project.get("name", "Unnamed"))
                     
                     # Step 2: Create new project ONLY if NO projects exist at all
                     if not project_id:
@@ -872,16 +1101,24 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                                    user_id=user_id,
                                    product_id=product_id,
                                    name=project_name)
+                        # Create new project with scope: "mckinsey"
+                        # Project will be private by default (user's own project)
+                        # Scope ensures the project is in the mckinsey scope for proper isolation
                         create_resp = await client.post(
                             "https://api.v0.dev/v1/projects",
                             headers=headers,
-                            json={"name": project_name}
+                            json={
+                                "name": project_name,
+                                "scope": "mckinsey"  # Create project in mckinsey scope
+                            }
                         )
                         
                         if create_resp.status_code in [200, 201]:
                             create_result = create_resp.json()
                             project_id = create_result.get("id")
-                            project_url = create_result.get("webUrl") or create_result.get("web_url")
+                            # Get project URL from API response, or construct it
+                            project_web_url = create_result.get("webUrl") or create_result.get("web_url")
+                            project_url = project_web_url or (f"https://v0.dev/project/{project_id}" if project_id else None)
                             logger.info("v0_project_created",
                                        user_id=user_id,
                                        product_id=product_id,
@@ -1055,7 +1292,9 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                            num_files=len(files))
                 
                 # Return IMMEDIATELY with project_id - no waiting for generation
-                initial_project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                # project_url should be the project page URL, not the chat/prototype URL
+                # Construct project URL: https://v0.dev/project/{project_id}
+                project_page_url = f"https://v0.dev/project/{final_project_id}" if final_project_id else None
                 initial_status = "completed" if (demo_url or web_url or files) else "in_progress"
                 project_name_result = result.get("name") or f"V0 Project {final_project_id[:8] if final_project_id else 'N/A'}"
                 
@@ -1063,9 +1302,9 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                     "chat_id": chat_id,
                     "projectId": final_project_id,  # Use projectId (camelCase) to match V0 API format
                     "project_id": final_project_id,  # Keep for backward compatibility
-                    "project_url": initial_project_url,
-                    "web_url": web_url,
-                    "demo_url": demo_url,
+                    "project_url": project_page_url,  # Project page URL, not chat/prototype URL
+                    "web_url": web_url,  # Prototype web URL (if available)
+                    "demo_url": demo_url,  # Prototype demo URL (if available)
                     "project_name": project_name_result,
                     "code": code,
                     "files": files,
@@ -1089,6 +1328,8 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 # Timeout is EXPECTED - V0 API generates in background
                 # Return immediately with project_id - user can check status later
                 # CRITICAL: project_id MUST be set at this point (created in Step 2)
+                # Construct project page URL
+                project_page_url = f"https://v0.dev/project/{project_id}" if project_id else None
                 if not project_id:
                     logger.error("v0_timeout_without_project_id",
                                user_id=user_id,
@@ -1103,11 +1344,13 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                            note="Timeout expected - chat is being generated in background, projectId is available")
                 
                 # Return immediately with projectId - chat will appear in project
+                # Construct project page URL
+                project_page_url = f"https://v0.dev/project/{project_id}" if project_id else None
                 return {
                     "chat_id": None,  # Will be found via project polling
                     "projectId": project_id,  # Use projectId (camelCase) - MUST be set (created in Step 2)
                     "project_id": project_id,  # Keep for backward compatibility
-                    "project_url": None,
+                    "project_url": project_page_url,  # Project page URL, not chat URL
                     "web_url": None,
                     "demo_url": None,
                     "project_name": project_name,
@@ -1184,12 +1427,14 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 )
                 
                 if project_resp.status_code == 404:
+                    # Even if project not found, construct project URL for reference
+                    project_url = f"https://v0.dev/project/{project_id}" if project_id else None
                     return {
                         "projectId": project_id,  # Use projectId (camelCase)
                         "project_id": project_id,  # Keep for backward compatibility
                         "chat_id": None,
                         "project_status": "unknown",
-                        "project_url": None,
+                        "project_url": project_url,  # Return project URL even if not found
                         "web_url": None,
                         "demo_url": None,
                         "is_complete": False,
@@ -1202,13 +1447,18 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 project_data = project_resp.json()
                 chats = project_data.get("chats", [])
                 
+                # Get project URL from project data (this is the project page, not the chat/prototype URL)
+                project_web_url = project_data.get("webUrl") or project_data.get("web_url")
+                # Construct project URL: https://v0.dev/project/{project_id} or use webUrl from API
+                project_url = project_web_url or f"https://v0.dev/project/{project_id}"
+                
                 if not chats or len(chats) == 0:
                     return {
                         "projectId": project_id,  # Use projectId (camelCase)
                         "project_id": project_id,  # Keep for backward compatibility
                         "chat_id": None,
                         "project_status": "pending",
-                        "project_url": None,
+                        "project_url": project_url,  # Return project URL, not chat URL
                         "web_url": None,
                         "demo_url": None,
                         "is_complete": False,
@@ -1225,7 +1475,7 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                         "project_id": project_id,  # Keep for backward compatibility
                         "chat_id": None,
                         "project_status": "unknown",
-                        "project_url": None,
+                        "project_url": project_url,  # Return project URL, not chat URL
                         "web_url": None,
                         "demo_url": None,
                         "is_complete": False,
@@ -1244,7 +1494,7 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                         "project_id": project_id,  # Keep for backward compatibility
                         "chat_id": chat_id,
                         "project_status": "unknown",
-                        "project_url": None,
+                        "project_url": project_url,  # Return project URL, not chat URL
                         "web_url": None,
                         "demo_url": None,
                         "is_complete": False,
@@ -1259,7 +1509,8 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 # Determine status
                 is_complete = bool(demo_url or web_url or (files and len(files) > 0))
                 project_status = "completed" if is_complete else "in_progress"
-                project_url = demo_url or web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                # project_url should be the project page URL, not the chat/prototype URL
+                # Keep project_url as the project page, and return demo_url/web_url separately for the prototype
                 
                 logger.info("v0_status_checked",
                            projectId=project_id,
@@ -1274,9 +1525,9 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                     "project_id": project_id,  # Keep for backward compatibility
                     "chat_id": chat_id,
                     "project_status": project_status,
-                    "project_url": project_url,
-                    "web_url": web_url,
-                    "demo_url": demo_url,
+                    "project_url": project_url,  # This is the project page URL (https://v0.dev/project/{project_id})
+                    "web_url": web_url,  # Prototype web URL (if available)
+                    "demo_url": demo_url,  # Prototype demo URL (if available)
                     "is_complete": is_complete,
                     "num_files": len(files),
                     "files": files
@@ -1321,12 +1572,29 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 poll_interval=15.0
             )
             
+            # Get project_id from database to construct project URL
+            project_id_from_db = None
+            try:
+                query = text("""
+                    SELECT v0_project_id
+                    FROM design_mockups
+                    WHERE id = :mockup_id
+                    LIMIT 1
+                """)
+                result = await db.execute(query, {"mockup_id": mockup_id})
+                row = result.fetchone()
+                if row:
+                    project_id_from_db = row[0]
+            except Exception as db_error:
+                logger.warning("failed_to_get_project_id_for_url", error=str(db_error))
+            
             # Update database with final status
             if poll_result.get("ready"):
                 final_web_url = poll_result.get("web_url")
                 final_demo_url = poll_result.get("demo_url")
-                # V0 project URLs already contain the correct path (e.g., ideation/design)
-                final_project_url = final_demo_url or final_web_url or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                # project_url should be the project page URL, not the chat/prototype URL
+                # Construct project page URL: https://v0.dev/project/{project_id}
+                final_project_url = f"https://v0.dev/project/{project_id_from_db}" if project_id_from_db else None
                 
                 final_status = "completed"
                 
@@ -1334,11 +1602,13 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                            chat_id=chat_id,
                            mockup_id=mockup_id,
                            project_url=final_project_url,
+                           demo_url=final_demo_url,
+                           web_url=final_web_url,
                            poll_count=poll_result.get("poll_count", 0),
                            elapsed_seconds=poll_result.get("elapsed_seconds", 0))
             else:
-                # V0 project URLs already contain the correct path (e.g., ideation/design)
-                final_project_url = poll_result.get("web_url") or poll_result.get("demo_url") or (f"https://v0.dev/chat/{chat_id}" if chat_id else None)
+                # project_url should be the project page URL, not the chat/prototype URL
+                final_project_url = f"https://v0.dev/project/{project_id_from_db}" if project_id_from_db else None
                 
                 final_status = "timeout" if poll_result.get("timeout") else "in_progress"
                 

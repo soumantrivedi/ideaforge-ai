@@ -10,6 +10,10 @@ interface ProviderConfigProps {
     claudeKey?: string;
     geminiKey?: string;
     v0Key?: string;
+    aiGatewayClientId?: string;
+    aiGatewayClientSecret?: string;
+    aiGatewayBaseUrl?: string;
+    aiGatewayDefaultModel?: string;
   }) => void;
   configuredProviders: AIProvider[];
   apiKeysStatus?: Record<string, boolean>;
@@ -28,13 +32,18 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
   const [claudeKey, setClaudeKey] = useState('');
   const [geminiKey, setGeminiKey] = useState('');
   const [v0Key, setV0Key] = useState('');
+  const [aiGatewayClientId, setAiGatewayClientId] = useState('');
+  const [aiGatewayClientSecret, setAiGatewayClientSecret] = useState('');
+  const [aiGatewayBaseUrl, setAiGatewayBaseUrl] = useState('');
+  const [aiGatewayDefaultModel, setAiGatewayDefaultModel] = useState('');
   const [verifySsl, setVerifySsl] = useState(false); // Default to false for SSL verification
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [verificationStatus, setVerificationStatus] = useState<Record<AIProvider | 'v0', VerificationStatus>>({
+  const [verificationStatus, setVerificationStatus] = useState<Record<AIProvider | 'v0' | 'ai_gateway', VerificationStatus>>({
     openai: { status: 'idle' },
     claude: { status: 'idle' },
     gemini: { status: 'idle' },
     v0: { status: 'idle' },
+    ai_gateway: { status: 'idle' },
   });
   const [verificationInfoVisible, setVerificationInfoVisible] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -52,6 +61,10 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
       claudeKey: claudeKey.trim() || null,
       geminiKey: geminiKey.trim() || null,
       v0Key: v0Key.trim() || null,
+      aiGatewayClientId: aiGatewayClientId.trim() || null,
+      aiGatewayClientSecret: aiGatewayClientSecret.trim() || null,
+      aiGatewayBaseUrl: aiGatewayBaseUrl.trim() || null,
+      aiGatewayDefaultModel: aiGatewayDefaultModel.trim() || null,
     };
 
     try {
@@ -73,6 +86,10 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
         claudeKey: payload.claudeKey || undefined,
         geminiKey: payload.geminiKey || undefined,
         v0Key: payload.v0Key || undefined,
+        aiGatewayClientId: payload.aiGatewayClientId || undefined,
+        aiGatewayClientSecret: payload.aiGatewayClientSecret || undefined,
+        aiGatewayBaseUrl: payload.aiGatewayBaseUrl || undefined,
+        aiGatewayDefaultModel: payload.aiGatewayDefaultModel || undefined,
       });
 
       setSaveSuccess('Provider configuration updated successfully.');
@@ -95,19 +112,41 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
     }));
   };
 
-  const verifyProviderKey = async (provider: AIProvider | 'v0') => {
-    const key =
-      provider === 'openai'
-        ? openaiKey.trim()
-        : provider === 'claude'
-        ? claudeKey.trim()
-        : provider === 'gemini'
-        ? geminiKey.trim()
-        : provider === 'v0'
-        ? v0Key.trim()
-        : '';
+  const verifyProviderKey = async (provider: AIProvider | 'v0' | 'ai_gateway') => {
+    let key = '';
+    let requestBody: any = { provider };
+    
+    if (provider === 'openai') {
+      key = openaiKey.trim();
+      requestBody.api_key = key;
+    } else if (provider === 'claude') {
+      key = claudeKey.trim();
+      requestBody.api_key = key;
+    } else if (provider === 'gemini') {
+      key = geminiKey.trim();
+      requestBody.api_key = key;
+    } else if (provider === 'v0') {
+      key = v0Key.trim();
+      requestBody.api_key = key;
+      requestBody.verify_ssl = verifySsl;
+    } else if (provider === 'ai_gateway') {
+      const clientId = aiGatewayClientId.trim();
+      const clientSecret = aiGatewayClientSecret.trim();
+      if (!clientId || !clientSecret) {
+        updateVerificationStatus(provider, {
+          status: 'error',
+          message: 'Enter both Client ID and Client Secret before verifying.',
+        });
+        return;
+      }
+      requestBody.api_key = clientId;
+      requestBody.client_secret = clientSecret;
+      if (aiGatewayBaseUrl.trim()) {
+        requestBody.base_url = aiGatewayBaseUrl.trim();
+      }
+    }
 
-    if (!key) {
+    if (!key && provider !== 'ai_gateway') {
       updateVerificationStatus(provider, {
         status: 'error',
         message: 'Enter an API key before verifying.',
@@ -119,11 +158,6 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
     setVerificationInfoVisible(true);
 
     try {
-      // For V0 provider, include verify_ssl parameter
-      const requestBody: any = { provider, api_key: key };
-      if (provider === 'v0') {
-        requestBody.verify_ssl = verifySsl;
-      }
 
       const response = await apiFetch('/api/providers/verify', {
         method: 'POST',
@@ -154,22 +188,23 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
     setShowKeys((prev) => ({ ...prev, [provider]: !prev[provider] }));
   };
 
-  const isConfigured = (provider: AIProvider | 'v0') => {
+  const isConfigured = (provider: AIProvider | 'v0' | 'ai_gateway') => {
     // First check apiKeysStatus (from database), then fallback to configuredProviders (in-memory)
     // Map frontend provider names to backend provider names
     const providerKey = provider === 'claude' ? 'anthropic' : provider === 'gemini' ? 'google' : provider;
     return apiKeysStatus[providerKey] === true || configuredProviders.includes(provider as AIProvider);
   };
 
-  const renderVerificationFeedback = (provider: AIProvider | 'v0') => {
+  const renderVerificationFeedback = (provider: AIProvider | 'v0' | 'ai_gateway') => {
     const status = verificationStatus[provider];
     if (!status || status.status === 'idle') return null;
 
     if (status.status === 'verifying') {
+      const providerName = provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'v0' ? 'V0' : provider === 'ai_gateway' ? 'AI Gateway' : 'OpenAI';
       return (
         <span className="text-xs text-blue-600 flex items-center gap-1">
           <Loader2 className="w-3 h-3 animate-spin" />
-          Verifying with {provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'v0' ? 'V0' : 'OpenAI'}...
+          Verifying with {providerName}...
         </span>
       );
     }
@@ -476,6 +511,112 @@ export function ProviderConfig({ onSaveConfig, configuredProviders, apiKeysStatu
               Verify Key
             </button>
             {renderVerificationFeedback('v0')}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-semibold text-gray-700">
+              AI Gateway (Service Account)
+            </label>
+            {isConfigured('ai_gateway') ? (
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-green-500" />
+                <span className="text-xs text-green-600 font-medium">Configured</span>
+              </div>
+            ) : (
+              <XCircle className="w-5 h-5 text-gray-300" />
+            )}
+          </div>
+          {isConfigured('ai_gateway') && !aiGatewayClientId && (
+            <div className="mb-2 p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+              ✓ AI Gateway credentials are already configured. Leave blank to keep existing credentials, or enter new credentials to update.
+            </div>
+          )}
+          <div className="space-y-3">
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2">
+                <Key className="w-4 h-4 text-gray-400" />
+              </div>
+              <input
+                type={showKeys.ai_gateway_client_id ? 'text' : 'password'}
+                value={aiGatewayClientId}
+                onChange={(e) => setAiGatewayClientId(e.target.value)}
+                placeholder={isConfigured('ai_gateway') ? "Leave blank to keep existing Client ID, or enter new Client ID..." : "Client ID"}
+                className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              />
+              <button
+                type="button"
+                onClick={() => toggleShowKey('ai_gateway_client_id')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showKeys.ai_gateway_client_id ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+            <div className="relative">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2">
+                <Key className="w-4 h-4 text-gray-400" />
+              </div>
+              <input
+                type={showKeys.ai_gateway_client_secret ? 'text' : 'password'}
+                value={aiGatewayClientSecret}
+                onChange={(e) => setAiGatewayClientSecret(e.target.value)}
+                placeholder={isConfigured('ai_gateway') ? "Leave blank to keep existing Client Secret, or enter new Client Secret..." : "Client Secret"}
+                className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              />
+              <button
+                type="button"
+                onClick={() => toggleShowKey('ai_gateway_client_secret')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showKeys.ai_gateway_client_secret ? (
+                  <EyeOff className="w-4 h-4" />
+                ) : (
+                  <Eye className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+            <input
+              type="text"
+              value={aiGatewayBaseUrl}
+              onChange={(e) => setAiGatewayBaseUrl(e.target.value)}
+              placeholder="Base URL (optional, e.g., https://ai-gateway.quantumblack.com)"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition text-sm"
+            />
+            <input
+              type="text"
+              value={aiGatewayDefaultModel}
+              onChange={(e) => setAiGatewayDefaultModel(e.target.value)}
+              placeholder="Default Model (optional, e.g., gpt-4o)"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition text-sm"
+            />
+          </div>
+          <p className="mt-1 text-xs text-gray-500">
+            AI Gateway provides unified access to multiple AI models. Get service account credentials from your administrator.
+            <a
+              href="https://docs.prod.ai-gateway.quantumblack.com/getting_started/service_accounts/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-700 ml-1"
+            >
+              Learn more
+            </a>
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => verifyProviderKey('ai_gateway')}
+              className="px-3 py-2 text-xs font-medium text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-50 disabled:opacity-50 flex items-center gap-2"
+              disabled={!aiGatewayClientId.trim() || !aiGatewayClientSecret.trim() || verificationStatus.ai_gateway.status === 'verifying'}
+            >
+              {verificationStatus.ai_gateway.status === 'verifying' && <Loader2 className="w-3 h-3 animate-spin" />}
+              Verify Credentials
+            </button>
+            {renderVerificationFeedback('ai_gateway')}
           </div>
         </div>
 

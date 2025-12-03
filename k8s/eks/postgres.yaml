@@ -55,6 +55,43 @@ spec:
               key: POSTGRES_DB
         - name: PGDATA
           value: /var/lib/postgresql/data/pgdata
+        # PostgreSQL performance tuning for 100+ concurrent users
+        # These settings optimize for high concurrency and faster query processing
+        - name: POSTGRES_INITDB_ARGS
+          value: "--encoding=UTF8 --locale=C"
+        # Runtime configuration via command args (applied at container start)
+        command:
+        - postgres
+        - -c
+        - max_connections=500
+        - -c
+        - shared_buffers=1GB
+        - -c
+        - effective_cache_size=3GB
+        - -c
+        - maintenance_work_mem=256MB
+        - -c
+        - checkpoint_completion_target=0.9
+        - -c
+        - wal_buffers=16MB
+        - -c
+        - default_statistics_target=100
+        - -c
+        - random_page_cost=1.1
+        - -c
+        - effective_io_concurrency=200
+        - -c
+        - work_mem=8MB
+        - -c
+        - min_wal_size=1GB
+        - -c
+        - max_wal_size=4GB
+        - -c
+        - max_worker_processes=4
+        - -c
+        - max_parallel_workers_per_gather=2
+        - -c
+        - max_parallel_workers=4
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
@@ -63,11 +100,11 @@ spec:
           readOnly: true
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "250m"
+            memory: "2Gi"  # Increased from 512Mi for better query processing and caching
+            cpu: "1000m"  # Increased from 250m for faster query execution
           limits:
-            memory: "2Gi"
-            cpu: "1000m"
+            memory: "4Gi"  # Increased from 2Gi for larger working sets and pgvector operations
+            cpu: "2000m"  # Increased from 1000m for concurrent query processing
         livenessProbe:
           exec:
             command:

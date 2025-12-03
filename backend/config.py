@@ -62,6 +62,22 @@ class Settings(BaseSettings):
     openai_api_key: Optional[str] = _clean_api_key(os.getenv("OPENAI_API_KEY"))
     anthropic_api_key: Optional[str] = _clean_api_key(os.getenv("ANTHROPIC_API_KEY"))
     google_api_key: Optional[str] = _clean_api_key(os.getenv("GOOGLE_API_KEY"))
+    
+    # AI Gateway Configuration (Service Account)
+    ai_gateway_client_id: Optional[str] = _clean_api_key(os.getenv("AI_GATEWAY_CLIENT_ID"))
+    ai_gateway_client_secret: Optional[str] = _clean_api_key(os.getenv("AI_GATEWAY_CLIENT_SECRET"))
+    ai_gateway_instance_id: Optional[str] = os.getenv("AI_GATEWAY_INSTANCE_ID", "1d8095ae-5ef9-4e61-885c-f5b031f505a4")
+    ai_gateway_env: str = os.getenv("AI_GATEWAY_ENV", "prod")  # Environment: prod, dev, etc.
+    # Provider-specific base URLs (constructed from instance_id and env)
+    ai_gateway_openai_base_url: Optional[str] = os.getenv("AI_GATEWAY_OPENAI_BASE_URL")
+    ai_gateway_anthropic_base_url: Optional[str] = os.getenv("AI_GATEWAY_ANTHROPIC_BASE_URL")
+    # Legacy base_url for OAuth token endpoint (if needed)
+    ai_gateway_base_url: Optional[str] = os.getenv("AI_GATEWAY_BASE_URL", "https://ai-gateway.quantumblack.com")
+    ai_gateway_enabled: bool = os.getenv("AI_GATEWAY_ENABLED", "true").lower() == "true"  # Default to enabled
+    ai_gateway_default_model: Optional[str] = os.getenv("AI_GATEWAY_DEFAULT_MODEL", "gpt-5.1")
+    ai_gateway_fast_model: Optional[str] = os.getenv("AI_GATEWAY_FAST_MODEL", "gpt-5.1-chat-latest")
+    ai_gateway_standard_model: Optional[str] = os.getenv("AI_GATEWAY_STANDARD_MODEL", "gpt-5.1")
+    ai_gateway_premium_model: Optional[str] = os.getenv("AI_GATEWAY_PREMIUM_MODEL", "gpt-5.1")
 
     # McKinsey OIDC/SSO Configuration
     mckinsey_client_id: str = os.getenv("MCKINSEY_CLIENT_ID", "")

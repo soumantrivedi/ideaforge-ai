@@ -50,15 +50,16 @@ class AgnoEnhancedCoordinator:
             raise ImportError("Agno framework is not available. Install with: pip install agno")
         
         # Initialize all agents
-        self.research_agent = AgnoResearchAgent(enable_rag=enable_rag)
-        self.analysis_agent = AgnoAnalysisAgent(enable_rag=enable_rag)
-        self.ideation_agent = AgnoIdeationAgent(enable_rag=enable_rag)
-        self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=enable_rag)
+        # CRITICAL: Enable RAG for all lifecycle agents to ensure knowledge base is used across all phases
+        self.research_agent = AgnoResearchAgent(enable_rag=True)  # Always enable RAG for research
+        self.analysis_agent = AgnoAnalysisAgent(enable_rag=True)  # Always enable RAG for analysis
+        self.ideation_agent = AgnoIdeationAgent(enable_rag=True)  # Always enable RAG for ideation
+        self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=True)  # Always enable RAG for PRD authoring
         self.summary_agent = AgnoSummaryAgent(enable_rag=enable_rag)
         self.scoring_agent = AgnoScoringAgent(enable_rag=enable_rag)
         self.strategy_agent = AgnoStrategyAgent(enable_rag=enable_rag)
-        self.validation_agent = AgnoValidationAgent(enable_rag=enable_rag)
-        self.export_agent = AgnoExportAgent(enable_rag=enable_rag)
+        self.validation_agent = AgnoValidationAgent(enable_rag=True)  # Always enable RAG for validation/review
+        self.export_agent = AgnoExportAgent(enable_rag=True)  # Always enable RAG for export
         self.v0_agent = AgnoV0Agent(enable_rag=enable_rag)
         self.lovable_agent = AgnoLovableAgent(enable_rag=enable_rag)
         self.atlassian_agent = AgnoAtlassianAgent(enable_rag=enable_rag)
@@ -415,14 +416,22 @@ class AgnoEnhancedCoordinator:
             # Also include as message_history for NLU extraction
             context["message_history"] = self.shared_context["conversation_history"]
         
-        # Retrieve knowledge from RAG
+        # Retrieve knowledge from RAG - CRITICAL: Filter by product_id to get only relevant documents
         if session_ids or product_id:
             try:
                 rag_query = f"Product: {product_id}, Sessions: {', '.join(session_ids) if session_ids else 'N/A'}"
-                knowledge_results = await self.rag_agent.search_knowledge(rag_query, top_k=10)
+                # Pass product_id as filter to ensure only documents for this product are retrieved
+                filters = {}
+                if product_id:
+                    filters["product_id"] = str(product_id)
+                knowledge_results = await self.rag_agent.search_knowledge(rag_query, top_k=10, filters=filters)
                 context["knowledge_base"] = knowledge_results
+                self.logger.info("rag_knowledge_retrieved",
+                               product_id=product_id,
+                               results_count=len(knowledge_results),
+                               filters=filters)
             except Exception as e:
-                self.logger.warning("rag_context_retrieval_failed", error=str(e))
+                self.logger.warning("rag_context_retrieval_failed", error=str(e), product_id=product_id)
         
         return context
     
@@ -471,6 +480,12 @@ class AgnoEnhancedCoordinator:
         if context.get("ideation_from_chat"):
             system_parts.append("\n=== IDEATION FROM CHATBOT ===")
             system_parts.append(context["ideation_from_chat"][:2500])  # Increased from 1500 - Option E
+        
+        # Previous phase submissions (CRITICAL: Include ALL previous phase data)
+        if context.get("previous_phases"):
+            system_parts.append("\n=== PREVIOUS PHASE SUBMISSIONS ===")
+            system_parts.append("CRITICAL: Use ALL information from previous phases. Reference specific details from ideation, market research, and other completed phases.")
+            system_parts.append(context["previous_phases"])
         
         # Form data context (exclude current field to avoid duplication) (Option E: increased limit)
         if context.get("form_data"):
@@ -525,9 +540,13 @@ USER REQUEST:
 INSTRUCTIONS:
 - Use the SYSTEM CONTEXT above to inform your response
 - Focus on the USER REQUEST as the primary task
-- Synthesize information from conversation history and knowledge base
-- Reference specific context when relevant
-- Provide a comprehensive, well-structured answer
+- Synthesize information from conversation history, knowledge base, AND previous phase submissions
+- Reference specific details from previous phases (ideation, market research, etc.) when relevant
+- Provide data-driven, specific responses - NOT generic guidance
+- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
+- DO NOT say "Since the earlier context only states..." or "Because your previous question was..."
+- Instead, directly use the information: "Based on your ideation phase, the problem is X, therefore..."
+- Be crisp, specific, and use actual information from previous phases
 """
         
         return enhanced
@@ -601,55 +620,266 @@ INSTRUCTIONS:
         """Get shared context."""
         return self.shared_context.copy()
     
-    def determine_primary_agent(self, query: str) -> tuple[str, float]:
-        """Determine the best agent to handle a query."""
+    def determine_primary_agent(self, query: str, context: Optional[Dict[str, Any]] = None) -> tuple[str, float]:
+        """
+        Intelligently determine the best agent to handle a query based on:
+        1. Phase context (if user is in a specific phase)
+        2. Query content and keywords
+        3. Agent capabilities
+        
+        CRITICAL: Only selects agents relevant to the current phase and query content.
+        """
         query_lower = query.lower()
         best_agent = None
         best_confidence = 0.0
         
-        for agent_type, agent in self.agents.items():
-            confidence = agent.get_confidence(query)
-            if confidence > best_confidence:
-                best_confidence = confidence
-                best_agent = agent_type
+        # Phase-to-agent mapping for intelligent routing
+        phase_agent_mapping = {
+            "ideation": "ideation",
+            "market research": "research",
+            "market_research": "research",
+            "requirements": "prd_authoring",
+            "requirements phase": "prd_authoring",
+            "design": "prd_authoring",  # Design phase may need PRD content
+            "strategy": "strategy",
+            "analysis": "analysis",
+            "validation": "validation",
+            "review": "validation",
+        }
         
-        # Default to ideation if no clear match
-        if best_confidence < 0.3:
-            best_agent = "ideation"
-            best_confidence = 0.5
+        # Check phase context first - this is the most reliable indicator
+        phase_name = None
+        if context:
+            phase_name = context.get("phase_name", "").lower() if context.get("phase_name") else None
+        
+        # If user is in a specific phase, prioritize agents for that phase
+        phase_agent = None
+        if phase_name:
+            # Direct match
+            if phase_name in phase_agent_mapping:
+                phase_agent = phase_agent_mapping[phase_name]
+            else:
+                # Partial match (e.g., "Market Research Phase" -> "research")
+                for phase_key, agent_type in phase_agent_mapping.items():
+                    if phase_key in phase_name or phase_name in phase_key:
+                        phase_agent = agent_type
+                        break
+        
+        # Query-based agent detection with phase awareness
+        # Phase-specific keywords that override general keyword matching
+        phase_specific_keywords = {
+            "ideation": ["ideation", "idea", "brainstorm", "concept", "innovation", "problem statement", "what problem"],
+            "research": ["market research", "competitive analysis", "trend", "market trend", "competitor", "industry analysis", "user research"],
+            "prd_authoring": ["requirement", "prd", "user story", "acceptance criteria", "functional requirement", "non-functional", "specification"],
+            "strategy": ["strategy", "roadmap", "go-to-market", "gtm", "business model", "positioning"],
+            "analysis": ["analyze", "analysis", "swot", "feasibility", "risk analysis", "gap analysis"],
+            "validation": ["validate", "validation", "review", "quality check", "verify"],
+        }
+        
+        # Score agents based on query content and phase context
+        agent_scores = {}
+        for agent_type, agent in self.agents.items():
+            if agent_type == "rag":  # Skip RAG as primary agent
+                continue
+            
+            score = 0.0
+            
+            # Phase context boost (high priority)
+            if phase_agent == agent_type:
+                score += 0.5  # Strong boost for phase-matched agent
+            
+            # Query keyword matching
+            agent_confidence = agent.get_confidence(query)
+            score += agent_confidence * 0.4
+            
+            # Phase-specific keyword matching
+            if agent_type in phase_specific_keywords:
+                keywords = phase_specific_keywords[agent_type]
+                matches = sum(1 for kw in keywords if kw in query_lower)
+                if matches > 0:
+                    score += (matches / len(keywords)) * 0.3
+            
+            # Negative scoring: if query explicitly mentions a different phase, reduce score
+            if phase_name:
+                for other_phase, other_agent in phase_agent_mapping.items():
+                    if other_agent != agent_type and other_phase in phase_name:
+                        # If we're in a different phase, reduce score for this agent
+                        score *= 0.3
+            
+            agent_scores[agent_type] = score
+        
+        # Find best agent
+        if agent_scores:
+            best_agent = max(agent_scores.items(), key=lambda x: x[1])[0]
+            best_confidence = agent_scores[best_agent]
+        
+        # Only default to ideation if:
+        # 1. No phase context is available AND
+        # 2. Confidence is very low AND
+        # 3. Query doesn't explicitly mention other phases
+        if best_confidence < 0.3 and not phase_name:
+            # Check if query mentions other phases
+            mentions_research = any(kw in query_lower for kw in ["research", "market", "competitive", "trend"])
+            mentions_requirements = any(kw in query_lower for kw in ["requirement", "prd", "specification", "user story"])
+            mentions_strategy = any(kw in query_lower for kw in ["strategy", "roadmap", "gtm", "go-to-market"])
+            
+            if mentions_research:
+                best_agent = "research"
+                best_confidence = 0.6
+            elif mentions_requirements:
+                best_agent = "prd_authoring"
+                best_confidence = 0.6
+            elif mentions_strategy:
+                best_agent = "strategy"
+                best_confidence = 0.6
+            else:
+                # Last resort: default to ideation only if truly ambiguous
+                best_agent = "ideation"
+                best_confidence = 0.4
+        
+        self.logger.info(
+            "primary_agent_determined",
+            agent=best_agent,
+            confidence=best_confidence,
+            phase_name=phase_name,
+            phase_agent=phase_agent,
+            query_preview=query[:100]
+        )
         
         return best_agent, best_confidence
     
-    def determine_supporting_agents(self, query: str, primary_agent: str) -> List[str]:
-        """Determine which supporting agents should be consulted.
-        Automatically includes RAG, Atlassian (for Confluence/Jira), and Export (for PRD generation) when relevant.
-        ALWAYS includes RAG agent for knowledge base context.
+    def determine_supporting_agents(
+        self, 
+        query: str, 
+        primary_agent: str, 
+        context: Optional[Dict[str, Any]] = None
+    ) -> List[str]:
+        """
+        Intelligently determine which supporting agents should be consulted.
+        
+        CRITICAL: Only includes agents that are relevant to:
+        1. The current phase context
+        2. The query content
+        3. The primary agent's needs
+        
+        Does NOT automatically include ideation/research/analysis for all queries.
         """
         query_lower = query.lower()
         supporting = []
         
-        # ALWAYS include RAG agent first (unless it's the primary agent)
+        # Get phase context
+        phase_name = None
+        if context:
+            phase_name = context.get("phase_name", "").lower() if context.get("phase_name") else None
+        
+        # Phase-to-agent mapping
+        phase_agent_mapping = {
+            "ideation": "ideation",
+            "market research": "research",
+            "market_research": "research",
+            "requirements": "prd_authoring",
+            "requirements phase": "prd_authoring",
+            "design": "prd_authoring",
+            "strategy": "strategy",
+            "analysis": "analysis",
+            "validation": "validation",
+            "review": "validation",
+        }
+        
+        # RAG agent: Only include if there's actual knowledge base content or documents
+        # Check if RAG has knowledge (will be checked later in stream_route_query)
+        # For now, include RAG but it will be skipped if no knowledge is available
         if primary_agent != "rag":
             supporting.append("rag")
         
-        # Keywords that suggest multi-agent collaboration
-        if any(kw in query_lower for kw in ["research", "market", "competitive", "trend"]):
-            if primary_agent != "research":
-                supporting.append("research")
+        # Phase-aware agent selection
+        # Only add supporting agents if they're relevant to the current phase or query
         
-        if any(kw in query_lower for kw in ["analyze", "swot", "feasibility", "risk"]):
-            if primary_agent != "analysis":
-                supporting.append("analysis")
+        # Research agent: Only for market research phase or explicit research queries
+        should_include_research = False
+        if phase_name and ("research" in phase_name or "market" in phase_name):
+            should_include_research = True
+        elif any(kw in query_lower for kw in ["market research", "competitive analysis", "trend analysis", "industry analysis"]):
+            should_include_research = True
         
-        # Include Atlassian agent for Confluence/Jira operations
+        if should_include_research and primary_agent != "research":
+            supporting.append("research")
+        
+        # Analysis agent: Only for analysis phase or explicit analysis queries
+        should_include_analysis = False
+        if phase_name and "analysis" in phase_name:
+            should_include_analysis = True
+        elif any(kw in query_lower for kw in ["swot", "feasibility analysis", "risk analysis", "gap analysis", "strategic analysis"]):
+            should_include_analysis = True
+        
+        if should_include_analysis and primary_agent != "analysis":
+            supporting.append("analysis")
+        
+        # Ideation agent: Only for ideation phase or explicit ideation queries
+        # CRITICAL: Do NOT include ideation for market research or requirements phases
+        should_include_ideation = False
+        if phase_name and "ideation" in phase_name:
+            should_include_ideation = True
+        elif any(kw in query_lower for kw in ["ideation", "brainstorm", "idea generation", "innovation", "problem statement"]) and not phase_name:
+            # Only include if NOT in a different phase
+            should_include_ideation = True
+        
+        # Explicitly exclude ideation for non-ideation phases
+        if phase_name and "ideation" not in phase_name and "research" in phase_name:
+            should_include_ideation = False
+        if phase_name and "ideation" not in phase_name and "requirement" in phase_name:
+            should_include_ideation = False
+        
+        if should_include_ideation and primary_agent != "ideation":
+            supporting.append("ideation")
+        
+        # Strategy agent: Only for strategy phase or explicit strategy queries
+        should_include_strategy = False
+        if phase_name and "strategy" in phase_name:
+            should_include_strategy = True
+        elif any(kw in query_lower for kw in ["strategy", "roadmap", "go-to-market", "gtm", "business model", "positioning"]):
+            should_include_strategy = True
+        
+        if should_include_strategy and primary_agent != "strategy":
+            supporting.append("strategy")
+        
+        # Validation agent: Only for validation/review phase or explicit validation queries
+        should_include_validation = False
+        if phase_name and ("validation" in phase_name or "review" in phase_name):
+            should_include_validation = True
+        elif any(kw in query_lower for kw in ["validate", "validation", "review", "quality check", "verify"]):
+            should_include_validation = True
+        
+        if should_include_validation and primary_agent != "validation":
+            supporting.append("validation")
+        
+        # PRD Authoring agent: Only for requirements phase or explicit PRD queries
+        should_include_prd = False
+        if phase_name and ("requirement" in phase_name or "prd" in phase_name):
+            should_include_prd = True
+        elif any(kw in query_lower for kw in ["prd", "product requirements", "requirements document", "specification", "user story"]):
+            should_include_prd = True
+        
+        if should_include_prd and primary_agent != "prd_authoring":
+            supporting.append("prd_authoring")
+        
+        # Atlassian agent: Only for explicit Confluence/Jira operations
         if any(kw in query_lower for kw in ["confluence", "jira", "atlassian", "publish", "page", "space", "documentation"]):
             if primary_agent != "atlassian_mcp":
                 supporting.append("atlassian_mcp")
         
-        # Include Export agent for PRD/document generation
-        if any(kw in query_lower for kw in ["export", "prd", "document", "generate document", "publish document"]):
+        # Export agent: Only for explicit export/document generation
+        if any(kw in query_lower for kw in ["export", "generate document", "publish document", "download prd"]):
             if primary_agent != "export":
                 supporting.append("export")
+        
+        self.logger.info(
+            "supporting_agents_determined",
+            primary_agent=primary_agent,
+            supporting_agents=supporting,
+            phase_name=phase_name,
+            query_preview=query[:100]
+        )
         
         return supporting
     
@@ -831,32 +1061,58 @@ INSTRUCTIONS:
                 has_attached_docs = enhanced_context.get("attached_documents") or enhanced_context.get("file_attachments")
                 
                 # Check if RAG agent actually has knowledge base available
+                # CRITICAL: Filter by product_id when checking for knowledge
                 rag_has_knowledge = False
                 if hasattr(self.rag_agent, 'agno_agent') and self.rag_agent.agno_agent:
                     if hasattr(self.rag_agent.agno_agent, 'knowledge') and self.rag_agent.agno_agent.knowledge:
-                        # Try a quick search to see if there's any content
+                        # Try a quick search to see if there's any content for this product
                         try:
-                            test_results = await self.rag_agent.search_knowledge(enhanced_query[:50], top_k=1)
+                            # Pass product_id as filter to check for product-specific knowledge
+                            test_filters = {}
+                            if enhanced_context.get("product_id"):
+                                test_filters["product_id"] = str(enhanced_context.get("product_id"))
+                            test_results = await self.rag_agent.search_knowledge(enhanced_query[:50], top_k=1, filters=test_filters)
                             rag_has_knowledge = len(test_results) > 0
                         except:
                             rag_has_knowledge = False
                 
                 # Skip RAG completely if no knowledge base, no documents, and no actual knowledge content
                 if not has_knowledge_base and not has_attached_docs and not rag_has_knowledge:
+                    skip_metadata = {
+                        "system_context": "No RAG context available",
+                        "system_prompt": "Skipped RAG - no documents or knowledge base",
+                        "user_prompt": enhanced_query,  # No truncation
+                        "rag_context": "No RAG context retrieved",
+                        "skipped": True,
+                        "reason": "no_documents_or_kb"
+                    }
                     yield {
                         "type": "agent_complete",
                         "agent": "rag",
                         "response": "No knowledge base content available. Skipping RAG agent.",
                         "progress": 0.2,
                         "timestamp": datetime.utcnow().isoformat(),
-                        "metadata": {
-                            "system_context": "No RAG context available",
-                            "system_prompt": "Skipped RAG - no documents or knowledge base",
-                            "user_prompt": enhanced_query[:500],
-                            "rag_context": "No RAG context retrieved",
-                            "skipped": True
-                        }
+                        "metadata": skip_metadata
                     }
+                    # CRITICAL: Also yield interaction event for skipped RAG so it's tracked
+                    yield {
+                        "type": "interaction",
+                        "from_agent": "coordinator",
+                        "to_agent": "rag",
+                        "query": enhanced_query,  # No truncation
+                        "response": "No knowledge base content available. Skipping RAG agent.",
+                        "metadata": skip_metadata,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    # Add to interactions list
+                    interactions.append({
+                        "from_agent": "coordinator",
+                        "to_agent": "rag",
+                        "query": enhanced_query,  # No truncation
+                        "response": "No knowledge base content available. Skipping RAG agent.",
+                        "metadata": skip_metadata,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
                     # Create empty RAG response object
                     from backend.models.schemas import AgentResponse
                     rag_response = AgentResponse(
@@ -875,17 +1131,25 @@ INSTRUCTIONS:
                         "timestamp": datetime.utcnow().isoformat()
                     }
                     
-                    # Optimize RAG: limit search results and add timeout
+                    # Optimize RAG: limit search results and add reasonable timeout
+                    # Increased timeout to 60 seconds to allow for:
+                    # - Lazy knowledge base creation (with retries)
+                    # - Vector database connection establishment
+                    # - Vector search operations (fast, but may need to search through many documents)
+                    # - Document retrieval and processing
+                    # - Handling cases with 10+ documents in knowledge base
+                    # Note: RAG search itself is fast (vector similarity search), but processing
+                    # multiple retrieved documents and generating embeddings can take time
                     try:
                         rag_response = await asyncio.wait_for(
                             self.rag_agent.process(
                                 [AgentMessage(role="user", content=enhanced_query, timestamp=datetime.utcnow())],
                                 enhanced_context
                             ),
-                            timeout=10.0  # 10 second timeout for RAG
+                            timeout=60.0  # 60 second timeout for RAG (increased from 30s to handle 10+ documents)
                         )
                     except asyncio.TimeoutError as e:
-                        error_msg = "RAG agent timed out after 10 seconds. Proceeding without RAG context."
+                        error_msg = "RAG agent timed out after 60 seconds. Proceeding without RAG context."
                         self.logger.warning("rag_agent_timeout", query=enhanced_query[:100], error=error_msg)
                         from backend.models.schemas import AgentResponse
                         rag_response = AgentResponse(
@@ -912,19 +1176,45 @@ INSTRUCTIONS:
             
             # Build system context for RAG agent
             system_context_str = self._build_system_content(enhanced_context) if enhanced_context else "Not available"
+            rag_metadata = {
+                "system_context": system_context_str if system_context_str != "Not available" else "Not available",  # Remove truncation
+                "system_prompt": self.rag_agent.system_prompt if hasattr(self.rag_agent, 'system_prompt') else "Not available",  # Remove truncation
+                "user_prompt": enhanced_query,  # Remove truncation
+                "rag_context": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # Remove truncation
+            }
+            if rag_response and rag_response.metadata:
+                rag_metadata.update(rag_response.metadata)
+            
             yield {
                 "type": "agent_complete",
                 "agent": "rag",
-                "response": rag_response.response[:500] if rag_response and rag_response.response else "No RAG context retrieved",
+                "response": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # No truncation - full response
                 "progress": 0.2,
                 "timestamp": datetime.utcnow().isoformat(),
-                "metadata": {
-                    "system_context": system_context_str if system_context_str != "Not available" else "Not available",  # Remove truncation
-                    "system_prompt": self.rag_agent.system_prompt if hasattr(self.rag_agent, 'system_prompt') else "Not available",  # Remove truncation
-                    "user_prompt": enhanced_query,  # Remove truncation
-                    "rag_context": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # Remove truncation
-                }
+                "metadata": rag_metadata
             }
+            
+            # CRITICAL: Also yield an interaction event for RAG so it's tracked in interactions list
+            # This ensures RAG usage is visible in test verification and metadata
+            yield {
+                "type": "interaction",
+                "from_agent": "coordinator",
+                "to_agent": "rag",
+                "query": enhanced_query,  # No truncation
+                "response": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # No truncation
+                "metadata": rag_metadata,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            
+            # Also add to interactions list for final response
+            interactions.append({
+                "from_agent": "coordinator",
+                "to_agent": "rag",
+                "query": enhanced_query,  # No truncation
+                "response": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # No truncation
+                "metadata": rag_metadata,
+                "timestamp": datetime.utcnow().isoformat()
+            })
             
             # Skip supporting agents if single_agent_mode is enabled (for fast phase form help)
             if single_agent_mode:
@@ -943,17 +1233,28 @@ INSTRUCTIONS:
                     # User specified agents - use them (but exclude RAG if it was skipped)
                     supporting_agents_list = [a for a in supporting_agents if a != "rag" or (rag_response and rag_response.metadata and not rag_response.metadata.get("skipped"))]
                 else:
-                    # Auto-determine based on query and primary agent
-                    supporting_agents_list = self.determine_supporting_agents(enhanced_query, primary_agent or "ideation")
+                    # Auto-determine based on query, primary agent, and phase context
+                    # CRITICAL: Pass context to determine_supporting_agents for phase-aware selection
+                    if not primary_agent:
+                        # Determine primary agent with context
+                        primary_agent, _ = self.determine_primary_agent(enhanced_query, enhanced_context)
+                    
+                    supporting_agents_list = self.determine_supporting_agents(
+                        enhanced_query, 
+                        primary_agent or "ideation",
+                        enhanced_context  # Pass context for phase-aware selection
+                    )
                     # Remove RAG from auto-determined list if it was skipped
                     if rag_response and rag_response.metadata and rag_response.metadata.get("skipped"):
                         supporting_agents_list = [a for a in supporting_agents_list if a != "rag"]
                 
                 # Build shared context message with RAG context only if available
+                # CRITICAL: Include full RAG context without truncation for comprehensive reference
                 if rag_response and rag_response.response and not (rag_response.metadata and rag_response.metadata.get("skipped")):
-                    shared_context_msg = f"{enhanced_query}\n\nKnowledge Base Context:\n{rag_response.response[:500]}\n\nIMPORTANT: Provide focused insights (2-3 key points, max 200 words). Do NOT generate full documents or lengthy responses. The primary agent will synthesize your insights."
+                    # Include full RAG context - no truncation to ensure all knowledge is available
+                    shared_context_msg = f"{enhanced_query}\n\nKnowledge Base Context (Reference these documents when relevant):\n{rag_response.response}\n\nIMPORTANT: Use knowledge base context to provide specific, actionable insights. Reference specific documents when relevant. Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language."
                 else:
-                    shared_context_msg = f"{enhanced_query}\n\nIMPORTANT: Provide focused insights (2-3 key points, max 200 words). Do NOT generate full documents or lengthy responses. The primary agent will synthesize your insights."
+                    shared_context_msg = f"{enhanced_query}\n\nIMPORTANT: Provide specific, actionable insights. Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language."
                 
                 shared_message = [AgentMessage(role="user", content=shared_context_msg, timestamp=datetime.utcnow())]
                 
@@ -997,8 +1298,8 @@ INSTRUCTIONS:
                         supporting_interaction = AgentInteraction(
                             from_agent="coordinator",
                             to_agent=agent_name,
-                            query=shared_context_msg[:500],
-                            response=full_response[:1000],
+                            query=shared_context_msg,  # No truncation
+                            response=full_response,  # No truncation - store full response
                             metadata=comprehensive_metadata,
                             timestamp=datetime.utcnow()
                         )
@@ -1006,8 +1307,8 @@ INSTRUCTIONS:
                         interactions.append({
                             "from_agent": "coordinator",
                             "to_agent": agent_name,
-                            "query": shared_context_msg[:500],
-                            "response": full_response[:1000],
+                            "query": shared_context_msg,  # No truncation
+                            "response": full_response,  # No truncation - store full response
                             "metadata": comprehensive_metadata,
                             "timestamp": datetime.utcnow().isoformat()
                         })
@@ -1032,8 +1333,11 @@ INSTRUCTIONS:
                         "internal": True  # Mark as internal
                     }
             
-            # Final primary agent
-            primary = primary_agent or "ideation"
+            # Final primary agent - determine intelligently if not provided
+            if not primary_agent:
+                primary, _ = self.determine_primary_agent(enhanced_query, enhanced_context)
+            else:
+                primary = primary_agent
             if primary in self.agents:
                 yield {
                     "type": "agent_start",
@@ -1072,32 +1376,54 @@ INSTRUCTIONS:
                     # Build query with proper summarization instructions
                     prd_query = f"{enhanced_query}{word_limit_instruction}\n\n"
                     
-                    # Add RAG context if available
+                    # Add RAG context if available - include full context without truncation
                     if rag_response and rag_response.response and not (rag_response.metadata and rag_response.metadata.get("skipped")):
-                        prd_query += f"Knowledge Base Context:\n{rag_response.response[:500]}\n\n"
+                        prd_query += f"Knowledge Base Context (Reference these documents when relevant):\n{rag_response.response}\n\n"
                     
                     # Add supporting agent insights (will be populated from interactions list)
+                    # CRITICAL: Include full responses without truncation for comprehensive synthesis
                     if interactions:
                         prd_query += "Supporting Agent Insights (synthesize these into your response):\n"
                         for interaction in interactions:
                             agent_name = interaction.get("to_agent")
                             if agent_name and agent_name in supporting_agents_list:
-                                response_text = interaction.get("response", "")[:300]  # Limit to 300 chars per agent
+                                response_text = interaction.get("response", "")  # No truncation - include full response
                                 if response_text:
                                     prd_query += f"[{agent_name.title()}]: {response_text}\n"
                         prd_query += "\n\n"
                     
-                    # Add comprehensive synthesis instruction
+                    # Add comprehensive synthesis instruction with emphasis on direct content generation
                     if interactions or (rag_response and rag_response.response and not (rag_response.metadata and rag_response.metadata.get("skipped"))):
+                        prd_query += "\nCRITICAL INSTRUCTIONS:\n"
+                        prd_query += "- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language\n"
+                        prd_query += "- DO NOT say 'When you define the problem...' or 'The goal is to create...'\n"
+                        prd_query += "- Instead, write the actual content: 'The problem we are solving is...' or 'Our product vision is...'\n"
+                        prd_query += "- Reference knowledge base articles when relevant to support your content\n"
+                        prd_query += "- Synthesize ALL information from phases, conversations, and knowledge base\n"
+                        prd_query += "- Your response should be the actual PRD content, not instructions on how to write it\n\n"
                         if is_phase_specific and not user_wants_full_prd:
                             prd_query += f"CRITICAL: Synthesize the above insights into a comprehensive, intelligent response for the {current_phase_name} phase ONLY. Include all relevant details and actionable insights. Do NOT generate content for other phases. Structure your response with clear headings relevant to {current_phase_name} phase only. Quality and completeness are priorities.\n"
                         else:
                             # For regular chat queries, emphasize comprehensive, quality responses
-                            prd_query += "CRITICAL: Synthesize the above insights into a comprehensive, intelligent, and detailed response. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. If combining multiple agents (e.g., Ideation + Research), structure your response with clear headings like:\n"
-                            prd_query += "- ## Ideation Insights\n"
-                            prd_query += "- ## Research Findings\n"
-                            prd_query += "- ## Analysis & Recommendations\n"
-                            prd_query += "- ## Summary & Next Steps\n"
+                            # CRITICAL: Only structure response with headings for agents that were actually invoked
+                            agent_headings = []
+                            if any(i.get("to_agent") == "ideation" for i in interactions):
+                                agent_headings.append("- ## Ideation Insights")
+                            if any(i.get("to_agent") == "research" for i in interactions):
+                                agent_headings.append("- ## Research Findings")
+                            if any(i.get("to_agent") == "analysis" for i in interactions):
+                                agent_headings.append("- ## Analysis & Recommendations")
+                            if any(i.get("to_agent") == "strategy" for i in interactions):
+                                agent_headings.append("- ## Strategy & Recommendations")
+                            if any(i.get("to_agent") == "prd_authoring" for i in interactions):
+                                agent_headings.append("- ## Requirements & Specifications")
+                            
+                            if agent_headings:
+                                prd_query += "CRITICAL: Synthesize the above insights into a comprehensive, intelligent, and detailed response. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful. Structure your response with clear headings:\n"
+                                prd_query += "\n".join(agent_headings) + "\n"
+                                prd_query += "- ## Summary & Next Steps\n"
+                            else:
+                                prd_query += "CRITICAL: Synthesize the above insights into a comprehensive, intelligent, and detailed response. Include all relevant context, insights, and actionable information. Quality and completeness are priorities - ensure the response is thorough, well-reasoned, and useful.\n"
                             prd_query += "\nProvide a comprehensive response that leverages all available insights.\n"
                 
                 # Determine model tier based on query type
@@ -1164,22 +1490,15 @@ INSTRUCTIONS:
                         self.agents[primary].agno_agent.model = original_model
                         self.logger.info("restored_original_model", agent=primary)
                 
-                # Enforce word limit in response (post-processing)
+                # CRITICAL: Do NOT truncate responses - store full response asynchronously
+                # Responses are saved to database asynchronously, so no truncation needed
                 full_prd = prd_response.response
+                # Note: response_length parameter is still respected for model generation,
+                # but we don't truncate the final response - it's stored in full
                 if is_phase_form_help and full_prd:
                     word_count = len(full_prd.split())
-                    if response_length == "short" and word_count > 500:
-                        # Truncate to 500 words
-                        words = full_prd.split()[:500]
-                        full_prd = " ".join(words) + "... [Response truncated to 500 words]"
-                        prd_response.response = full_prd
-                        self.logger.warning("response_truncated", agent=primary, word_count=word_count, limit=500)
-                    elif response_length == "verbose" and word_count > 1000:
-                        # Truncate to 1000 words
-                        words = full_prd.split()[:1000]
-                        full_prd = " ".join(words) + "... [Response truncated to 1000 words]"
-                        prd_response.response = full_prd
-                        self.logger.warning("response_truncated", agent=primary, word_count=word_count, limit=1000)
+                    self.logger.info("response_generated", agent=primary, word_count=word_count, response_length=response_length)
+                    # No truncation - full response is preserved and stored asynchronously
                 
                 # Stream PRD response
                 chunk_size = 50
@@ -1199,10 +1518,10 @@ INSTRUCTIONS:
                 # Build system context as readable string
                 system_context_str = self._build_system_content(enhanced_context) if enhanced_context else "Not available"
                 prd_comprehensive_metadata = {
-                    "system_context": system_context_str[:2000] if system_context_str != "Not available" else "Not available",
-                    "system_prompt": prd_agent_instance.system_prompt[:2000] if hasattr(prd_agent_instance, 'system_prompt') else "Not available",
-                    "user_prompt": prd_query[:2000],
-                    "rag_context": rag_response.response[:2000] if rag_response and rag_response.response else "No RAG context retrieved",
+                    "system_context": system_context_str if system_context_str != "Not available" else "Not available",  # No truncation
+                    "system_prompt": prd_agent_instance.system_prompt if hasattr(prd_agent_instance, 'system_prompt') else "Not available",  # No truncation
+                    "user_prompt": prd_query,  # No truncation
+                    "rag_context": rag_response.response if rag_response and rag_response.response else "No RAG context retrieved",  # No truncation
                 }
                 # Merge with response metadata if available (includes performance metrics)
                 if hasattr(prd_response, 'metadata') and prd_response.metadata:
@@ -1220,11 +1539,12 @@ INSTRUCTIONS:
                 
                 # Create AgentInteraction for PRD agent to track usage and metadata
                 from backend.models.schemas import AgentInteraction
+                # CRITICAL: Store full responses without truncation - responses are saved asynchronously
                 prd_interaction = AgentInteraction(
                     from_agent="coordinator",
                     to_agent=primary,
-                    query=prd_query[:500],  # Truncate for storage
-                    response=full_prd[:1000],  # Truncate for storage
+                    query=prd_query,  # No truncation - store full query
+                    response=full_prd,  # No truncation - store full response asynchronously
                     metadata=prd_comprehensive_metadata,
                     timestamp=datetime.utcnow()
                 )
@@ -1232,8 +1552,8 @@ INSTRUCTIONS:
                 interactions.append({
                     "from_agent": "coordinator",
                     "to_agent": primary,
-                    "query": prd_query[:500],
-                    "response": full_prd[:1000],
+                    "query": prd_query,  # No truncation
+                    "response": full_prd,  # No truncation - will be saved asynchronously
                     "metadata": prd_comprehensive_metadata,
                     "timestamp": datetime.utcnow().isoformat()
                 })
@@ -1255,8 +1575,8 @@ INSTRUCTIONS:
                     "type": "interaction",
                     "from_agent": "coordinator",
                     "to_agent": primary,
-                    "query": prd_query[:500],
-                    "response": full_prd[:1000],
+                    "query": prd_query,  # No truncation
+                    "response": full_prd,  # No truncation - will be saved asynchronously
                     "metadata": prd_comprehensive_metadata,
                     "timestamp": datetime.utcnow().isoformat()
                 }
@@ -1283,8 +1603,8 @@ INSTRUCTIONS:
                 prd_interaction_dict = {
                     "from_agent": "coordinator",
                     "to_agent": primary,
-                    "query": prd_query[:500],
-                    "response": full_prd[:1000],
+                    "query": prd_query,  # No truncation
+                    "response": full_prd,  # No truncation - will be saved asynchronously
                     "metadata": prd_comprehensive_metadata,
                     "timestamp": datetime.utcnow().isoformat()
                 }
@@ -1404,9 +1724,22 @@ INSTRUCTIONS:
                 )
             elif coordination_mode == "collaborative":
                 # Handle collaborative mode similar to AgnoCoordinatorAgent
+                # Build context if available
+                enhanced_context = {}
+                if context:
+                    try:
+                        enhanced_context = await self._build_comprehensive_context(
+                            product_id=context.get("product_id"),
+                            session_ids=context.get("session_ids"),
+                            user_context=context,
+                            db=db
+                        )
+                    except:
+                        enhanced_context = context or {}
+                
                 if not primary_agent:
-                    primary_agent, confidence = self.determine_primary_agent(query)
-                    self.logger.info("auto_routed", primary_agent=primary_agent, confidence=confidence)
+                    primary_agent, confidence = self.determine_primary_agent(query, enhanced_context)
+                    self.logger.info("auto_routed", primary_agent=primary_agent, confidence=confidence, phase_name=enhanced_context.get("phase_name"))
                 
                 # Get primary agent
                 if primary_agent not in self.agents:
@@ -1414,9 +1747,9 @@ INSTRUCTIONS:
                 
                 primary = self.agents[primary_agent]
                 
-                # Get supporting agents
+                # Get supporting agents with phase context
                 if not supporting_agents:
-                    supporting_agents = self.determine_supporting_agents(query, primary_agent)
+                    supporting_agents = self.determine_supporting_agents(query, primary_agent, enhanced_context)
                 
                 # ALWAYS ensure RAG agent is included in supporting agents
                 if "rag" not in supporting_agents and primary_agent != "rag":

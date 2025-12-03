@@ -1,0 +1,112 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrations
+  namespace: 20890-ideaforge-ai-stg-60df9
+  labels:
+    app: db-migration
+    component: database
+  annotations:
+    # This annotation allows the job to be recreated with the same name
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  # Clean up completed jobs after 1 hour
+  ttlSecondsAfterFinished: 3600
+  # Prevent multiple instances from running
+  backoffLimit: 3
+  activeDeadlineSeconds: 600  # 10 minutes timeout
+  template:
+    metadata:
+      labels:
+        app: db-migration
+        component: database
+    spec:
+      restartPolicy: OnFailure
+      imagePullSecrets:
+      - name: ghcr-secret
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z postgres-ha-0.postgres-ha 5432; do
+            echo "Waiting for postgres-ha-0.postgres-ha..."
+            sleep 2
+          done
+          echo "Postgres is ready!"
+      - name: wait-for-redis
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z redis 6379; do
+            echo "Waiting for redis..."
+            sleep 2
+          done
+          echo "Redis is ready!"
+      containers:
+      - name: run-migrations
+        # Image will be set by Makefile during deployment
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:24f45fd
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "-m", "backend.database.migrate"]
+        env:
+        # Database Configuration
+        - name: POSTGRES_HOST
+          value: postgres-ha-0.postgres-ha
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_PORT
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_DB
+        # Redis Configuration (for migration tracking if needed)
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: REDIS_URL
+              optional: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: migrations
+          mountPath: /migrations
+          readOnly: true
+        - name: app-migrations
+          mountPath: /app/migrations
+          readOnly: true
+      volumes:
+      - name: migrations
+        configMap:
+          name: db-migrations
+          optional: true
+      - name: app-migrations
+        configMap:
+          name: db-migrations
+          optional: true
+

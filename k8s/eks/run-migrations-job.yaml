@@ -42,7 +42,7 @@ spec:
           echo "Redis is ready!"
       containers:
       - name: run-migrations
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:ea42f53
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:c2b4ddb
         imagePullPolicy: IfNotPresent
         command: ["python3", "-m", "backend.database.migrate"]
         env:

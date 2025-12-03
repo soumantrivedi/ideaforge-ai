@@ -5,7 +5,9 @@ metadata:
   namespace: 20890-ideaforge-ai-dev-58a50
 data:
   # Database Configuration
-  POSTGRES_HOST: postgres
+  # Use postgres-ha-primary service which routes only to postgres-ha-0 (primary writable instance)
+  # This ensures all writes go to the primary, not read-only replicas
+  POSTGRES_HOST: postgres-ha-primary
   POSTGRES_PORT: "5432"
   POSTGRES_USER: agentic_pm
   POSTGRES_DB: agentic_pm_db
@@ -25,7 +27,8 @@ data:
   AGENT_MODEL_PRIMARY: "gpt-5.1"  # GPT-5.1: Best for product requirements, ideation, reasoning, discovery (or gpt-5 as fallback)
   AGENT_MODEL_SECONDARY: "claude-sonnet-4-20250522"  # Claude 4 Sonnet: Advanced reasoning and ideation
   AGENT_MODEL_TERTIARY: "gemini-3.0-pro"  # Gemini 3.0 Pro: Enhanced multimodal reasoning and discovery
-  AGENT_RESPONSE_TIMEOUT: "180.0"  # Timeout in seconds (3 minutes max per agent - configurable, jobs run in background)
+  AGENT_RESPONSE_TIMEOUT: "180.0"  # Timeout in seconds (3 minutes max per agent - keep high to avoid truncating responses)
+  AGENT_MAX_CONCURRENT: "10"  # Maximum concurrent agent calls per pod (prevents resource exhaustion)
   V0_API_TIMEOUT: "90.0"  # V0 API initial request timeout (90 seconds - returns immediately, background polling continues)
   V0_POLL_INTERVAL: "10"  # V0 status polling interval in seconds
   V0_POLL_MAX_DURATION: "900"  # V0 status polling maximum duration in seconds (15 minutes)

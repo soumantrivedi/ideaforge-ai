@@ -94,6 +94,28 @@ async def load_user_api_keys_from_db(
                                user_id=user_id,
                                has_email=bool(keys.get('atlassian_email')),
                                has_token=bool(keys.get('atlassian_api_token')))
+                elif provider == 'ai_gateway':
+                    # For AI Gateway, api_key_encrypted contains client_id, metadata contains client_secret
+                    keys['ai_gateway_client_id'] = decrypted_key
+                    if metadata and isinstance(metadata, dict):
+                        client_secret = metadata.get('client_secret')
+                        if client_secret:
+                            # Decrypt client_secret if it's encrypted
+                            try:
+                                keys['ai_gateway_client_secret'] = encryption.decrypt(client_secret) if client_secret.startswith('encrypted:') else client_secret
+                            except:
+                                keys['ai_gateway_client_secret'] = client_secret
+                        keys['ai_gateway_instance_id'] = metadata.get('instance_id')
+                        keys['ai_gateway_env'] = metadata.get('env', 'prod')
+                        keys['ai_gateway_openai_base_url'] = metadata.get('openai_base_url')
+                        keys['ai_gateway_anthropic_base_url'] = metadata.get('anthropic_base_url')
+                        keys['ai_gateway_base_url'] = metadata.get('base_url')  # Legacy/OAuth
+                        keys['ai_gateway_default_model'] = metadata.get('default_model')
+                    
+                    logger.info("ai_gateway_credentials_loaded_from_db",
+                               user_id=user_id,
+                               has_client_id=bool(keys.get('ai_gateway_client_id')),
+                               has_client_secret=bool(keys.get('ai_gateway_client_secret')))
                 
                 logger.debug("key_decrypted_successfully", provider=provider, user_id=user_id, key_length=len(decrypted_key))
             except ValueError as e:

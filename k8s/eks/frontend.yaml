@@ -7,7 +7,7 @@ metadata:
     app: frontend
     component: web
 spec:
-  replicas: 2  # Adjust based on load
+  replicas: 3  # Pre-warmed for 100 concurrent users (min 3, scales to 10 via HPA)
   selector:
     matchLabels:
       app: frontend
@@ -22,7 +22,7 @@ spec:
       containers:
       - name: frontend
         # Image pulled from GitHub Container Registry
-        image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:c3e960a
+        image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:24f45fd
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3000

@@ -94,6 +94,79 @@ spec:
               name: ideaforge-ai-secrets
               key: LOVABLE_API_KEY
               optional: true
+        # AI Gateway Configuration
+        - name: AI_GATEWAY_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_CLIENT_ID
+              optional: true
+        - name: AI_GATEWAY_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_CLIENT_SECRET
+              optional: true
+        - name: AI_GATEWAY_INSTANCE_ID
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_INSTANCE_ID
+              optional: true
+        - name: AI_GATEWAY_ENV
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_ENV
+              optional: true
+        - name: AI_GATEWAY_OPENAI_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_OPENAI_BASE_URL
+              optional: true
+        - name: AI_GATEWAY_ANTHROPIC_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_ANTHROPIC_BASE_URL
+              optional: true
+        - name: AI_GATEWAY_BASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_BASE_URL
+              optional: true
+        - name: AI_GATEWAY_ENABLED
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_ENABLED
+              optional: true
+        - name: AI_GATEWAY_DEFAULT_MODEL
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_DEFAULT_MODEL
+              optional: true
+        - name: AI_GATEWAY_FAST_MODEL
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_FAST_MODEL
+              optional: true
+        - name: AI_GATEWAY_STANDARD_MODEL
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_STANDARD_MODEL
+              optional: true
+        - name: AI_GATEWAY_PREMIUM_MODEL
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_PREMIUM_MODEL
+              optional: true
         # Agent Model Configuration
         - name: AGENT_MODEL_PRIMARY
           valueFrom:
@@ -128,6 +201,49 @@ spec:
             secretKeyRef:
               name: ideaforge-ai-secrets
               key: OKTA_ISSUER
+              optional: true
+        # McKinsey SSO Configuration
+        - name: MCKINSEY_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_CLIENT_ID
+              optional: true
+        - name: MCKINSEY_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_CLIENT_SECRET
+              optional: true
+        - name: MCKINSEY_REDIRECT_URI
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_REDIRECT_URI
+              optional: true
+        - name: MCKINSEY_TOKEN_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_TOKEN_ENCRYPTION_KEY
+              optional: true
+        - name: MCKINSEY_AUTHORIZATION_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_AUTHORIZATION_ENDPOINT
+              optional: true
+        - name: MCKINSEY_TOKEN_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_TOKEN_ENDPOINT
+              optional: true
+        - name: MCKINSEY_JWKS_URI
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_JWKS_URI
               optional: true
         # Integration Tokens
         - name: JIRA_URL

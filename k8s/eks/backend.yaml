@@ -7,7 +7,7 @@ metadata:
     app: backend
     component: api
 spec:
-  replicas: 2  # Adjust based on load
+  replicas: 5  # Pre-warmed for 100 concurrent users (min 5, scales to 20 via HPA)
   selector:
     matchLabels:
       app: backend
@@ -22,7 +22,7 @@ spec:
       containers:
       - name: backend
         # Image pulled from GitHub Container Registry
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:c3e960a
+        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:24f45fd
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -148,6 +148,49 @@ spec:
               name: ideaforge-ai-secrets
               key: OKTA_ISSUER
               optional: true
+        # McKinsey SSO Configuration
+        - name: MCKINSEY_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_CLIENT_ID
+              optional: true
+        - name: MCKINSEY_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_CLIENT_SECRET
+              optional: true
+        - name: MCKINSEY_REDIRECT_URI
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: MCKINSEY_REDIRECT_URI
+              optional: true
+        - name: MCKINSEY_TOKEN_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: MCKINSEY_TOKEN_ENCRYPTION_KEY
+              optional: true
+        - name: MCKINSEY_AUTHORIZATION_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: MCKINSEY_AUTHORIZATION_ENDPOINT
+              optional: true
+        - name: MCKINSEY_TOKEN_ENDPOINT
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: MCKINSEY_TOKEN_ENDPOINT
+              optional: true
+        - name: MCKINSEY_JWKS_URI
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: MCKINSEY_JWKS_URI
+              optional: true
         # Integration Tokens
         - name: JIRA_URL
           valueFrom:
@@ -246,13 +289,86 @@ spec:
             configMapKeyRef:
               name: ideaforge-ai-config
               key: CORS_ORIGINS
+        # AI Gateway Configuration
+        - name: AI_GATEWAY_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_CLIENT_ID
+              optional: true
+        - name: AI_GATEWAY_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: AI_GATEWAY_CLIENT_SECRET
+              optional: true
+        - name: AI_GATEWAY_INSTANCE_ID
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_INSTANCE_ID
+              optional: true
+        - name: AI_GATEWAY_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_ENV
+              optional: true
+        - name: AI_GATEWAY_OPENAI_BASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_OPENAI_BASE_URL
+              optional: true
+        - name: AI_GATEWAY_ANTHROPIC_BASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_ANTHROPIC_BASE_URL
+              optional: true
+        - name: AI_GATEWAY_BASE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_BASE_URL
+              optional: true
+        - name: AI_GATEWAY_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_ENABLED
+              optional: true
+        - name: AI_GATEWAY_DEFAULT_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_DEFAULT_MODEL
+              optional: true
+        - name: AI_GATEWAY_FAST_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_FAST_MODEL
+              optional: true
+        - name: AI_GATEWAY_STANDARD_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_STANDARD_MODEL
+              optional: true
+        - name: AI_GATEWAY_PREMIUM_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: AI_GATEWAY_PREMIUM_MODEL
+              optional: true
         resources:
           requests:
-            memory: "1Gi"
-            cpu: "500m"
+            memory: "2Gi"  # Optimized for 100+ users and agent processing
+            cpu: "2000m"  # Increased for parallel agent processing (2 cores)
           limits:
-            memory: "2Gi"
-            cpu: "2000m"
+            memory: "4Gi"  # Increased for larger agent responses and context
+            cpu: "4000m"  # Increased for concurrent agent operations (4 cores)
         livenessProbe:
           httpGet:
             path: /health
@@ -269,67 +385,6 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
-      initContainers:
-      - name: run-migrations
-        image: ghcr.io/soumantrivedi/ideaforge-ai/backend:c3e960a
-        imagePullPolicy: IfNotPresent
-        command: ["python3", "-m", "backend.database.migrate"]
-        env:
-        - name: POSTGRES_HOST
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_HOST
-        - name: POSTGRES_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_PORT
-        - name: POSTGRES_USER
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_USER
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: ideaforge-ai-secrets
-              key: POSTGRES_PASSWORD
-        - name: POSTGRES_DB
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_DB
-        volumeMounts:
-        - name: migrations
-          mountPath: /migrations
-          readOnly: true
-      - name: wait-for-postgres
-        image: busybox:1.36
-        command:
-        - sh
-        - -c
-        - |
-          until nc -z postgres 5432; do
-            echo "Waiting for postgres..."
-            sleep 2
-          done
-          echo "Postgres is ready!"
-      - name: wait-for-redis
-        image: busybox:1.36
-        command:
-        - sh
-        - -c
-        - |
-          until nc -z redis 6379; do
-            echo "Waiting for redis..."
-            sleep 2
-          done
-          echo "Redis is ready!"
-      volumes:
-      - name: migrations
-        configMap:
-          name: db-migrations
 
 ---
 apiVersion: v1

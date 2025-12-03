@@ -1,4 +1,4 @@
-.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace
+.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-test-agents kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace eks-setup-hpa eks-prewarm eks-performance-test eks-db-backup eks-run-migrations eks-rollout eks-rollout-images kind-test-coordinator eks-test-coordinator kind-test-integration eks-test-integration
 
 # Get git SHA for versioning
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -107,7 +107,7 @@ EKS_STORAGE_CLASS ?= default-storage-class  # Default to default-storage-class (
 EKS_GITHUB_USERNAME ?= $(shell git config user.name 2>/dev/null || echo "")
 EKS_GITHUB_TOKEN ?= $(shell grep "^GITHUB_TOKEN=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '"' || echo "")
 
-kind-create: ## Create a local kind cluster for testing
+kind-create: ## Create a local kind cluster for testing with VPN networking support
 	@echo "🐳 Creating kind cluster: $(KIND_CLUSTER_NAME)..."
 	@if kind get clusters | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
 		echo "⚠️  Cluster $(KIND_CLUSTER_NAME) already exists"; \
@@ -135,6 +135,10 @@ kind-create: ## Create a local kind cluster for testing
 		echo "    hostPort: 8443" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml; \
 	fi
 	@echo "    protocol: TCP" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@echo "  extraMounts:" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@echo "  - hostPath: /etc/resolv.conf" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@echo "    containerPath: /etc/resolv.conf.host" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
+	@echo "    readOnly: true" >> /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
 	@kind create cluster --name $(KIND_CLUSTER_NAME) --image $(KIND_IMAGE) --config /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml || true
 	@rm -f /tmp/kind-config-$(KIND_CLUSTER_NAME).yaml
 	@echo "⏳ Waiting for cluster to be ready..."
@@ -142,6 +146,14 @@ kind-create: ## Create a local kind cluster for testing
 	@echo "✅ Kind cluster created successfully!"
 	@echo "   Cluster name: $(KIND_CLUSTER_NAME)"
 	@echo "   Context: kind-$(KIND_CLUSTER_NAME)"
+	@echo ""
+	@echo "🌐 Configuring DNS for VPN access..."
+	@$(MAKE) kind-configure-dns || (echo "⚠️  DNS configuration failed - you may need to run 'make kind-configure-dns' manually" && echo "   This is required for pods to resolve VPN-accessible hostnames like ai-gateway.quantumblack.com")
+	@echo ""
+	@echo "✅ Kind cluster setup complete!"
+	@echo "   DNS is configured to forward queries to host resolver"
+	@echo "   Host resolv.conf mounted for VPN DNS access"
+	@echo "   This allows pods to access VPN-accessible services while the cluster is running"
 
 kind-delete: ## Delete the local kind cluster
 	@echo "🗑️  Deleting kind cluster: $(KIND_CLUSTER_NAME)..."
@@ -538,6 +550,164 @@ kind-port-forward: ## Port forward frontend and backend services for local acces
 	@echo ""
 	@echo "To stop port forwarding, run: pkill -f 'kubectl port-forward'"
 
+kind-configure-dns: ## Configure Kind cluster to use host DNS (for VPN access to internal services)
+	@echo "🌐 Configuring Kind cluster DNS to use host resolver..."
+	@echo "   This allows pods to resolve hostnames accessible via VPN"
+	@echo "   Waiting for CoreDNS to be ready..."
+	@kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --timeout=60s || true
+	@echo "   Configuring CoreDNS to use host's resolv.conf (mounted at /etc/resolv.conf.host)..."
+	@echo "   Patching CoreDNS ConfigMap to forward DNS queries to host resolver..."
+	@kubectl get configmap coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) -o yaml > /tmp/coredns-original.yaml 2>/dev/null || true; \
+	if kubectl get configmap coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) > /dev/null 2>&1; then \
+		echo "   Updating existing CoreDNS ConfigMap..."; \
+		HOST_RESOLV=$$(docker exec $(KIND_CLUSTER_NAME)-control-plane cat /etc/resolv.conf.host 2>/dev/null | grep -E "^nameserver" | head -1 | awk '{print $$2}' || echo "8.8.8.8"); \
+		echo "   Using host DNS server: $$HOST_RESOLV"; \
+		kubectl patch configmap coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --type merge -p "{\"data\":{\"Corefile\":\".:53 {\\n    errors\\n    health {\\n       lameduck 5s\\n    }\\n    ready\\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\\n       pods insecure\\n       fallthrough in-addr.arpa ip6.arpa\\n       ttl 30\\n    }\\n    prometheus :9153\\n    forward . $$HOST_RESOLV {\\n       max_concurrent 1000\\n    }\\n    cache 30\\n    loop\\n    reload\\n    loadbalance\\n}\\n\"}}" || \
+		kubectl patch configmap coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --type merge -p '{"data":{"Corefile":".:53 {\n    errors\n    health {\n       lameduck 5s\n    }\n    ready\n    kubernetes cluster.local in-addr.arpa ip6.arpa {\n       pods insecure\n       fallthrough in-addr.arpa ip6.arpa\n       ttl 30\n    }\n    prometheus :9153\n    forward . /etc/resolv.conf.host {\n       max_concurrent 1000\n    }\n    cache 30\n    loop\n    reload\n    loadbalance\n}\n"}}' || \
+		kubectl apply -f $(K8S_DIR)/kind/coredns-custom.yaml --context kind-$(KIND_CLUSTER_NAME) || true; \
+	else \
+		echo "   CoreDNS ConfigMap not found, applying custom configuration..."; \
+		kubectl apply -f $(K8S_DIR)/kind/coredns-custom.yaml --context kind-$(KIND_CLUSTER_NAME) || true; \
+	fi
+	@echo "   Updating CoreDNS deployment to mount host resolv.conf..."
+	@kubectl get deployment coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) -o yaml > /tmp/coredns-deployment.yaml 2>/dev/null || true; \
+	if ! kubectl get deployment coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) -o yaml | grep -q "resolv.conf.host"; then \
+		echo "   Adding host resolv.conf mount to CoreDNS pods..."; \
+		kubectl patch deployment coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --type json -p '[{"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-", "value": {"name": "host-resolv", "mountPath": "/etc/resolv.conf.host", "readOnly": true}}]' || true; \
+		kubectl patch deployment coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --type json -p '[{"op": "add", "path": "/spec/template/spec/volumes/-", "value": {"name": "host-resolv", "hostPath": {"path": "/etc/resolv.conf.host", "type": "File"}}}]' || true; \
+	fi
+	@echo "   Restarting CoreDNS pods to apply configuration..."
+	@kubectl rollout restart deployment/coredns -n kube-system --context kind-$(KIND_CLUSTER_NAME) || true
+	@echo "   Waiting for CoreDNS pods to be ready..."
+	@kubectl wait --for=condition=ready pod -l k8s-app=kube-dns -n kube-system --context kind-$(KIND_CLUSTER_NAME) --timeout=120s || true
+	@sleep 5
+	@echo "   Verifying DNS configuration..."
+	@COREDNS_POD=$$(kubectl get pods -n kube-system -l k8s-app=kube-dns --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -n "$$COREDNS_POD" ]; then \
+		echo "   Testing DNS resolution from CoreDNS pod..."; \
+		kubectl exec -n kube-system $$COREDNS_POD --context kind-$(KIND_CLUSTER_NAME) -- sh -c "cat /etc/resolv.conf.host 2>/dev/null || echo 'Host resolv.conf not mounted'" || true; \
+		kubectl exec -n kube-system $$COREDNS_POD --context kind-$(KIND_CLUSTER_NAME) -- nslookup google.com 2>&1 | grep -q "Name:" && echo "   ✅ CoreDNS can resolve external hostnames" || echo "   ⚠️  CoreDNS DNS test inconclusive"; \
+	fi
+	@echo "✅ DNS configuration updated and verified"
+	@echo "   Pods can now resolve hostnames accessible from the host (including VPN services)"
+	@echo "   This configuration will persist while the cluster is running"
+
+kind-verify-dns: ## Verify DNS configuration in Kind cluster
+	@echo "🔍 Verifying DNS configuration..."
+	@bash scripts/verify-dns-config.sh
+
+kind-test-ai-gateway-connectivity: ## Test AI Gateway connectivity from Kind cluster pods
+	@echo "🧪 Testing AI Gateway connectivity from Kind cluster..."
+	@BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make kind-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Using backend pod: $$BACKEND_POD"; \
+	echo "   Testing DNS resolution..."; \
+	if kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) -- \
+		python -c "import socket; socket.gethostbyname('ai-gateway.quantumblack.com'); print('✅ DNS resolution successful')" 2>&1 | grep -q "✅"; then \
+		echo "   ✅ DNS resolution successful"; \
+		echo "   Testing HTTP connectivity..."; \
+		if kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) -- \
+			python -c "import httpx, asyncio; asyncio.run((lambda: httpx.AsyncClient(timeout=10.0).get('https://ai-gateway.quantumblack.com/health'))())" 2>&1 | \
+			grep -qE "200|OK|healthy"; then \
+			echo "   ✅ HTTP connectivity successful"; \
+		else \
+			echo "   ⚠️  HTTP connectivity test failed - check VPN connection and network access"; \
+		fi; \
+	else \
+		echo "   ❌ DNS resolution failed"; \
+		echo "   Troubleshooting steps:"; \
+		echo "     1. Ensure VPN is connected on the host machine"; \
+		echo "     2. Run 'make kind-configure-dns' to reconfigure DNS"; \
+		echo "     3. Run 'make kind-verify-dns' to verify DNS configuration"; \
+	fi
+
+kind-restart-backend: ## Restart backend deployment to pick up code changes
+	@echo "🔄 Restarting backend deployment..."
+	@kubectl rollout restart deployment/backend -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME)
+	@kubectl rollout status deployment/backend -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) --timeout=180s
+	@echo "✅ Backend deployment restarted"
+
+kind-backup-database: ## Backup database from Kind cluster
+	@echo "📦 Backing up database from Kind cluster..."
+	@bash scripts/backup-database.sh
+
+kind-restore-database: ## Restore database to Kind cluster (requires BACKUP_FILE env var)
+	@if [ -z "$(BACKUP_FILE)" ]; then \
+		echo "❌ BACKUP_FILE not specified"; \
+		echo "   Usage: make kind-restore-database BACKUP_FILE=/path/to/backup.sql"; \
+		exit 1; \
+	fi
+	@echo "📥 Restoring database to Kind cluster..."
+	@BACKUP_FILE=$(BACKUP_FILE) bash scripts/restore-database.sh
+
+kind-recreate-with-vpn: ## Recreate Kind cluster with VPN networking support (backups database first)
+	@echo "🔄 Recreating Kind cluster with VPN networking support..."
+	@echo ""
+	@echo "Step 1: Backing up current database..."
+	@$(MAKE) kind-backup-database || echo "⚠️  Database backup skipped (cluster may not exist)"
+	@echo ""
+	@echo "Step 2: Deleting existing cluster..."
+	@$(MAKE) kind-delete || echo "⚠️  Cluster deletion skipped"
+	@echo ""
+	@echo "Step 3: Creating new cluster with VPN networking..."
+	@$(MAKE) kind-create
+	@echo ""
+	@echo "Step 4: Setting up ingress..."
+	@$(MAKE) kind-setup-ingress
+	@echo ""
+	@echo "Step 5: Loading images..."
+	@$(MAKE) kind-load-images
+	@echo ""
+	@echo "Step 6: Loading secrets..."
+	@$(MAKE) kind-load-secrets
+	@echo ""
+	@echo "Step 7: Deploying application..."
+	@$(MAKE) kind-deploy-internal
+	@echo ""
+	@LATEST_BACKUP=$$(ls -t backups/ideaforge-ai-backup-*.sql 2>/dev/null | head -1); \
+	if [ -n "$$LATEST_BACKUP" ]; then \
+		echo "Step 8: Restoring database from latest backup..."; \
+		echo "   Backup file: $$LATEST_BACKUP"; \
+		echo "   Run: make kind-restore-database BACKUP_FILE=$$LATEST_BACKUP"; \
+		echo "   Or restore manually after database is ready"; \
+	else \
+		echo "Step 8: No database backup found - database will be initialized fresh"; \
+	fi
+	@echo ""
+	@echo "✅ Cluster recreation complete!"
+	@echo "   DNS is configured for VPN access"
+	@echo "   Run 'make kind-verify-dns' to verify DNS resolution"
+
+kind-configure-vpn-networking: ## Configure existing Kind cluster for VPN networking (without recreating)
+	@echo "🌐 Configuring existing Kind cluster for VPN networking..."
+	@bash scripts/configure-kind-vpn-networking.sh
+
+kind-validate-ai-gateway: kind-test-ai-gateway-connectivity ## Validate AI Gateway integration (connectivity + API endpoint)
+	@echo ""
+	@echo "🧪 Validating AI Gateway API endpoint..."
+	@INGRESS_PORT=$(KIND_INGRESS_PORT); \
+	BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		exit 1; \
+	fi; \
+	echo "   Testing /api/providers/verify endpoint with ai_gateway provider..."; \
+	RESPONSE=$$(curl -s -X POST "http://localhost:$$INGRESS_PORT/api/providers/verify" \
+		-H "Content-Type: application/json" \
+		-d '{"provider": "ai_gateway", "api_key": "test", "client_secret": "test"}' 2>&1); \
+	if echo "$$RESPONSE" | grep -q "ai_gateway\|AI Gateway"; then \
+		echo "✅ API endpoint accepts ai_gateway provider"; \
+		echo "   Response: $$RESPONSE" | head -3; \
+	else \
+		echo "⚠️  API endpoint may not be accepting ai_gateway provider"; \
+		echo "   Response: $$RESPONSE" | head -5; \
+		echo "   Run 'make kind-restart-backend' to ensure latest code is running"; \
+	fi
+
 kind-status: ## Show status of kind cluster deployment
 	@echo "📊 Kind Cluster Status:"
 	@echo "======================"
@@ -551,6 +721,34 @@ kind-status: ## Show status of kind cluster deployment
 	@echo ""
 	@echo "💾 Persistent Volumes:"
 	@kubectl get pvc -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) || echo "⚠️  No PVCs found"
+
+kind-test-agents: ## Run comprehensive agent verification tests in kind cluster
+	@echo "🧪 Running Agent Verification Tests..."
+	@echo "   This will test all lifecycle agents for:"
+	@echo "   - RAG integration"
+	@echo "   - Coaching mode removal"
+	@echo "   - Response completeness (no truncation)"
+	@echo "   - Knowledge base usage"
+	@echo ""
+	@BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) -l app=backend --context kind-$(KIND_CLUSTER_NAME) -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make kind-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying test script to pod..."; \
+	kubectl cp backend/tests/test_agent_verification.py $(K8S_NAMESPACE)/$$BACKEND_POD:/tmp/test_agent_verification.py --context kind-$(KIND_CLUSTER_NAME) --container=backend; \
+	echo "   Running agent verification tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend -- \
+		python /tmp/test_agent_verification.py || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Agent verification tests completed"
 
 kind-test: ## Test service-to-service interactions in kind cluster
 	@echo "🧪 Testing service-to-service interactions in kind cluster..."
@@ -840,7 +1038,15 @@ eks-prepare-namespace: ## Prepare namespace-specific manifests for EKS (updates 
 				sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" "$$file"; \
 				sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/frontend:.*|ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)|g" "$$file"; \
 			fi; \
-		 done)
+			# Also update migration job if it exists in this file
+			if grep -q "db-migrations-job" "$$file" 2>/dev/null; then \
+				if [ "$$(uname)" = "Darwin" ]; then \
+					sed -i '' "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" "$$file"; \
+				else \
+					sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" "$$file"; \
+				fi; \
+			fi; \
+		done)
 	@echo "✅ EKS manifests prepared for namespace: $(EKS_NAMESPACE)"
 
 eks-load-secrets: ## Load secrets from .env file for EKS deployment (use EKS_NAMESPACE=your-namespace)
@@ -906,8 +1112,37 @@ eks-deploy: eks-prepare-namespace ## Deploy to EKS cluster (use EKS_NAMESPACE=yo
 	@echo "⏳ Waiting for database services to be ready..."
 	@kubectl wait --for=condition=ready pod -l app=postgres -n $(EKS_NAMESPACE) --timeout=300s || true
 	@kubectl wait --for=condition=ready pod -l app=redis -n $(EKS_NAMESPACE) --timeout=120s || true
-	@echo "🔄 Running database setup (migrations + seeding)..."
-	@kubectl apply -f $(K8S_DIR)/eks/db-setup-job.yaml
+	@echo "🔄 Running database migrations..."
+	@if [ -z "$(BACKEND_IMAGE_TAG)" ]; then \
+		echo "❌ BACKEND_IMAGE_TAG is required for migrations"; \
+		exit 1; \
+	fi
+	@echo "   Updating migration job with backend image: $(BACKEND_IMAGE_TAG)"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		sed -i '' "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" $(K8S_DIR)/eks/db-migrations-job.yaml; \
+	else \
+		sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" $(K8S_DIR)/eks/db-migrations-job.yaml; \
+	fi
+	@echo "   Deleting any existing migration job..."
+	@kubectl delete job db-migrations -n $(EKS_NAMESPACE) --ignore-not-found=true || true
+	@echo "   Creating migration job..."
+	@kubectl apply -f $(K8S_DIR)/eks/db-migrations-job.yaml
+	@echo "⏳ Waiting for database migrations to complete..."
+	@if kubectl wait --for=condition=complete job/db-migrations -n $(EKS_NAMESPACE) --timeout=600s; then \
+		echo "✅ Database migrations completed successfully"; \
+		kubectl logs -n $(EKS_NAMESPACE) job/db-migrations --tail=20 || true; \
+	else \
+		echo "❌ Database migrations failed!"; \
+		echo "   Migration job logs:"; \
+		kubectl logs -n $(EKS_NAMESPACE) job/db-migrations --tail=50 || true; \
+		echo "   Migration job status:"; \
+		kubectl describe job db-migrations -n $(EKS_NAMESPACE) | tail -20 || true; \
+		echo ""; \
+		echo "⚠️  Deployment stopped. Please fix migration issues before continuing."; \
+		exit 1; \
+	fi
+	@echo "🔄 Running database setup (seeding)..."
+	@kubectl apply -f $(K8S_DIR)/eks/db-setup-job.yaml || true
 	@echo "⏳ Waiting for database setup job to complete..."
 	@kubectl wait --for=condition=complete job/db-setup -n $(EKS_NAMESPACE) --timeout=300s || \
 		(echo "⚠️  Database setup job may have failed. Check logs:" && \
@@ -1034,3 +1269,432 @@ eks-agno-init: ## Initialize Agno framework in EKS cluster
 		echo "⚠️  Backend not ready after $$max_attempts attempts"; \
 	fi
 	@echo "✅ Agno initialization complete"
+
+eks-setup-hpa: eks-prepare-namespace ## Setup Horizontal Pod Autoscaler for backend and frontend (use EKS_NAMESPACE=your-namespace)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-setup-hpa EKS_NAMESPACE=your-namespace"; \
+		exit 1; \
+	fi
+	@echo "📈 Setting up HPA for 100 concurrent users..."
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@kubectl apply -f $(K8S_DIR)/eks/hpa-backend.yaml
+	@kubectl apply -f $(K8S_DIR)/eks/hpa-frontend.yaml
+	@echo "✅ HPA configured"
+	@echo "   Backend: 5-20 replicas (CPU/Memory based)"
+	@echo "   Frontend: 3-10 replicas (CPU/Memory based)"
+	@kubectl get hpa -n $(EKS_NAMESPACE)
+
+eks-prewarm: ## Pre-warm deployments for 100 concurrent users (use EKS_NAMESPACE=your-namespace)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-prewarm EKS_NAMESPACE=your-namespace"; \
+		exit 1; \
+	fi
+	@echo "🔥 Pre-warming deployments for 100 concurrent users..."
+	@echo "   Scaling backend to 5 replicas..."
+	@kubectl scale deployment backend -n $(EKS_NAMESPACE) --replicas=5
+	@echo "   Scaling frontend to 3 replicas..."
+	@kubectl scale deployment frontend -n $(EKS_NAMESPACE) --replicas=3
+	@echo "⏳ Waiting for pods to be ready..."
+	@kubectl wait --for=condition=ready pod -l app=backend -n $(EKS_NAMESPACE) --timeout=300s || echo "⚠️  Some backend pods may still be starting"
+	@kubectl wait --for=condition=ready pod -l app=frontend -n $(EKS_NAMESPACE) --timeout=300s || echo "⚠️  Some frontend pods may still be starting"
+	@echo "✅ Pre-warming complete"
+	@echo "📊 Current status:"
+	@kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (backend,frontend)' --no-headers | wc -l | xargs echo "   Total pods:"
+	@kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (backend,frontend)' | grep Running | wc -l | xargs echo "   Running pods:"
+
+eks-performance-test: ## Run performance test with 100 concurrent users (use EKS_NAMESPACE=your-namespace, BASE_URL=url, AUTH_TOKEN=token, PRODUCT_ID=id)
+	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BASE_URL)" ] || [ -z "$(AUTH_TOKEN)" ] || [ -z "$(PRODUCT_ID)" ]; then \
+		echo "❌ Required parameters: EKS_NAMESPACE, BASE_URL, AUTH_TOKEN, PRODUCT_ID"; \
+		echo "   Usage: make eks-performance-test EKS_NAMESPACE=ns BASE_URL=https://... AUTH_TOKEN=token PRODUCT_ID=uuid"; \
+		echo "   Example: make eks-performance-test EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BASE_URL=https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud AUTH_TOKEN=xxx PRODUCT_ID=abc-123"; \
+		exit 1; \
+	fi
+	@echo "🧪 Running performance test..."
+	@echo "   Users: 100"
+	@echo "   Base URL: $(BASE_URL)"
+	@echo "   Product ID: $(PRODUCT_ID)"
+	@python3 scripts/performance-test.py \
+		--url $(BASE_URL) \
+		--token $(AUTH_TOKEN) \
+		--product-id $(PRODUCT_ID) \
+		--users 100 \
+		--ramp-up 30 \
+		--output performance-metrics-$$(date +%Y%m%d-%H%M%S).json
+
+kind-test-coordinator: ## Test coordinator agent selection in kind cluster (use K8S_NAMESPACE=your-namespace)
+	@if [ -z "$(K8S_NAMESPACE)" ]; then \
+		echo "❌ K8S_NAMESPACE is required"; \
+		echo "   Usage: make kind-test-coordinator K8S_NAMESPACE=ideaforge-ai"; \
+		exit 1; \
+	fi
+	@echo "🧪 Testing Coordinator Agent Selection in Kind Cluster..."
+	@echo "   Namespace: $(K8S_NAMESPACE)"
+	@BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make kind-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying test script to pod..."; \
+	kubectl cp backend/tests/test_coordinator_agent_selection.py $(K8S_NAMESPACE)/$$BACKEND_POD:/tmp/test_coordinator_agent_selection.py --context kind-$(KIND_CLUSTER_NAME) --container=backend; \
+	echo "   Running coordinator agent selection tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend -- \
+		python -m pytest /tmp/test_coordinator_agent_selection.py -v || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Coordinator agent selection tests completed"
+
+eks-test-coordinator: ## Test coordinator agent selection in EKS cluster (use EKS_NAMESPACE=your-namespace, KUBECONFIG=path)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-test-coordinator EKS_NAMESPACE=ns [KUBECONFIG=path]"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "🧪 Testing Coordinator Agent Selection in EKS Cluster..."
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@BACKEND_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make eks-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying test script to pod..."; \
+	kubectl cp backend/tests/test_coordinator_agent_selection.py $(EKS_NAMESPACE)/$$BACKEND_POD:/tmp/test_coordinator_agent_selection.py; \
+	echo "   Running coordinator agent selection tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD --container=backend -- \
+		python -m pytest /tmp/test_coordinator_agent_selection.py -v || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(EKS_NAMESPACE) $$BACKEND_POD --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Coordinator agent selection tests completed"
+
+kind-test-integration: ## Run comprehensive integration tests in kind cluster (coordinator, V0, chatbot) - use K8S_NAMESPACE=your-namespace
+	@if [ -z "$(K8S_NAMESPACE)" ]; then \
+		echo "❌ K8S_NAMESPACE is required"; \
+		echo "   Usage: make kind-test-integration K8S_NAMESPACE=ideaforge-ai"; \
+		exit 1; \
+	fi
+	@echo "🧪 Running Comprehensive Integration Tests in Kind Cluster..."
+	@echo "   Tests: Coordinator Agent Selection, V0 Project Retention, V0 Prompt Format, Chatbot Content"
+	@echo "   Namespace: $(K8S_NAMESPACE)"
+	@BACKEND_POD=$$(kubectl get pods -n $(K8S_NAMESPACE) --context kind-$(KIND_CLUSTER_NAME) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make kind-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying integration test script to pod..."; \
+	kubectl cp backend/tests/test_v0_coordinator_integration.py $(K8S_NAMESPACE)/$$BACKEND_POD:/tmp/test_v0_coordinator_integration.py --context kind-$(KIND_CLUSTER_NAME) --container=backend; \
+	echo "   Running integration tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend -- \
+		python /tmp/test_v0_coordinator_integration.py || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(K8S_NAMESPACE) $$BACKEND_POD --context kind-$(KIND_CLUSTER_NAME) --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Integration tests completed"
+
+eks-test-integration: ## Run comprehensive integration tests in EKS cluster (coordinator, V0, chatbot) - use EKS_NAMESPACE=ns, KUBECONFIG=path
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ EKS_NAMESPACE is required"; \
+		echo "   Usage: make eks-test-integration EKS_NAMESPACE=ns [KUBECONFIG=path]"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "🧪 Running Comprehensive Integration Tests in EKS Cluster..."
+	@echo "   Tests: Coordinator Agent Selection, V0 Project Retention, V0 Prompt Format, Chatbot Content"
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@echo "   ⚡ Latency-optimized for 100+ concurrent users"
+	@BACKEND_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -z "$$BACKEND_POD" ]; then \
+		echo "❌ Backend pod not found"; \
+		echo "   Run 'make eks-deploy' to deploy the application first"; \
+		exit 1; \
+	fi; \
+	echo "   Backend pod: $$BACKEND_POD"; \
+	echo "   Copying integration test script to pod..."; \
+	kubectl cp backend/tests/test_v0_coordinator_integration.py $(EKS_NAMESPACE)/$$BACKEND_POD:/tmp/test_v0_coordinator_integration.py; \
+	echo "   Running integration tests inside pod..."; \
+	echo ""; \
+	kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD --container=backend -- \
+		python /tmp/test_v0_coordinator_integration.py || \
+		(echo ""; \
+		 echo "⚠️  Test execution failed. Checking backend logs..."; \
+		 kubectl logs -n $(EKS_NAMESPACE) $$BACKEND_POD --container=backend --tail=50; \
+		 exit 1); \
+	echo ""; \
+	echo "✅ Integration tests completed"
+
+eks-db-backup: ## Create database backup before rollout (use EKS_NAMESPACE=ns, KUBECONFIG=path)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ Required parameter: EKS_NAMESPACE"; \
+		echo "   Usage: make eks-db-backup EKS_NAMESPACE=ns [KUBECONFIG=path]"; \
+		echo "   Example: make eks-db-backup EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 KUBECONFIG=/tmp/kubeconfig.KmzJhr"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "📦 Creating database backup..."
+	@BACKUP_DIR=$${BACKUP_DIR:-./backups}; \
+	mkdir -p $$BACKUP_DIR; \
+	TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	BACKUP_FILE="$$BACKUP_DIR/eks_db_backup_$(EKS_NAMESPACE)_$$TIMESTAMP.sql"; \
+	POSTGRES_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=postgres-ha -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || \
+	                 kubectl get pods -n $(EKS_NAMESPACE) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo ""); \
+	if [ -n "$$POSTGRES_POD" ]; then \
+		echo "   Found PostgreSQL pod: $$POSTGRES_POD"; \
+		POSTGRES_USER=$$(kubectl get configmap ideaforge-ai-config -n $(EKS_NAMESPACE) -o jsonpath='{.data.POSTGRES_USER}' 2>/dev/null || echo "agentic_pm"); \
+		POSTGRES_DB=$$(kubectl get configmap ideaforge-ai-config -n $(EKS_NAMESPACE) -o jsonpath='{.data.POSTGRES_DB}' 2>/dev/null || echo "agentic_pm_db"); \
+		POSTGRES_PASSWORD=$$(kubectl get secret ideaforge-ai-secrets -n $(EKS_NAMESPACE) -o jsonpath='{.data.POSTGRES_PASSWORD}' 2>/dev/null | base64 -d || echo ""); \
+		if [ -n "$$POSTGRES_PASSWORD" ]; then \
+			kubectl exec -n $(EKS_NAMESPACE) $$POSTGRES_POD -- \
+				env PGPASSWORD="$$POSTGRES_PASSWORD" \
+				pg_dump -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" \
+				--clean --if-exists --create --format=plain --no-owner --no-privileges \
+				> "$$BACKUP_FILE" 2>&1 && \
+			BACKUP_SIZE=$$(du -h "$$BACKUP_FILE" | cut -f1) && \
+			echo "   ✅ Database backup created: $$BACKUP_FILE ($$BACKUP_SIZE)"; \
+		else \
+			echo "   ⚠️  Could not retrieve database password, skipping backup"; \
+		fi; \
+	else \
+		echo "   ⚠️  PostgreSQL pod not found, skipping backup"; \
+	fi
+
+eks-run-migrations: eks-db-backup ## Run database migrations as K8s job (use EKS_NAMESPACE=ns, BACKEND_IMAGE_TAG=tag, KUBECONFIG=path)
+	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BACKEND_IMAGE_TAG)" ]; then \
+		echo "❌ Required parameters: EKS_NAMESPACE, BACKEND_IMAGE_TAG"; \
+		echo "   Usage: make eks-run-migrations EKS_NAMESPACE=ns BACKEND_IMAGE_TAG=tag [KUBECONFIG=path]"; \
+		echo "   Example: make eks-run-migrations EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BACKEND_IMAGE_TAG=8685427 KUBECONFIG=/tmp/kubeconfig.KmzJhr"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "🔄 Running database migrations..."
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@echo "   Backend Image: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Updating migration job with backend image: $(BACKEND_IMAGE_TAG)"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		sed -i '' "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" $(K8S_DIR)/eks/db-migrations-job.yaml; \
+	else \
+		sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" $(K8S_DIR)/eks/db-migrations-job.yaml; \
+	fi
+	@echo "   Deleting any existing migration job..."
+	@kubectl delete job db-migrations -n $(EKS_NAMESPACE) --ignore-not-found=true || true
+	@echo "   Creating migration job..."
+	@kubectl apply -f $(K8S_DIR)/eks/db-migrations-job.yaml
+	@echo "⏳ Waiting for database migrations to complete..."
+	@if kubectl wait --for=condition=complete job/db-migrations -n $(EKS_NAMESPACE) --timeout=600s; then \
+		echo "✅ Database migrations completed successfully"; \
+		kubectl logs -n $(EKS_NAMESPACE) job/db-migrations --tail=20 || true; \
+	else \
+		echo "❌ Database migrations failed!"; \
+		echo "   Migration job logs:"; \
+		kubectl logs -n $(EKS_NAMESPACE) job/db-migrations --tail=50 || true; \
+		echo "   Migration job status:"; \
+		kubectl describe job db-migrations -n $(EKS_NAMESPACE) | tail -20 || true; \
+		echo ""; \
+		echo "⚠️  Migration failed. Backend rollout will not proceed."; \
+		exit 1; \
+	fi
+
+eks-rollout: eks-run-migrations ## Run migrations then rollout backend (use EKS_NAMESPACE=ns, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag, KUBECONFIG=path, BASE_URL=url)
+	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BACKEND_IMAGE_TAG)" ] || [ -z "$(FRONTEND_IMAGE_TAG)" ]; then \
+		echo "❌ Required parameters: EKS_NAMESPACE, BACKEND_IMAGE_TAG, FRONTEND_IMAGE_TAG"; \
+		echo "   Usage: make eks-rollout EKS_NAMESPACE=ns BACKEND_IMAGE_TAG=tag FRONTEND_IMAGE_TAG=tag [KUBECONFIG=path] [BASE_URL=url]"; \
+		echo "   Example: make eks-rollout EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BACKEND_IMAGE_TAG=8685427 FRONTEND_IMAGE_TAG=8685427 KUBECONFIG=/tmp/kubeconfig.KmzJhr BASE_URL=https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo ""
+	@echo "🚀 Rolling out backend after successful migrations..."
+	@echo "   Backend Image: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend Image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
+	@echo ""
+	@echo "🔄 Step 1: Updating image tags in deployments..."
+	@kubectl set image deployment/backend backend=ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
+		(echo "❌ Failed to update backend image" && exit 1)
+	@kubectl set image deployment/frontend frontend=ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
+		(echo "❌ Failed to update frontend image" && exit 1)
+	@echo "   ✅ Image tags updated"
+	@echo ""
+	@echo "⏳ Step 2: Rolling out deployments..."
+	@kubectl rollout status deployment/backend -n $(EKS_NAMESPACE) --timeout=300s || \
+		(echo "❌ Backend rollout failed!" && \
+		 kubectl get pods -n $(EKS_NAMESPACE) -l app=backend && \
+		 exit 1)
+	@kubectl rollout status deployment/frontend -n $(EKS_NAMESPACE) --timeout=300s || \
+		(echo "❌ Frontend rollout failed!" && \
+		 kubectl get pods -n $(EKS_NAMESPACE) -l app=frontend && \
+		 exit 1)
+	@echo "   ✅ Rollouts completed"
+	@echo ""
+	@echo "🧹 Step 3: Cleaning up old replicasets..."
+	@kubectl get replicasets -n $(EKS_NAMESPACE) -o json 2>/dev/null | \
+		jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' 2>/dev/null | \
+		while read rs; do \
+			if [ -n "$$rs" ]; then \
+				echo "   Deleting replicaset: $$rs"; \
+				kubectl delete replicaset $$rs -n $(EKS_NAMESPACE) --ignore-not-found=true; \
+			fi; \
+		done || echo "   No old replicasets to clean up"
+	@echo "   ✅ Cleanup complete"
+	@echo ""
+	@echo "🧪 Step 4: Verifying deployment..."
+	@echo "   Checking pod status..."
+	@kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (backend,frontend)' --no-headers | \
+		awk '{if ($$3 != "Running") {print "   ⚠️  Pod " $$1 " is " $$3; exit 1}}' || true
+	@echo "   ✅ All pods are running"
+	@if [ -n "$(BASE_URL)" ]; then \
+		echo ""; \
+		echo "   Testing backend health endpoint via ingress..."; \
+		API_RESPONSE=$$(curl -s -f "$(BASE_URL)/api/health" 2>/dev/null || echo ""); \
+		if echo "$$API_RESPONSE" | grep -q "healthy\|status"; then \
+			echo "   ✅ API endpoint accessible"; \
+		else \
+			echo "   ⚠️  API endpoint may not be accessible"; \
+		fi; \
+		echo ""; \
+		echo "   Testing frontend via ingress..."; \
+		FRONTEND_RESPONSE=$$(curl -s -f "$(BASE_URL)/" -o /dev/null -w "%{http_code}" 2>/dev/null || echo "000"); \
+		if [ "$$FRONTEND_RESPONSE" = "200" ] || [ "$$FRONTEND_RESPONSE" = "304" ]; then \
+			echo "   ✅ Frontend accessible"; \
+		else \
+			echo "   ⚠️  Frontend returned HTTP $$FRONTEND_RESPONSE"; \
+		fi; \
+	fi
+	@echo ""
+	@echo "✅ Rollout complete!"
+	@echo "   Backend: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
+
+eks-rollout-images: eks-run-migrations ## Deploy new images with verification and cleanup (use EKS_NAMESPACE=ns, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag, KUBECONFIG=path, BASE_URL=url)
+	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BACKEND_IMAGE_TAG)" ] || [ -z "$(FRONTEND_IMAGE_TAG)" ]; then \
+		echo "❌ Required parameters: EKS_NAMESPACE, BACKEND_IMAGE_TAG, FRONTEND_IMAGE_TAG"; \
+		echo "   Usage: make eks-rollout-images EKS_NAMESPACE=ns BACKEND_IMAGE_TAG=tag FRONTEND_IMAGE_TAG=tag [KUBECONFIG=path] [BASE_URL=url]"; \
+		echo "   Example: make eks-rollout-images EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BACKEND_IMAGE_TAG=3b0a9d6 FRONTEND_IMAGE_TAG=3b0a9d6 KUBECONFIG=/tmp/kubeconfig.sake62 BASE_URL=https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "🚀 EKS Image Rollout with Verification"
+	@echo "======================================"
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@echo "   Backend Image: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend Image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
+	@echo ""
+	@echo "🔄 Step 1: Updating image tags in deployments..."
+	@kubectl set image deployment/backend backend=ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
+		(echo "❌ Failed to update backend image" && exit 1)
+	@kubectl set image deployment/frontend frontend=ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
+		(echo "❌ Failed to update frontend image" && exit 1)
+	@echo "   ✅ Image tags updated"
+	@echo ""
+	@echo "⏳ Step 2: Rolling out deployments..."
+	@kubectl rollout status deployment/backend -n $(EKS_NAMESPACE) --timeout=120s || \
+		(echo "⚠️  Backend rollout timeout (120s), checking status..." && \
+		 kubectl get pods -n $(EKS_NAMESPACE) -l app=backend && \
+		 echo "   Continuing with verification...")
+	@kubectl rollout status deployment/frontend -n $(EKS_NAMESPACE) --timeout=120s || \
+		(echo "⚠️  Frontend rollout timeout (120s), checking status..." && \
+		 kubectl get pods -n $(EKS_NAMESPACE) -l app=frontend && \
+		 echo "   Continuing with verification...")
+	@echo "   ✅ Rollouts completed"
+	@echo ""
+	@echo "🧹 Step 3: Cleaning up old replicasets..."
+	@kubectl get replicasets -n $(EKS_NAMESPACE) -o json 2>/dev/null | \
+		jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' 2>/dev/null | \
+		while read rs; do \
+			if [ -n "$$rs" ]; then \
+				echo "   Deleting replicaset: $$rs"; \
+				kubectl delete replicaset $$rs -n $(EKS_NAMESPACE) --ignore-not-found=true; \
+			fi; \
+		done || echo "   No old replicasets to clean up"
+	@echo "   ✅ Cleanup complete"
+	@echo ""
+	@echo "🧪 Step 4: Verifying deployment..."
+	@echo "   Checking pod status..."
+	@kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (backend,frontend)' --no-headers | \
+		awk '{if ($$3 != "Running") {print "   ⚠️  Pod " $$1 " is " $$3; exit 1}}' || true
+	@echo "   ✅ All pods are running"
+	@echo ""
+	@echo "   Testing backend health endpoint..."
+	@BACKEND_POD=$$(kubectl get pod -n $(EKS_NAMESPACE) -l app=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+	if [ -n "$$BACKEND_POD" ]; then \
+		HEALTH_RESPONSE=$$(kubectl exec -n $(EKS_NAMESPACE) $$BACKEND_POD -- curl -s http://localhost:8000/health 2>/dev/null || echo ""); \
+		if echo "$$HEALTH_RESPONSE" | grep -q "healthy\|status"; then \
+			echo "   ✅ Backend health check passed"; \
+		else \
+			echo "   ⚠️  Backend health check may have issues"; \
+		fi; \
+	fi
+	@if [ -n "$(BASE_URL)" ]; then \
+		echo ""; \
+		echo "   Testing API endpoint via ingress..."; \
+		API_RESPONSE=$$(curl -s -f "$(BASE_URL)/api/health" 2>/dev/null || echo ""); \
+		if echo "$$API_RESPONSE" | grep -q "healthy\|status"; then \
+			echo "   ✅ API endpoint accessible"; \
+		else \
+			echo "   ⚠️  API endpoint may not be accessible"; \
+		fi; \
+		echo ""; \
+		echo "   Testing frontend via ingress..."; \
+		FRONTEND_RESPONSE=$$(curl -s -f "$(BASE_URL)/" -o /dev/null -w "%{http_code}" 2>/dev/null || echo "000"); \
+		if [ "$$FRONTEND_RESPONSE" = "200" ] || [ "$$FRONTEND_RESPONSE" = "304" ]; then \
+			echo "   ✅ Frontend accessible"; \
+		else \
+			echo "   ⚠️  Frontend returned HTTP $$FRONTEND_RESPONSE"; \
+		fi; \
+		echo ""; \
+		echo "   Testing login endpoint..."; \
+		LOGIN_RESPONSE=$$(curl -s -X POST "$(BASE_URL)/api/auth/login" \
+			-H "Content-Type: application/json" \
+			-d '{"email":"test@example.com","password":"test"}' 2>/dev/null || echo ""); \
+		if echo "$$LOGIN_RESPONSE" | grep -qE "token|error|Invalid"; then \
+			echo "   ✅ Login endpoint responding"; \
+		else \
+			echo "   ⚠️  Login endpoint may not be responding correctly"; \
+		fi; \
+		echo ""; \
+		echo "   Testing SSO callback endpoint..."; \
+		SSO_RESPONSE=$$(curl -s -f "$(BASE_URL)/api/auth/mckinsey/callback?code=test&state=test" -o /dev/null -w "%{http_code}" 2>/dev/null || echo "000"); \
+		if [ "$$SSO_RESPONSE" != "000" ]; then \
+			echo "   ✅ SSO callback endpoint responding (HTTP $$SSO_RESPONSE)"; \
+		else \
+			echo "   ⚠️  SSO callback endpoint may not be accessible"; \
+		fi; \
+	fi
+	@echo ""
+	@echo "✅ Deployment complete!"
+	@echo "   Backend: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"

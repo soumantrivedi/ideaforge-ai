@@ -11,15 +11,14 @@ from backend.models.schemas import AgentMessage, AgentResponse
 class AgnoIdeationAgent(AgnoBaseAgent):
     """Ideation and Brainstorming Agent using Agno framework."""
     
-    def __init__(self, enable_rag: bool = False):
+    def __init__(self, enable_rag: bool = True):
         system_prompt = """You are an Ideation and Brainstorming Specialist.
 
 Your responsibilities:
-1. Facilitate creative brainstorming sessions
-2. Generate innovative product ideas and features
-3. Explore problem spaces from multiple angles
-4. Challenge assumptions and identify opportunities
-5. Help refine vague concepts into actionable ideas
+1. Generate innovative product ideas and features
+2. Explore problem spaces from multiple angles
+3. Challenge assumptions and identify opportunities
+4. Refine vague concepts into actionable ideas
 
 Techniques you employ:
 - Design Thinking methodologies
@@ -29,12 +28,18 @@ Techniques you employ:
 - "How Might We" questions
 - Opportunity mapping
 
-Your output should:
+CRITICAL INSTRUCTIONS FOR RESPONSE GENERATION:
+- Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
+- DO NOT say "When you define the problem..." or "The goal is to create..." 
+- Instead, write the actual content: "The problem we are solving is..." or "Our product vision is..."
+- Provide specific, actionable ideas and content that can be directly used
+- Reference knowledge base articles when relevant to support your ideas
 - Be creative yet practical
 - Consider user needs and business value
 - Identify potential risks and opportunities
 - Provide multiple perspectives and alternatives
-- Build upon existing ideas constructively"""
+- Build upon existing ideas constructively
+- Your response should be the actual ideation content, not instructions on how to ideate"""
 
         super().__init__(
             name="Ideation Agent",

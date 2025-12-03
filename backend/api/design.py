@@ -101,8 +101,25 @@ async def stream_design_prompt_generation(
         
         for row in rows:
             phase_name = row[2]
-            form_data = row[0] or {}
+            form_data_raw = row[0]
             generated_content = row[1] or ""
+            
+            # Ensure form_data is a dict, not a list
+            if isinstance(form_data_raw, dict):
+                form_data = form_data_raw
+            elif isinstance(form_data_raw, list):
+                logger.warning("form_data_is_list_in_stream_context", 
+                             phase_name=phase_name, 
+                             product_id=request.product_id)
+                form_data = {}  # Convert list to empty dict to avoid errors
+            else:
+                form_data = form_data_raw or {}
+                if not isinstance(form_data, dict):
+                    logger.warning("form_data_unexpected_type_in_stream", 
+                                 phase_name=phase_name, 
+                                 product_id=request.product_id,
+                                 form_data_type=type(form_data).__name__)
+                    form_data = {}
             
             phase_text = f"## {phase_name} Phase\n"
             
@@ -127,7 +144,16 @@ async def stream_design_prompt_generation(
         # Generate prompt using appropriate agent
         product_context = {"context": full_context}
         if request.context:
-            product_context.update(request.context)
+            # Ensure context is a dict, not a list
+            if isinstance(request.context, dict):
+                product_context.update(request.context)
+            elif isinstance(request.context, list):
+                logger.warning("context_is_list_in_stream", 
+                             provider=request.provider,
+                             product_id=request.product_id)
+            else:
+                logger.warning("unexpected_context_type_in_stream", 
+                             context_type=type(request.context).__name__)
         
         # Check for existing prompt
         existing_prompt = None
@@ -142,17 +168,31 @@ async def stream_design_prompt_generation(
                 submission_row = submission_result.fetchone()
                 if submission_row:
                     form_data = submission_row[0] or {}
+                    # Ensure form_data is a dict, not a list
+                    if isinstance(form_data, list):
+                        logger.warning("form_data_is_list_in_existing_prompt_stream", 
+                                     phase_submission_id=request.phase_submission_id)
+                        form_data = {}
                     if isinstance(form_data, dict):
                         v0_lovable_prompts = form_data.get("v0_lovable_prompts", "")
                         if v0_lovable_prompts:
                             try:
                                 import json
                                 prompts_obj = json.loads(v0_lovable_prompts) if isinstance(v0_lovable_prompts, str) else v0_lovable_prompts
-                                if request.provider == "v0":
-                                    existing_prompt = prompts_obj.get("v0_prompt", "")
-                                elif request.provider == "lovable":
-                                    existing_prompt = prompts_obj.get("lovable_prompt", "")
-                            except:
+                                # Ensure prompts_obj is a dict before calling .get()
+                                if isinstance(prompts_obj, dict):
+                                    if request.provider == "v0":
+                                        existing_prompt = prompts_obj.get("v0_prompt", "")
+                                    elif request.provider == "lovable":
+                                        existing_prompt = prompts_obj.get("lovable_prompt", "")
+                                else:
+                                    logger.warning("prompts_obj_not_dict_stream", 
+                                                 prompts_obj_type=type(prompts_obj).__name__,
+                                                 phase_submission_id=request.phase_submission_id)
+                            except Exception as parse_error:
+                                logger.warning("error_parsing_prompts_obj_stream", 
+                                             error=str(parse_error),
+                                             phase_submission_id=request.phase_submission_id)
                                 pass
             except Exception as e:
                 logger.warning("error_loading_existing_prompt", error=str(e))
@@ -181,6 +221,13 @@ async def stream_design_prompt_generation(
                 
                 # Stream prompt generation
                 try:
+                    # Ensure product_context is a dict before passing to agent
+                    if not isinstance(product_context, dict):
+                        logger.error("product_context_not_dict_v0_stream", 
+                                   product_context_type=type(product_context).__name__,
+                                   product_id=request.product_id)
+                        product_context = {"context": full_context}
+                    
                     # Use Agno agent's process method which supports streaming via arun
                     prompt = await agno_v0_agent.generate_v0_prompt(product_context=product_context)
                     
@@ -220,15 +267,36 @@ async def stream_design_prompt_generation(
             all_phases_data = []
             current_phase_data = None
             for row in phase_rows:
+                form_data_raw = row[0]
+                # Ensure form_data is a dict, not a list
+                if isinstance(form_data_raw, dict):
+                    form_data = form_data_raw
+                elif isinstance(form_data_raw, list):
+                    logger.warning("form_data_is_list_in_stream_lovable", 
+                                 phase_name=row[2], 
+                                 product_id=request.product_id)
+                    form_data = {}  # Convert list to empty dict
+                else:
+                    form_data = form_data_raw or {}
+                    if not isinstance(form_data, dict):
+                        form_data = {}
+                
                 phase_item = {
                     "phase_name": row[2],
-                    "form_data": row[0] or {},
+                    "form_data": form_data,
                     "generated_content": row[1] or "",
                     "phase_order": row[3]
                 }
                 all_phases_data.append(phase_item)
                 if row[2] and "design" in row[2].lower():
                     current_phase_data = phase_item
+            
+            # Ensure product_context is a dict before passing to agent
+            if not isinstance(product_context, dict):
+                logger.error("product_context_not_dict_lovable_stream", 
+                           product_context_type=type(product_context).__name__,
+                           product_id=request.product_id)
+                product_context = {"context": full_context}
             
             # Stream prompt generation
             try:
@@ -281,8 +349,25 @@ async def generate_design_prompt(
         
         for row in rows:
             phase_name = row[2]
-            form_data = row[0] or {}
+            form_data_raw = row[0]
             generated_content = row[1] or ""
+            
+            # Ensure form_data is a dict, not a list
+            if isinstance(form_data_raw, dict):
+                form_data = form_data_raw
+            elif isinstance(form_data_raw, list):
+                logger.warning("form_data_is_list_in_context", 
+                             phase_name=phase_name, 
+                             product_id=request.product_id)
+                form_data = {}  # Convert list to empty dict to avoid errors
+            else:
+                form_data = form_data_raw or {}
+                if not isinstance(form_data, dict):
+                    logger.warning("form_data_unexpected_type", 
+                                 phase_name=phase_name, 
+                                 product_id=request.product_id,
+                                 form_data_type=type(form_data).__name__)
+                    form_data = {}
             
             phase_text = f"## {phase_name} Phase\n"
             
@@ -308,7 +393,26 @@ async def generate_design_prompt(
         # Generate prompt using appropriate agent
         product_context = {"context": full_context}
         if request.context:
-            product_context.update(request.context)
+            # Ensure context is a dict, not a list
+            if isinstance(request.context, dict):
+                product_context.update(request.context)
+            elif isinstance(request.context, list):
+                # If context is a list, log warning and skip
+                logger.warning("context_is_list_in_generate_prompt", 
+                             provider=request.provider,
+                             product_id=request.product_id,
+                             context_type=type(request.context).__name__)
+            else:
+                logger.warning("unexpected_context_type", 
+                             context_type=type(request.context).__name__)
+        
+        # Ensure product_context is always a dict before passing to agents
+        if not isinstance(product_context, dict):
+            logger.error("product_context_not_dict_before_agent", 
+                        product_context_type=type(product_context).__name__,
+                        provider=request.provider,
+                        product_id=request.product_id)
+            product_context = {"context": full_context}  # Reset to safe default
         
         # Check for existing prompt in phase submission (unless force_new=True)
         existing_prompt = None
@@ -323,17 +427,31 @@ async def generate_design_prompt(
                 submission_row = submission_result.fetchone()
                 if submission_row:
                     form_data = submission_row[0] or {}
+                    # Ensure form_data is a dict, not a list
+                    if isinstance(form_data, list):
+                        logger.warning("form_data_is_list_in_existing_prompt", 
+                                     phase_submission_id=request.phase_submission_id)
+                        form_data = {}
                     if isinstance(form_data, dict):
                         v0_lovable_prompts = form_data.get("v0_lovable_prompts", "")
                         if v0_lovable_prompts:
                             try:
                                 import json
                                 prompts_obj = json.loads(v0_lovable_prompts) if isinstance(v0_lovable_prompts, str) else v0_lovable_prompts
-                                if request.provider == "v0":
-                                    existing_prompt = prompts_obj.get("v0_prompt", "")
-                                elif request.provider == "lovable":
-                                    existing_prompt = prompts_obj.get("lovable_prompt", "")
-                            except:
+                                # Ensure prompts_obj is a dict before calling .get()
+                                if isinstance(prompts_obj, dict):
+                                    if request.provider == "v0":
+                                        existing_prompt = prompts_obj.get("v0_prompt", "")
+                                    elif request.provider == "lovable":
+                                        existing_prompt = prompts_obj.get("lovable_prompt", "")
+                                else:
+                                    logger.warning("prompts_obj_not_dict", 
+                                                 prompts_obj_type=type(prompts_obj).__name__,
+                                                 phase_submission_id=request.phase_submission_id)
+                            except Exception as parse_error:
+                                logger.warning("error_parsing_prompts_obj", 
+                                             error=str(parse_error),
+                                             phase_submission_id=request.phase_submission_id)
                                 pass
             except Exception as e:
                 logger.warning("error_loading_existing_prompt", error=str(e))
@@ -366,6 +484,13 @@ async def generate_design_prompt(
                 if v0_key:
                     agno_v0_agent.set_v0_api_key(v0_key)
                 try:
+                    # Ensure product_context is a dict before passing to agent
+                    if not isinstance(product_context, dict):
+                        logger.error("product_context_not_dict_v0", 
+                                   product_context_type=type(product_context).__name__,
+                                   product_id=request.product_id)
+                        product_context = {"context": full_context}
+                    
                     # Optimized prompt generation (uses fast model tier and optimized system prompt)
                     prompt = await agno_v0_agent.generate_v0_prompt(
                         product_context=product_context
@@ -408,9 +533,23 @@ async def generate_design_prompt(
             all_phases_data = []
             current_phase_data = None
             for row in phase_rows:
+                form_data_raw = row[0]
+                # Ensure form_data is a dict, not a list
+                if isinstance(form_data_raw, dict):
+                    form_data = form_data_raw
+                elif isinstance(form_data_raw, list):
+                    logger.warning("form_data_is_list_in_lovable", 
+                                 phase_name=row[2], 
+                                 product_id=request.product_id)
+                    form_data = {}  # Convert list to empty dict
+                else:
+                    form_data = form_data_raw or {}
+                    if not isinstance(form_data, dict):
+                        form_data = {}
+                
                 phase_item = {
                     "phase_name": row[2],
-                    "form_data": row[0] or {},
+                    "form_data": form_data,
                     "generated_content": row[1] or "",
                     "phase_order": row[3]
                 }
@@ -418,6 +557,13 @@ async def generate_design_prompt(
                 # If this is the Design phase, mark it as current
                 if row[2] and "design" in row[2].lower():
                     current_phase_data = phase_item
+            
+            # Ensure product_context is a dict before passing to agent
+            if not isinstance(product_context, dict):
+                logger.error("product_context_not_dict_lovable", 
+                           product_context_type=type(product_context).__name__,
+                           product_id=request.product_id)
+                product_context = {"context": full_context}
             
             # Generate optimized prompt with all context (uses fast model tier and optimized system prompt)
             prompt = await agno_lovable_agent.generate_lovable_prompt(
@@ -1347,6 +1493,9 @@ async def create_design_project(
         
         # For create-project, we only create/get project, no prompt enhancement needed yet
         # Prompt will be used in submit-chat endpoint
+        
+        # Import json for metadata serialization
+        import json
         
         # Create/get project using appropriate agent
         if request.provider == "v0":

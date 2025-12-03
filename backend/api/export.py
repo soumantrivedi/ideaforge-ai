@@ -827,8 +827,18 @@ async def export_prd_document(
             logger.warning(f"Could not fetch design mockups: {str(e)}")
             design_mockups = []
         
-        # Generate PRD using export agent
+        # Generate PRD using export agent with coordinator for agent army
         if export_agent:
+            # Try to get coordinator for agent army parallel generation
+            coordinator = None
+            try:
+                from backend.agents.agno_enhanced_coordinator import AgnoEnhancedCoordinator
+                coordinator = AgnoEnhancedCoordinator(enable_rag=True)
+                logger.info("using_agent_army_for_export", product_id=str(product_id))
+            except Exception as e:
+                logger.warning("coordinator_not_available_fallback", error=str(e), product_id=str(product_id))
+                # Continue without coordinator - will use single agent fallback
+            
             prd_content = await export_agent.generate_comprehensive_prd(
                 product_id=str(product_id),
                 product_info=product_info,
@@ -836,7 +846,8 @@ async def export_prd_document(
                 conversation_history=conversation_history,
                 knowledge_base=knowledge_base,
                 design_mockups=design_mockups,
-                override_missing=request.override_missing
+                override_missing=request.override_missing,
+                coordinator=coordinator  # Pass coordinator for agent army
             )
         else:
             # Fallback: generate basic PRD

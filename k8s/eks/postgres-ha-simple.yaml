@@ -1,0 +1,322 @@
+---
+# PostgreSQL HA using StatefulSet with streaming replication
+# This is a simpler approach that doesn't require Patroni or operators
+# Uses PostgreSQL's built-in streaming replication with manual failover
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-ha
+  namespace: 20890-ideaforge-ai-dev-58a50
+  labels:
+    app: postgres-ha
+    component: database
+spec:
+  serviceName: postgres-ha
+  replicas: 3  # 1 primary + 2 replicas
+  selector:
+    matchLabels:
+      app: postgres-ha
+  template:
+    metadata:
+      labels:
+        app: postgres-ha
+        component: database
+    spec:
+      # Spread pods across nodes for better HA
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - postgres-ha
+              topologyKey: kubernetes.io/hostname
+      # Run as postgres user (not root)
+      securityContext:
+        runAsUser: 999  # postgres user ID in pgvector image
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+      - name: postgres
+        image: pgvector/pgvector:pg15
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: ideaforge-ai-config
+              key: POSTGRES_DB
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        - name: POSTGRES_REPLICATION_USER
+          value: "replicator"
+        - name: POSTGRES_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: POSTGRES_REPLICATION_PASSWORD
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        # PostgreSQL performance tuning (same as before)
+        - name: POSTGRES_INITDB_ARGS
+          value: "--encoding=UTF8 --locale=C"
+        # Use docker-entrypoint.sh which handles user switching automatically
+        # For primary: initialize normally, then configure replication
+        # For replicas: wait for primary, then do base backup
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          
+          # Determine if this is the primary (first pod) or replica
+          POD_INDEX=${POD_NAME##*-}
+          
+          if [ "$POD_INDEX" = "0" ]; then
+            # Primary node - let docker-entrypoint.sh handle initialization
+            # It will run as postgres user automatically
+            echo "Primary node: Using docker-entrypoint.sh for initialization"
+            
+            # If data exists, configure replication
+            if [ -f "$PGDATA/PG_VERSION" ]; then
+              echo "Data exists, configuring replication settings..."
+              # Update postgresql.conf
+              if ! grep -q "wal_level = replica" "$PGDATA/postgresql.conf" 2>/dev/null; then
+                echo "wal_level = replica" >> "$PGDATA/postgresql.conf"
+                echo "max_wal_senders = 10" >> "$PGDATA/postgresql.conf"
+                echo "max_replication_slots = 10" >> "$PGDATA/postgresql.conf"
+                echo "hot_standby = on" >> "$PGDATA/postgresql.conf"
+                echo "hot_standby_feedback = on" >> "$PGDATA/postgresql.conf"
+              fi
+              # Update pg_hba.conf
+              if ! grep -q "replication.*replicator" "$PGDATA/pg_hba.conf" 2>/dev/null; then
+                echo "host replication $POSTGRES_REPLICATION_USER 0.0.0.0/0 md5" >> "$PGDATA/pg_hba.conf"
+              fi
+            fi
+            
+            # Start with docker-entrypoint.sh (handles user switching)
+            exec /usr/local/bin/docker-entrypoint.sh postgres \
+              -c wal_level=replica \
+              -c max_wal_senders=10 \
+              -c max_replication_slots=10 \
+              -c hot_standby=on \
+              -c hot_standby_feedback=on \
+              -c max_connections=500 \
+              -c shared_buffers=1GB \
+              -c effective_cache_size=3GB \
+              -c maintenance_work_mem=256MB \
+              -c checkpoint_completion_target=0.9 \
+              -c wal_buffers=16MB \
+              -c default_statistics_target=100 \
+              -c random_page_cost=1.1 \
+              -c effective_io_concurrency=200 \
+              -c work_mem=8MB \
+              -c min_wal_size=1GB \
+              -c max_wal_size=4GB \
+              -c max_worker_processes=4 \
+              -c max_parallel_workers_per_gather=2 \
+              -c max_parallel_workers=4
+          else
+            # Replica node
+            echo "Replica node (index: $POD_INDEX): Waiting for primary..."
+            
+            # Use the StatefulSet DNS name - try multiple formats
+            PRIMARY_POD="postgres-ha-0.postgres-ha"
+            PRIMARY_POD_FULL="postgres-ha-0.postgres-ha.${POD_NAMESPACE}.svc.cluster.local"
+            PRIMARY_POD_IP=""  # Will be resolved if needed
+            for i in {1..150}; do
+              # Try short name first (most reliable in same namespace)
+              if pg_isready -h "$PRIMARY_POD" -U "$POSTGRES_USER" -d "$POSTGRES_DB" 2>/dev/null; then
+                echo "Primary is ready!"
+                break
+              fi
+              if [ $i -eq 150 ]; then
+                echo "ERROR: Primary did not become ready"
+                exit 1
+              fi
+              echo "Waiting... ($i/150)"
+              sleep 2
+            done
+            
+            # Initialize replica if needed
+            if [ ! -f "$PGDATA/PG_VERSION" ]; then
+              echo "Performing base backup..."
+              REPLICA_SLOT="replica_${POD_INDEX}"
+              
+              # Create replication slot on primary first (if it doesn't exist)
+              echo "Ensuring replication slot exists on primary..."
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$PRIMARY_POD" -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+                -c "SELECT pg_create_physical_replication_slot('$REPLICA_SLOT', true, false) WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '$REPLICA_SLOT');" 2>/dev/null || true
+              
+              # Try short name first (most reliable)
+              if ! PGPASSWORD="$POSTGRES_REPLICATION_PASSWORD" pg_basebackup \
+                -h "$PRIMARY_POD" \
+                -U "$POSTGRES_REPLICATION_USER" \
+                -D "$PGDATA" \
+                -Fp -Xs -P -R -S "$REPLICA_SLOT" 2>/dev/null; then
+                echo "Base backup with short name failed, trying full DNS..."
+                sleep 5
+                PGPASSWORD="$POSTGRES_REPLICATION_PASSWORD" pg_basebackup \
+                  -h "$PRIMARY_POD_FULL" \
+                  -U "$POSTGRES_REPLICATION_USER" \
+                  -D "$PGDATA" \
+                  -Fp -Xs -P -R -S "$REPLICA_SLOT" || {
+                    echo "Base backup failed, retrying with short name..."
+                    sleep 10
+                    PGPASSWORD="$POSTGRES_REPLICATION_PASSWORD" pg_basebackup \
+                      -h "$PRIMARY_POD" \
+                      -U "$POSTGRES_REPLICATION_USER" \
+                      -D "$PGDATA" \
+                      -Fp -Xs -P -R -S "$REPLICA_SLOT"
+                  }
+              fi
+            fi
+            
+            # Start in recovery mode
+            exec /usr/local/bin/docker-entrypoint.sh postgres \
+              -c hot_standby=on \
+              -c hot_standby_feedback=on \
+              -c max_connections=500 \
+              -c shared_buffers=1GB \
+              -c effective_cache_size=3GB \
+              -c maintenance_work_mem=256MB \
+              -c checkpoint_completion_target=0.9 \
+              -c wal_buffers=16MB \
+              -c default_statistics_target=100 \
+              -c random_page_cost=1.1 \
+              -c effective_io_concurrency=200 \
+              -c work_mem=8MB \
+              -c min_wal_size=1GB \
+              -c max_wal_size=4GB \
+              -c max_worker_processes=4 \
+              -c max_parallel_workers_per_gather=2 \
+              -c max_parallel_workers=4
+          fi
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 5
+          successThreshold: 1
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 5
+          successThreshold: 1
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: default-storage-class
+      resources:
+        requests:
+          storage: 20Gi
+
+---
+# Service for PostgreSQL HA - routes to all pods (for read replicas)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-ha
+  namespace: 20890-ideaforge-ai-dev-58a50
+  labels:
+    app: postgres-ha
+    component: database
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgres-ha
+  # Note: This service points to all pods (primary + replicas)
+  # Use postgres-ha-primary service for writes
+
+---
+# Service for PostgreSQL HA Primary - routes only to postgres-ha-0 (writable)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-ha-primary
+  namespace: 20890-ideaforge-ai-dev-58a50
+  labels:
+    app: postgres-ha
+    component: database
+    role: primary
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgres-ha
+    statefulset.kubernetes.io/pod-name: postgres-ha-0
+
+---
+# Headless service for StatefulSet DNS
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-ha-headless
+  namespace: 20890-ideaforge-ai-dev-58a50
+  labels:
+    app: postgres-ha
+    component: database
+spec:
+  clusterIP: None
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgres-ha
+

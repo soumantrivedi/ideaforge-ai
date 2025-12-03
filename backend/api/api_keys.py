@@ -51,7 +51,7 @@ async def get_api_keys_status(
         configured_providers = {row[0]: {"created_at": row[1], "updated_at": row[2]} for row in rows}
         
         # All supported providers
-        all_providers = ['openai', 'anthropic', 'google', 'v0', 'lovable']
+        all_providers = ['openai', 'anthropic', 'google', 'v0', 'lovable', 'ai_gateway']
         
         keys = [
             APIKeyResponse(
@@ -77,9 +77,13 @@ async def _save_api_key_internal(
 ) -> APIKeyResponse:
     """Internal function to save API key (can be called from other modules)."""
     # Validate provider
-    valid_providers = ['openai', 'anthropic', 'google', 'v0', 'lovable']
+    valid_providers = ['openai', 'anthropic', 'google', 'v0', 'lovable', 'ai_gateway']
     if provider not in valid_providers:
         raise ValueError(f"Invalid provider. Must be one of: {', '.join(valid_providers)}")
+    
+    # AI Gateway requires special handling (client_id + client_secret)
+    if provider == 'ai_gateway':
+        raise ValueError("AI Gateway credentials must be saved via /api/providers/configure endpoint")
     
     if not api_key or not api_key.strip():
         raise ValueError("API key cannot be empty")
@@ -133,8 +137,8 @@ async def save_api_key(
             db
         )
         
-        # If this is an AI provider key (openai, anthropic, google), reinitialize Agno framework
-        ai_providers = ['openai', 'anthropic', 'google']
+        # If this is an AI provider key (openai, anthropic, google, ai_gateway), reinitialize Agno framework
+        ai_providers = ['openai', 'anthropic', 'google', 'ai_gateway']
         if request.provider in ai_providers:
             try:
                 from backend.services.api_key_loader import load_user_api_keys_from_db
@@ -200,7 +204,7 @@ async def delete_api_key(
 ):
     """Delete an API key for a provider. Reinitializes Agno framework if AI provider key is deleted."""
     try:
-        valid_providers = ['openai', 'anthropic', 'google', 'v0', 'lovable']
+        valid_providers = ['openai', 'anthropic', 'google', 'v0', 'lovable', 'ai_gateway']
         if provider not in valid_providers:
             raise HTTPException(status_code=400, detail=f"Invalid provider")
         
@@ -223,7 +227,7 @@ async def delete_api_key(
             raise HTTPException(status_code=404, detail="API key not found")
         
         # If this is an AI provider key, reinitialize Agno framework (will fall back to .env keys)
-        ai_providers = ['openai', 'anthropic', 'google']
+        ai_providers = ['openai', 'anthropic', 'google', 'ai_gateway']
         if provider in ai_providers:
             try:
                 from backend.services.api_key_loader import load_user_api_keys_from_db
