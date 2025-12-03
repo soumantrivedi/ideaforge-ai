@@ -2,6 +2,7 @@
 Extensible Agno Framework Base Agent
 Provides a consistent pattern for all agents using Agno framework
 """
+
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, TYPE_CHECKING, Union
 from datetime import datetime
@@ -18,58 +19,72 @@ try:
     from agno.models.google import Gemini
     from agno.knowledge.knowledge import Knowledge
     from agno.vectordb.pgvector import PgVector, SearchType
-    
+
     # AI Gateway model wrapper
     from backend.models.ai_gateway_model import AIGatewayModel
-    
+
     # Monkey-patch OpenAI client to use max_completion_tokens for GPT-5.1 models
     # This fixes the issue where GPT-5.1 models require max_completion_tokens instead of max_tokens
     # The agno library uses OpenAI client internally, so we patch at the client level
     try:
         from openai import OpenAI, AsyncOpenAI
-        
+
         # Patch the ChatCompletion class's create method
         from openai.resources.chat import completions
-        
+
         _original_create = completions.Completions.create
-        _original_async_create = completions.AsyncCompletions.create if hasattr(completions, 'AsyncCompletions') else None
-        
+        _original_async_create = (
+            completions.AsyncCompletions.create
+            if hasattr(completions, "AsyncCompletions")
+            else None
+        )
+
         def _patched_create(self, *args, **kwargs):
             # Check if this is a GPT-5.1 model
-            model = kwargs.get('model') or (args[0] if args else None)
-            if model and ('gpt-5.1' in str(model).lower() or 'gpt-5' in str(model).lower()):
+            model = kwargs.get("model") or (args[0] if args else None)
+            if model and (
+                "gpt-5.1" in str(model).lower() or "gpt-5" in str(model).lower()
+            ):
                 # Convert max_tokens to max_completion_tokens for GPT-5.1 models
-                if 'max_tokens' in kwargs and 'max_completion_tokens' not in kwargs:
-                    kwargs['max_completion_tokens'] = kwargs.pop('max_tokens')
+                if "max_tokens" in kwargs and "max_completion_tokens" not in kwargs:
+                    kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
             return _original_create(self, *args, **kwargs)
-        
+
         async def _patched_async_create(self, *args, **kwargs):
             # Check if this is a GPT-5.1 model
-            model = kwargs.get('model') or (args[0] if args else None)
-            if model and ('gpt-5.1' in str(model).lower() or 'gpt-5' in str(model).lower()):
+            model = kwargs.get("model") or (args[0] if args else None)
+            if model and (
+                "gpt-5.1" in str(model).lower() or "gpt-5" in str(model).lower()
+            ):
                 # Convert max_tokens to max_completion_tokens for GPT-5.1 models
-                if 'max_tokens' in kwargs and 'max_completion_tokens' not in kwargs:
-                    kwargs['max_completion_tokens'] = kwargs.pop('max_tokens')
+                if "max_tokens" in kwargs and "max_completion_tokens" not in kwargs:
+                    kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
             return await _original_async_create(self, *args, **kwargs)
-        
+
         # Apply patches to the completion classes
         completions.Completions.create = _patched_create
         if _original_async_create:
             completions.AsyncCompletions.create = _patched_async_create
-            
+
         # Also patch OpenAIChat.__init__ to handle max_completion_tokens parameter
         _original_openai_chat_init = OpenAIChat.__init__
+
         def _patched_openai_chat_init(self, *args, **kwargs):
             # Check if this is a GPT-5.1 model
-            model_id = kwargs.get('id') or (args[0] if args else None)
-            if model_id and ('gpt-5.1' in str(model_id).lower() or 'gpt-5' in str(model_id).lower()):
+            model_id = kwargs.get("id") or (args[0] if args else None)
+            if model_id and (
+                "gpt-5.1" in str(model_id).lower() or "gpt-5" in str(model_id).lower()
+            ):
                 # If max_tokens is provided, convert it to max_completion_tokens
-                if 'max_tokens' in kwargs and 'max_completion_tokens' not in kwargs:
-                    kwargs['max_completion_tokens'] = kwargs.pop('max_tokens')
+                if "max_tokens" in kwargs and "max_completion_tokens" not in kwargs:
+                    kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
                 # If neither is provided, set a default max_completion_tokens
-                elif 'max_completion_tokens' not in kwargs and 'max_tokens' not in kwargs:
-                    kwargs['max_completion_tokens'] = 4000
+                elif (
+                    "max_completion_tokens" not in kwargs and "max_tokens" not in kwargs
+                ):
+                    kwargs["max_completion_tokens"] = 4000
             return _original_openai_chat_init(self, *args, **kwargs)
+
         OpenAIChat.__init__ = _patched_openai_chat_init
     except Exception as e:
         structlog.get_logger().warning("failed_to_patch_openai_for_gpt51", error=str(e))
@@ -79,18 +94,19 @@ try:
     KBOpenAIEmbedder = None
     AnthropicEmbedder = None
     GoogleEmbedder = None
-    
+
     try:
         from agno.knowledge.embedder.openai import OpenAIEmbedder
+
         KBOpenAIEmbedder = OpenAIEmbedder
     except ImportError as e:
         structlog.get_logger().warning("openai_embedder_not_available", error=str(e))
-    
+
     try:
         from agno.knowledge.embedder.anthropic import AnthropicEmbedder
     except ImportError as e:
         structlog.get_logger().warning("anthropic_embedder_not_available", error=str(e))
-    
+
     try:
         from agno.knowledge.embedder.google import GoogleEmbedder
     except ImportError as e:
@@ -117,7 +133,7 @@ class AgnoBaseAgent(ABC):
     Extensible base agent using Agno framework.
     Provides consistent pattern for all agents with optional RAG support.
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -142,7 +158,7 @@ class AgnoBaseAgent(ABC):
     ):
         """
         Initialize Agno-based agent.
-        
+
         Args:
             name: Agent name
             role: Agent role/type
@@ -153,8 +169,10 @@ class AgnoBaseAgent(ABC):
             capabilities: List of agent capabilities for routing
         """
         if not AGNO_AVAILABLE:
-            raise ImportError("Agno framework is not available. Install with: pip install agno")
-        
+            raise ImportError(
+                "Agno framework is not available. Install with: pip install agno"
+            )
+
         self.name = name
         self.role = role
         self.system_prompt = system_prompt
@@ -163,8 +181,10 @@ class AgnoBaseAgent(ABC):
         self.capabilities = capabilities or []
         self.logger = logger.bind(agent=name)
         self.interactions: List[AgentInteraction] = []
-        self.coordinator: Optional[Union['AgnoCoordinatorAgent', 'AgnoEnhancedCoordinator']] = None
-        
+        self.coordinator: Optional[
+            Union["AgnoCoordinatorAgent", "AgnoEnhancedCoordinator"]
+        ] = None
+
         # Performance optimization settings
         self.model_tier = model_tier
         self.max_history_runs = max_history_runs
@@ -175,91 +195,103 @@ class AgnoBaseAgent(ABC):
         self.max_reasoning_steps = max_reasoning_steps
         self.enable_intelligent_summarization = enable_intelligent_summarization
         self.context_relevance_scoring = context_relevance_scoring
-        
+
         # Metrics collection
         self.metrics = {
-            'total_calls': 0,
-            'total_time': 0.0,
-            'avg_time': 0.0,
-            'tool_calls': 0,
-            'token_usage': {'input': 0, 'output': 0},
-            'cache_hits': 0,
-            'cache_misses': 0,
+            "total_calls": 0,
+            "total_time": 0.0,
+            "avg_time": 0.0,
+            "tool_calls": 0,
+            "token_usage": {"input": 0, "output": 0},
+            "cache_hits": 0,
+            "cache_misses": 0,
         }
-        
+
         # Response cache (Redis-based for distributed caching)
         self.cache_enabled = cache_enabled
         self.cache_ttl = cache_ttl
         self.tool_call_timeout = tool_call_timeout
         self._cache = None  # Will be initialized lazily via _get_cache_instance()
         self._cache = None  # Will be initialized lazily
-        
+
         # Get model based on provider registry and tier
         model = self._get_agno_model(model_tier=model_tier)
-        
+
         # If no model is available, defer agent creation until a provider is configured
         if model is None:
             self.agno_agent = None
-            self.logger.warning("agno_agent_deferred", agent=name, reason="no_provider_configured")
+            self.logger.warning(
+                "agno_agent_deferred", agent=name, reason="no_provider_configured"
+            )
         else:
             # Setup RAG knowledge base if enabled
             knowledge = None
             if enable_rag:
                 knowledge = self._create_knowledge_base(self.rag_table_name)
-            
+
             # Create Agno agent with optimizations
             # CRITICAL: Use system_prompt as instructions (system context), NOT in user messages
             # This reduces token usage by 40-60% and improves latency
             agent_kwargs = {
-                'name': name,
-                'model': model,
-                'instructions': system_prompt,  # This goes to system context, not user context
-                'knowledge': knowledge,  # Agno uses 'knowledge' parameter
-                'tools': tools or [],
-                'markdown': True,
+                "name": name,
+                "model": model,
+                "instructions": system_prompt,  # This goes to system context, not user context
+                "knowledge": knowledge,  # Agno uses 'knowledge' parameter
+                "tools": tools or [],
+                "markdown": True,
             }
-            
+
             # Limit reasoning steps if supported (20-30% latency reduction)
             # Note: This depends on Agno framework support for max_iterations
             # If the framework supports it, use max_reasoning_steps:
-            if hasattr(Agent, '__init__') and 'max_iterations' in Agent.__init__.__code__.co_varnames:
-                agent_kwargs['max_iterations'] = self.max_reasoning_steps
-            
+            if (
+                hasattr(Agent, "__init__")
+                and "max_iterations" in Agent.__init__.__code__.co_varnames
+            ):
+                agent_kwargs["max_iterations"] = self.max_reasoning_steps
+
             self.agno_agent = Agent(**agent_kwargs)
-            
-            self.logger.info("agno_agent_initialized", agent=name, role=role, rag_enabled=enable_rag)
-    
+
+            self.logger.info(
+                "agno_agent_initialized", agent=name, role=role, rag_enabled=enable_rag
+            )
+
     def _get_agno_model(self, model_tier: str = "fast"):
         """Get appropriate Agno model based on provider registry and tier.
-        
+
         Model Tiers (Updated November 2025):
         - fast: gpt-5.1-chat-latest, claude-3-haiku, gemini-1.5-flash (for most agents - fastest, lowest cost)
         - standard: gpt-5.1, claude-3.5-sonnet, gemini-1.5-pro (for coordinators - balanced)
         - premium: gpt-5.1, claude-opus-4.5, gemini-3-pro (for critical reasoning - most powerful)
-        
+
         Priority: OpenAI GPT-5.1 (primary) > AI Gateway (secondary fallback) > Gemini 3 Pro (tertiary) > Claude Opus 4.5 (quaternary)
-        
+
         AI Gateway models are determined by the gateway's available models and can be configured
         via AI_GATEWAY_DEFAULT_MODEL environment variable or user settings.
         """
         api_key = None
-        
+
         # PRIORITY: OpenAI is the primary provider, AI Gateway is secondary fallback
         # Check if OpenAI is available first (primary)
         # AI Gateway is only used if OpenAI is not available and AI Gateway is explicitly enabled
         use_ai_gateway = False
         if not provider_registry.has_openai_key():
             # Only use AI Gateway as fallback if OpenAI is not available
-            use_ai_gateway = getattr(settings, 'ai_gateway_enabled', False) and provider_registry.has_ai_gateway()
-        
+            use_ai_gateway = (
+                getattr(settings, "ai_gateway_enabled", False)
+                and provider_registry.has_ai_gateway()
+            )
+
         if use_ai_gateway and provider_registry.has_ai_gateway():
             gateway_client = provider_registry.get_ai_gateway_client()
             if gateway_client:
                 # Try to discover ChatGPT-5 models dynamically
                 try:
-                    from backend.services.ai_gateway_model_discovery import get_best_chatgpt5_model
+                    from backend.services.ai_gateway_model_discovery import (
+                        get_best_chatgpt5_model,
+                    )
                     import asyncio
-                    
+
                     # Try to get best ChatGPT-5 model (non-blocking if already discovered)
                     try:
                         loop = asyncio.get_event_loop()
@@ -267,69 +299,136 @@ class AgnoBaseAgent(ABC):
                             # If loop is running, use cached discovery or defaults
                             best_model = None
                         else:
-                            best_model = loop.run_until_complete(get_best_chatgpt5_model())
+                            best_model = loop.run_until_complete(
+                                get_best_chatgpt5_model()
+                            )
                     except RuntimeError:
                         # No event loop, use defaults
                         best_model = None
-                    
+
                     # Use discovered model or fall back to settings/defaults
                     if best_model:
                         default_model = best_model
                     else:
                         # Get default model from settings or use tier-based defaults
-                        default_model = getattr(settings, 'ai_gateway_default_model', None)
+                        default_model = getattr(
+                            settings, "ai_gateway_default_model", None
+                        )
                         if not default_model:
                             # Tier-based model selection for AI Gateway (prefer ChatGPT-5)
                             if model_tier == "fast":
-                                default_model = getattr(settings, 'ai_gateway_fast_model', 'gpt-5.1-chat-latest')
+                                default_model = getattr(
+                                    settings,
+                                    "ai_gateway_fast_model",
+                                    "gpt-5.1-chat-latest",
+                                )
                             elif model_tier == "standard":
-                                default_model = getattr(settings, 'ai_gateway_standard_model', 'gpt-5.1')
+                                default_model = getattr(
+                                    settings, "ai_gateway_standard_model", "gpt-5.1"
+                                )
                             else:  # premium
-                                default_model = getattr(settings, 'ai_gateway_premium_model', 'gpt-5.1')
+                                default_model = getattr(
+                                    settings, "ai_gateway_premium_model", "gpt-5.1"
+                                )
                 except Exception as e:
-                    self.logger.warning("ai_gateway_model_discovery_failed", error=str(e))
+                    self.logger.warning(
+                        "ai_gateway_model_discovery_failed", error=str(e)
+                    )
                     # Fall back to settings/defaults
-                    default_model = getattr(settings, 'ai_gateway_default_model', 'gpt-5.1')
+                    default_model = getattr(
+                        settings, "ai_gateway_default_model", "gpt-5.1"
+                    )
                     if not default_model:
                         if model_tier == "fast":
-                            default_model = getattr(settings, 'ai_gateway_fast_model', 'gpt-5.1-chat-latest')
+                            default_model = getattr(
+                                settings, "ai_gateway_fast_model", "gpt-5.1-chat-latest"
+                            )
                         elif model_tier == "standard":
-                            default_model = getattr(settings, 'ai_gateway_standard_model', 'gpt-5.1')
+                            default_model = getattr(
+                                settings, "ai_gateway_standard_model", "gpt-5.1"
+                            )
                         else:
-                            default_model = getattr(settings, 'ai_gateway_premium_model', 'gpt-5.1')
-                
+                            default_model = getattr(
+                                settings, "ai_gateway_premium_model", "gpt-5.1"
+                            )
+
                 try:
                     # Determine max_tokens based on model and tier
                     max_tokens = 2000 if model_tier == "fast" else 4000
-                    
+
                     # GPT-5.1 models may need special handling
-                    if 'gpt-5.1' in default_model.lower() or 'gpt-5' in default_model.lower():
+                    if (
+                        "gpt-5.1" in default_model.lower()
+                        or "gpt-5" in default_model.lower()
+                    ):
                         # Use max_completion_tokens for GPT-5.1 models
                         return AIGatewayModel(
                             id=default_model,
                             client=gateway_client,
                             temperature=0.7,
-                            max_completion_tokens=max_tokens
+                            max_completion_tokens=max_tokens,
                         )
                     else:
                         return AIGatewayModel(
                             id=default_model,
                             client=gateway_client,
                             temperature=0.7,
-                            max_tokens=max_tokens
+                            max_tokens=max_tokens,
                         )
                 except Exception as e:
-                    self.logger.warning("ai_gateway_model_creation_failed", error=str(e), model_tier=model_tier, model=default_model)
+                    self.logger.warning(
+                        "ai_gateway_model_creation_failed",
+                        error=str(e),
+                        model_tier=model_tier,
+                        model=default_model,
+                    )
                     # Fall through to other providers
-        
+
         if model_tier == "fast":
             # Fast models for most agents (50-70% latency reduction, lowest cost)
             # Updated Dec 2025: GPT-5.1 Instant (fastest OpenAI model)
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
+                base_url = getattr(settings, "ai_gateway_openai_base_url", None)
+                model_id = getattr(
+                    settings, "ai_gateway_fast_model", "gpt-5.1-chat-latest"
+                )
+
+                self.logger.info(
+                    "creating_fast_model",
+                    base_url=base_url,
+                    model_id=model_id,
+                    api_key_length=len(api_key) if api_key else 0,
+                    using_gateway="ai-gateway" in (base_url or ""),
+                )
+
                 if api_key:
-                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
-                    return OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key, max_completion_tokens=2000)
+                    # For AI Gateway: create custom clients with JWT in Authorization header
+                    if base_url and "ai-gateway" in base_url:
+                        from openai import OpenAI, AsyncOpenAI
+
+                        self.logger.info("using_ai_gateway_with_custom_clients")
+                        sync_client = OpenAI(
+                            api_key="sk-proj-dummy",
+                            base_url=base_url,
+                            default_headers={"Authorization": f"Bearer {api_key}"},
+                        )
+                        async_client = AsyncOpenAI(
+                            api_key="sk-proj-dummy",
+                            base_url=base_url,
+                            default_headers={"Authorization": f"Bearer {api_key}"},
+                        )
+                        return OpenAIChat(
+                            id=model_id,
+                            client=sync_client,
+                            async_client=async_client,
+                            max_completion_tokens=2000,
+                        )
+                    else:
+                        self.logger.info("using_direct_openai_api")
+                        return OpenAIChat(
+                            id=model_id, api_key=api_key, max_completion_tokens=2000
+                        )
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -343,9 +442,31 @@ class AgnoBaseAgent(ABC):
             # Updated Dec 2025: GPT-5.1 (enhanced reasoning)
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
+                base_url = getattr(settings, "ai_gateway_openai_base_url", None)
+                model_id = getattr(settings, "ai_gateway_standard_model", "gpt-5.1")
                 if api_key:
-                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
-                    return OpenAIChat(id="gpt-5.1", api_key=api_key, max_completion_tokens=4000)
+                    # For AI Gateway: create custom client with JWT in Authorization header
+                    if base_url and "ai-gateway" in base_url:
+                        from openai import AsyncOpenAI
+
+                        custom_client = AsyncOpenAI(
+                            api_key="none",
+                            base_url=base_url,
+                            default_headers={"Authorization": f"Bearer {api_key}"},
+                        )
+                        return OpenAIChat(
+                            id=model_id,
+                            async_client=custom_client,
+                            max_completion_tokens=4000,
+                        )
+                    else:
+                        # Direct OpenAI API
+                        return OpenAIChat(
+                            id=model_id,
+                            api_key=api_key,
+                            base_url=base_url,
+                            max_completion_tokens=4000,
+                        )
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -359,14 +480,38 @@ class AgnoBaseAgent(ABC):
             # GPT-5.1 (Nov 12, 2025), Claude Opus 4.5 (Nov 24, 2025), Gemini 3 Pro (Nov 2025)
             if provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
+                base_url = getattr(settings, "ai_gateway_openai_base_url", None)
+                model_id = getattr(
+                    settings, "ai_gateway_premium_model", settings.agent_model_primary
+                )
                 if api_key:
-                    # Use GPT-5.1 (primary) or GPT-5 as fallback
-                    model_id = settings.agent_model_primary  # gpt-5.1 or gpt-5
-                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
-                    if 'gpt-5.1' in model_id.lower() or 'gpt-5' in model_id.lower():
-                        return OpenAIChat(id=model_id, api_key=api_key, max_completion_tokens=4000)
+                    # For AI Gateway: create custom client with JWT in Authorization header
+                    if base_url and "ai-gateway" in base_url:
+                        from openai import AsyncOpenAI
+
+                        custom_client = AsyncOpenAI(
+                            api_key="none",
+                            base_url=base_url,
+                            default_headers={"Authorization": f"Bearer {api_key}"},
+                        )
+                        return OpenAIChat(
+                            id=model_id,
+                            async_client=custom_client,
+                            max_completion_tokens=4000,
+                        )
                     else:
-                        return OpenAIChat(id=model_id, api_key=api_key)
+                        # Direct OpenAI API
+                        if "gpt-5.1" in model_id.lower() or "gpt-5" in model_id.lower():
+                            return OpenAIChat(
+                                id=model_id,
+                                api_key=api_key,
+                                base_url=base_url,
+                                max_completion_tokens=4000,
+                            )
+                        else:
+                            return OpenAIChat(
+                                id=model_id, api_key=api_key, base_url=base_url
+                            )
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -374,7 +519,9 @@ class AgnoBaseAgent(ABC):
                     try:
                         return Gemini(id="gemini-3-pro", api_key=api_key)
                     except:
-                        return Gemini(id=settings.agent_model_tertiary, api_key=api_key)  # gemini-3.0-pro
+                        return Gemini(
+                            id=settings.agent_model_tertiary, api_key=api_key
+                        )  # gemini-3.0-pro
             elif provider_registry.has_claude_key():
                 api_key = provider_registry.get_claude_key()
                 if api_key:
@@ -382,18 +529,22 @@ class AgnoBaseAgent(ABC):
                     try:
                         return Claude(id="claude-opus-4.5-20251124", api_key=api_key)
                     except:
-                        return Claude(id=settings.agent_model_secondary, api_key=api_key)  # claude-sonnet-4
-        
+                        return Claude(
+                            id=settings.agent_model_secondary, api_key=api_key
+                        )  # claude-sonnet-4
+
         # Return None instead of raising - allows lazy initialization
         return None
-    
+
     def _ensure_agent_initialized(self):
         """Ensure agent is initialized with a model. Reinitialize if needed."""
         if self.agno_agent is None:
             model = self._get_agno_model(model_tier=self.model_tier)
             if model is None:
-                raise ValueError("No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) before using this agent.")
-            
+                raise ValueError(
+                    "No AI provider configured. Please configure at least one provider (OpenAI, Claude, or Gemini) before using this agent."
+                )
+
             # Setup RAG knowledge base if enabled
             # IMPORTANT: Don't create knowledge base during initialization to avoid connection exhaustion
             # Knowledge base will be created lazily on first use via _ensure_knowledge_base()
@@ -403,7 +554,7 @@ class AgnoBaseAgent(ABC):
                 # This prevents connection exhaustion during startup when multiple agents initialize
                 self._rag_table_name = self.rag_table_name
                 self._knowledge_base_created = False
-            
+
             # Create Agno agent
             self.agno_agent = Agent(
                 name=self.name,
@@ -413,40 +564,57 @@ class AgnoBaseAgent(ABC):
                 tools=[],
                 markdown=True,
             )
-            
-            self.logger.info("agno_agent_initialized_lazy", agent=self.name, role=self.role, rag_enabled=self.enable_rag)
-    
+
+            self.logger.info(
+                "agno_agent_initialized_lazy",
+                agent=self.name,
+                role=self.role,
+                rag_enabled=self.enable_rag,
+            )
+
     def _ensure_knowledge_base(self):
         """Ensure knowledge base is created. Creates it lazily on first use if not already created.
-        
+
         This method is called when the RAG agent is actually used (search, add, process),
         not during initialization. This prevents connection exhaustion during startup.
         """
         if not self.enable_rag:
             return
-        
+
         # Check if knowledge base already exists
-        if hasattr(self, '_knowledge_base_created') and self._knowledge_base_created:
-            if self.agno_agent and hasattr(self.agno_agent, 'knowledge') and self.agno_agent.knowledge:
+        if hasattr(self, "_knowledge_base_created") and self._knowledge_base_created:
+            if (
+                self.agno_agent
+                and hasattr(self.agno_agent, "knowledge")
+                and self.agno_agent.knowledge
+            ):
                 return  # Already created and exists
-        
+
         # Ensure agent is initialized first
-        if not hasattr(self, 'agno_agent') or self.agno_agent is None:
+        if not hasattr(self, "agno_agent") or self.agno_agent is None:
             self._ensure_agent_initialized()
-        
+
         # Create knowledge base now (lazy creation on first use)
-        if hasattr(self, '_rag_table_name'):
+        if hasattr(self, "_rag_table_name"):
             knowledge = self._create_knowledge_base(self._rag_table_name)
             if knowledge:
                 # Update the agent's knowledge base
                 if self.agno_agent:
                     self.agno_agent.knowledge = knowledge
                 self._knowledge_base_created = True
-                self.logger.info("knowledge_base_created_lazily", agent=self.name, table_name=self._rag_table_name)
+                self.logger.info(
+                    "knowledge_base_created_lazily",
+                    agent=self.name,
+                    table_name=self._rag_table_name,
+                )
             else:
                 # Knowledge base creation failed, but don't raise exception
                 # Agent can still work, just without knowledge base
-                self.logger.warning("knowledge_base_creation_failed_lazy", agent=self.name, table_name=self._rag_table_name)
+                self.logger.warning(
+                    "knowledge_base_creation_failed_lazy",
+                    agent=self.name,
+                    table_name=self._rag_table_name,
+                )
                 self._knowledge_base_created = False  # Mark as attempted but failed
         else:
             # Use default table name if _rag_table_name not set
@@ -455,20 +623,24 @@ class AgnoBaseAgent(ABC):
                 if self.agno_agent:
                     self.agno_agent.knowledge = knowledge
                 self._knowledge_base_created = True
-                self.logger.info("knowledge_base_created_lazily", agent=self.name, table_name=self.rag_table_name)
-    
+                self.logger.info(
+                    "knowledge_base_created_lazily",
+                    agent=self.name,
+                    table_name=self.rag_table_name,
+                )
+
     def _create_knowledge_base(self, table_name: str) -> Optional[Any]:
         """Create knowledge base with pgvector for RAG.
-        
+
         Uses retry logic with exponential backoff to handle connection pool exhaustion.
         Retries up to 3 times with delays of 1s, 2s, 4s to allow connections to free up.
         """
         if not AGNO_AVAILABLE:
             return None
-        
+
         max_retries = 3
         retry_delays = [1, 2, 4]  # Exponential backoff in seconds
-        
+
         for attempt in range(max_retries):
             try:
                 # Get embedder based on available provider
@@ -476,12 +648,29 @@ class AgnoBaseAgent(ABC):
                 if provider_registry.has_openai_key() and OpenAIEmbedder:
                     try:
                         api_key = provider_registry.get_openai_key()
-                        # OpenAIEmbedder may need api_key parameter
-                        try:
-                            embedder = OpenAIEmbedder(api_key=api_key)
-                        except TypeError:
-                            # If api_key parameter not accepted, try without it (may use env var)
-                            embedder = OpenAIEmbedder()
+                        base_url = getattr(settings, "ai_gateway_openai_base_url", None)
+
+                        if base_url and "ai-gateway" in base_url:
+                            from openai import OpenAI, AsyncOpenAI
+
+                            sync_client = OpenAI(
+                                base_url=base_url,
+                                api_key="sk-proj-dummy",
+                                default_headers={"Authorization": f"Bearer {api_key}"},
+                            )
+                            async_client = AsyncOpenAI(
+                                base_url=base_url,
+                                api_key="sk-proj-dummy",
+                                default_headers={"Authorization": f"Bearer {api_key}"},
+                            )
+                            embedder = OpenAIEmbedder(
+                                openai_client=sync_client, async_client=async_client
+                            )
+                        else:
+                            try:
+                                embedder = OpenAIEmbedder(api_key=api_key)
+                            except TypeError:
+                                embedder = OpenAIEmbedder()
                     except Exception as e:
                         self.logger.warning("openai_embedder_init_failed", error=str(e))
                 elif provider_registry.has_claude_key() and AnthropicEmbedder:
@@ -492,7 +681,9 @@ class AgnoBaseAgent(ABC):
                         except TypeError:
                             embedder = AnthropicEmbedder()
                     except Exception as e:
-                        self.logger.warning("anthropic_embedder_init_failed", error=str(e))
+                        self.logger.warning(
+                            "anthropic_embedder_init_failed", error=str(e)
+                        )
                 elif provider_registry.has_gemini_key() and GoogleEmbedder:
                     try:
                         api_key = provider_registry.get_gemini_key()
@@ -502,11 +693,14 @@ class AgnoBaseAgent(ABC):
                             embedder = GoogleEmbedder()
                     except Exception as e:
                         self.logger.warning("google_embedder_init_failed", error=str(e))
-                
+
                 if not embedder:
-                    self.logger.warning("no_embedder_available", message="RAG enabled but no embedder available")
+                    self.logger.warning(
+                        "no_embedder_available",
+                        message="RAG enabled but no embedder available",
+                    )
                     return None
-                
+
                 # Create pgvector database connection with embedder
                 # The embedder must be passed to PgVector, not to Knowledge
                 # Note: PgVector creates its own connection pool, which can exhaust database connections
@@ -517,33 +711,42 @@ class AgnoBaseAgent(ABC):
                     search_type=SearchType.vector,  # Use vector search for PgVector
                     embedder=embedder,  # Embedder goes to vector_db, not Knowledge
                 )
-                
+
                 # Create knowledge base
                 # Note: num_documents is set at search time, not at initialization
                 from agno.knowledge.knowledge import Knowledge
+
                 knowledge = Knowledge(
                     vector_db=vector_db,
                 )
-                
-                self.logger.info("rag_knowledge_base_created", table_name=table_name, attempt=attempt+1)
+
+                self.logger.info(
+                    "rag_knowledge_base_created",
+                    table_name=table_name,
+                    attempt=attempt + 1,
+                )
                 return knowledge
-                
+
             except Exception as e:
                 error_str = str(e)
                 # Check if it's a connection limit error
-                if "too many clients" in error_str.lower() or "connection" in error_str.lower():
+                if (
+                    "too many clients" in error_str.lower()
+                    or "connection" in error_str.lower()
+                ):
                     if attempt < max_retries - 1:
                         delay = retry_delays[attempt]
                         self.logger.warning(
                             "knowledge_base_creation_retry",
                             table_name=table_name,
-                            attempt=attempt+1,
+                            attempt=attempt + 1,
                             max_retries=max_retries,
                             retry_delay=delay,
-                            error=error_str[:100]
+                            error=error_str[:100],
                         )
                         # Use time.sleep for synchronous retry delay
                         import time
+
                         time.sleep(delay)
                         continue
                     else:
@@ -551,127 +754,188 @@ class AgnoBaseAgent(ABC):
                             "failed_to_create_knowledge_base",
                             table_name=table_name,
                             error=error_str,
-                            message="Max retries exceeded. Knowledge base will be created lazily on first use."
+                            message="Max retries exceeded. Knowledge base will be created lazily on first use.",
                         )
                         # Return None but don't fail - knowledge base can be created later
                         return None
                 else:
                     # Non-connection error, don't retry
-                    self.logger.error("failed_to_create_knowledge_base", table_name=table_name, error=error_str)
+                    self.logger.error(
+                        "failed_to_create_knowledge_base",
+                        table_name=table_name,
+                        error=error_str,
+                    )
                     return None
-        
+
         return None
-    
+
     def _update_model_api_key(self):
         """Update the model's API key from provider registry if available.
         Recreates the model if necessary to ensure API key is properly set.
         """
         try:
-            if self.agno_agent is None or not hasattr(self.agno_agent, 'model') or not self.agno_agent.model:
+            if (
+                self.agno_agent is None
+                or not hasattr(self.agno_agent, "model")
+                or not self.agno_agent.model
+            ):
                 return
-            
+
             # Get the current model type and ID
             current_model = self.agno_agent.model
             model_id = None
-            if hasattr(current_model, 'id'):
+            if hasattr(current_model, "id"):
                 model_id = current_model.id
-            elif hasattr(current_model, 'model'):
+            elif hasattr(current_model, "model"):
                 model_id = current_model.model
-            
+
             # Determine which provider to use and get API key
             new_model = None
-            
+
             # Check AI Gateway first if enabled
             # Only use AI Gateway as fallback if OpenAI is not available
             use_ai_gateway = False
             if not provider_registry.has_openai_key():
-                use_ai_gateway = getattr(settings, 'ai_gateway_enabled', False) and provider_registry.has_ai_gateway()
+                use_ai_gateway = (
+                    getattr(settings, "ai_gateway_enabled", False)
+                    and provider_registry.has_ai_gateway()
+                )
             if use_ai_gateway and provider_registry.has_ai_gateway():
                 gateway_client = provider_registry.get_ai_gateway_client()
                 if gateway_client:
-                    default_model = getattr(settings, 'ai_gateway_default_model', 'gpt-4o')
+                    default_model = getattr(
+                        settings, "ai_gateway_default_model", "gpt-4o"
+                    )
                     try:
                         new_model = AIGatewayModel(
                             id=default_model,
                             client=gateway_client,
                             temperature=0.7,
-                            max_tokens=4000
+                            max_tokens=4000,
                         )
                     except Exception as e:
-                        self.logger.warning("ai_gateway_model_update_failed", error=str(e))
-            
+                        self.logger.warning(
+                            "ai_gateway_model_update_failed", error=str(e)
+                        )
+
             if new_model is None and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 if api_key:
                     model_id_final = model_id or settings.agent_model_primary
-                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
-                    if 'gpt-5.1' in model_id_final.lower() or 'gpt-5' in model_id_final.lower():
-                        new_model = OpenAIChat(
-                            id=model_id_final,
-                            api_key=api_key,
-                            max_completion_tokens=4000
+
+                    # Use AI Gateway if configured
+                    if settings.ai_gateway_openai_base_url:
+                        from openai import OpenAI, AsyncOpenAI
+
+                        sync_client = OpenAI(
+                            base_url=settings.ai_gateway_openai_base_url,
+                            api_key="sk-proj-dummy",
+                            default_headers={"Authorization": f"Bearer {api_key}"},
                         )
+                        async_client = AsyncOpenAI(
+                            base_url=settings.ai_gateway_openai_base_url,
+                            api_key="sk-proj-dummy",
+                            default_headers={"Authorization": f"Bearer {api_key}"},
+                        )
+
+                        if (
+                            "gpt-5.1" in model_id_final.lower()
+                            or "gpt-5" in model_id_final.lower()
+                        ):
+                            new_model = OpenAIChat(
+                                id=model_id_final,
+                                api_key=api_key,
+                                client=sync_client,
+                                async_client=async_client,
+                                max_completion_tokens=4000,
+                            )
+                        else:
+                            new_model = OpenAIChat(
+                                id=model_id_final,
+                                api_key=api_key,
+                                client=sync_client,
+                                async_client=async_client,
+                            )
                     else:
-                        new_model = OpenAIChat(
-                            id=model_id_final,
-                            api_key=api_key
-                        )
+                        if (
+                            "gpt-5.1" in model_id_final.lower()
+                            or "gpt-5" in model_id_final.lower()
+                        ):
+                            new_model = OpenAIChat(
+                                id=model_id_final,
+                                api_key=api_key,
+                                max_completion_tokens=4000,
+                            )
+                        else:
+                            new_model = OpenAIChat(id=model_id_final, api_key=api_key)
             elif provider_registry.has_claude_key():
                 api_key = provider_registry.get_claude_key()
                 if api_key:
                     new_model = Claude(
-                        id=model_id or settings.agent_model_secondary,
-                        api_key=api_key
+                        id=model_id or settings.agent_model_secondary, api_key=api_key
                     )
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
                     new_model = Gemini(
-                        id=model_id or settings.agent_model_tertiary,
-                        api_key=api_key
+                        id=model_id or settings.agent_model_tertiary, api_key=api_key
                     )
-            
+
             # Update the agent's model if we created a new one
             if new_model:
                 self.agno_agent.model = new_model
-                self.logger.debug("model_api_key_updated", agent=self.name, provider=type(new_model).__name__)
+                self.logger.debug(
+                    "model_api_key_updated",
+                    agent=self.name,
+                    provider=type(new_model).__name__,
+                )
         except Exception as e:
             self.logger.warning("failed_to_update_model_api_key", error=str(e))
-    
-    def _build_enhanced_system_prompt(self, base_prompt: str, context: Optional[Dict[str, Any]]) -> str:
+
+    def _build_enhanced_system_prompt(
+        self, base_prompt: str, context: Optional[Dict[str, Any]]
+    ) -> str:
         """Build enhanced system prompt that emphasizes context usage and direct content generation.
-        
+
         This method enhances the base system prompt with explicit instructions
         to use ALL provided context, ensuring no critical information is lost.
         Also emphasizes writing as if the user typed it directly (no coaching mode).
         """
         if not context:
             return base_prompt
-        
+
         # Build context summary for prompt
         context_summary_parts = []
-        
+
         if context.get("conversation_history"):
             msg_count = len(context.get("conversation_history", []))
-            context_summary_parts.append(f"- Conversation History: {msg_count} messages")
-        
+            context_summary_parts.append(
+                f"- Conversation History: {msg_count} messages"
+            )
+
         if context.get("form_data"):
             field_count = len([k for k, v in context.get("form_data", {}).items() if v])
             context_summary_parts.append(f"- Form Data: {field_count} fields with data")
-        
+
         if context.get("phase_name"):
-            context_summary_parts.append(f"- Phase Context: {context.get('phase_name')}")
-        
+            context_summary_parts.append(
+                f"- Phase Context: {context.get('phase_name')}"
+            )
+
         if context.get("knowledge_base") or context.get("rag_references"):
-            kb_items = context.get("knowledge_base") or context.get("rag_references") or []
+            kb_items = (
+                context.get("knowledge_base") or context.get("rag_references") or []
+            )
             kb_count = len(kb_items) if isinstance(kb_items, list) else 0
-            context_summary_parts.append(f"- Knowledge Base: {kb_count} articles available for reference")
-        
+            context_summary_parts.append(
+                f"- Knowledge Base: {kb_count} articles available for reference"
+            )
+
         if not context_summary_parts:
             return base_prompt
-        
+
         context_summary = "\n".join(context_summary_parts)
-        
+
         # Enhanced prompt with context usage instructions and direct content generation
         enhanced_prompt = f"""{base_prompt}
 
@@ -694,9 +958,9 @@ CRITICAL REQUIREMENTS:
 - Your response should be the actual content, not instructions on how to write it
 
 Your response MUST show that you've used this context. Generic responses that ignore context are not acceptable."""
-        
+
         return enhanced_prompt
-    
+
     async def process(
         self,
         messages: List[AgentMessage],
@@ -704,74 +968,89 @@ Your response MUST show that you've used this context. Generic responses that ig
     ) -> AgentResponse:
         """
         Process messages using Agno agent with performance metrics and caching.
-        
+
         Args:
             messages: List of agent messages
             context: Optional context dictionary
-            
+
         Returns:
             AgentResponse with agent's response
         """
         import time
         import hashlib
         import json
-        
+
         start_time = time.time()
-        
+
         # Ensure agent is initialized before processing
         self._ensure_agent_initialized()
-        
+
         # Option E Enhancement: Build enhanced system prompt if context is provided
         original_instructions = None
-        if context and hasattr(self, 'agno_agent') and self.agno_agent:
+        if context and hasattr(self, "agno_agent") and self.agno_agent:
             # Build enhanced prompt with messages and context
-            enhanced_prompt = self._build_enhanced_system_prompt(self.system_prompt, messages, context)
+            enhanced_prompt = self._build_enhanced_system_prompt(
+                self.system_prompt, messages, context
+            )
             # Temporarily update agent instructions
-            original_instructions = self.agno_agent.instructions if hasattr(self.agno_agent, 'instructions') else None
-            if hasattr(self.agno_agent, 'instructions'):
+            original_instructions = (
+                self.agno_agent.instructions
+                if hasattr(self.agno_agent, "instructions")
+                else None
+            )
+            if hasattr(self.agno_agent, "instructions"):
                 self.agno_agent.instructions = enhanced_prompt
-        
+
         try:
             # Generate cache key for response caching
             cache_key = self._generate_cache_key(messages, context)
             cache_hit = False
-            
+
             # Check cache (async Redis)
             if self.cache_enabled:
                 cached_response = await self._get_from_cache(cache_key)
                 if cached_response:
-                    self.metrics['cache_hits'] += 1
+                    self.metrics["cache_hits"] += 1
                     cache_hit = True
-                    self.logger.info("cache_hit", agent=self.name, cache_key=cache_key[:20])
+                    self.logger.info(
+                        "cache_hit", agent=self.name, cache_key=cache_key[:20]
+                    )
                     # Add cache hit metrics to cached response metadata
-                    if hasattr(cached_response, 'metadata'):
+                    if hasattr(cached_response, "metadata"):
                         if cached_response.metadata is None:
                             cached_response.metadata = {}
-                        cached_response.metadata['cache_hit'] = True
-                        cached_response.metadata['processing_time'] = 0.0  # Cached response has no processing time
-                        cached_response.metadata['tokens'] = {'input': 0, 'output': 0, 'total': 0}  # No tokens for cached
+                        cached_response.metadata["cache_hit"] = True
+                        cached_response.metadata["processing_time"] = (
+                            0.0  # Cached response has no processing time
+                        )
+                        cached_response.metadata["tokens"] = {
+                            "input": 0,
+                            "output": 0,
+                            "total": 0,
+                        }  # No tokens for cached
                     return cached_response
-            
-            self.metrics['cache_misses'] += 1
+
+            self.metrics["cache_misses"] += 1
             cache_hit = False
-            
+
             # Update model API key from provider registry before processing
             # This ensures user-specific keys are used
             self._update_model_api_key()
-            
+
             # Convert messages to query string (with history limiting)
             query = self._format_messages_to_query(messages, context)
-            
+
             # Run Agno agent asynchronously
             # Since we're using async job processing, we don't need to worry about Cloudflare timeout
             # The job runs in background and can take as long as needed
             import asyncio
+
             try:
                 # Check if Agno agent has async run method
-                if hasattr(self.agno_agent, 'arun'):
+                if hasattr(self.agno_agent, "arun"):
                     # Use async run if available (fully async, no timeout needed)
                     response = await self.agno_agent.arun(query)
-                elif hasattr(self.agno_agent, 'run_async'):
+                elif hasattr(self.agno_agent, "run_async"):
                     # Alternative async method name
                     response = await self.agno_agent.run_async(query)
                 else:
@@ -780,198 +1059,275 @@ Your response MUST show that you've used this context. Generic responses that ig
                     # Set timeout to 30 minutes (1800s) for background jobs
                     # This allows complex multi-agent operations to complete
                     from backend.config import settings
+
                     # Use configurable timeout, default to 30 minutes for background jobs
-                    timeout_seconds = float(settings.agent_response_timeout) if hasattr(settings, 'agent_response_timeout') else 1800.0
+                    timeout_seconds = (
+                        float(settings.agent_response_timeout)
+                        if hasattr(settings, "agent_response_timeout")
+                        else 1800.0
+                    )
                     response = await asyncio.wait_for(
                         asyncio.to_thread(self.agno_agent.run, query),
-                        timeout=timeout_seconds
+                        timeout=timeout_seconds,
                     )
             except asyncio.TimeoutError:
                 # Log timeout but raise exception so job can be marked as failed
-                timeout_seconds = float(settings.agent_response_timeout) if hasattr(settings, 'agent_response_timeout') else 1800.0
-                self.logger.error("agno_agent_timeout", agent=self.name, timeout=timeout_seconds)
-                raise Exception(f"Agent {self.name} timed out after {int(timeout_seconds)} seconds. The request may be too complex.")
+                timeout_seconds = (
+                    float(settings.agent_response_timeout)
+                    if hasattr(settings, "agent_response_timeout")
+                    else 1800.0
+                )
+                self.logger.error(
+                    "agno_agent_timeout", agent=self.name, timeout=timeout_seconds
+                )
+                raise Exception(
+                    f"Agent {self.name} timed out after {int(timeout_seconds)} seconds. The request may be too complex."
+                )
             except Exception as e:
                 self.logger.error("agno_agent_error", agent=self.name, error=str(e))
                 raise
-            
+
             # Extract response content
-            response_content = response.content if hasattr(response, 'content') else str(response)
-            
+            response_content = (
+                response.content if hasattr(response, "content") else str(response)
+            )
+
             # Collect metrics
             duration = time.time() - start_time
-            self.metrics['total_calls'] += 1
-            self.metrics['total_time'] += duration
-            self.metrics['avg_time'] = self.metrics['total_time'] / self.metrics['total_calls']
-            
+            self.metrics["total_calls"] += 1
+            self.metrics["total_time"] += duration
+            self.metrics["avg_time"] = (
+                self.metrics["total_time"] / self.metrics["total_calls"]
+            )
+
             # Extract token usage if available (assuming Agno response has metrics)
             input_tokens = 0
             output_tokens = 0
-            if hasattr(response, 'metrics'):
+            if hasattr(response, "metrics"):
                 # Metrics can be a dict or a Metrics object with attributes
                 if isinstance(response.metrics, dict):
-                    input_tokens = response.metrics.get('input_tokens', 0)
-                    output_tokens = response.metrics.get('output_tokens', 0)
-                    self.metrics['token_usage']['input'] += input_tokens
-                    self.metrics['token_usage']['output'] += output_tokens
+                    input_tokens = response.metrics.get("input_tokens", 0)
+                    output_tokens = response.metrics.get("output_tokens", 0)
+                    self.metrics["token_usage"]["input"] += input_tokens
+                    self.metrics["token_usage"]["output"] += output_tokens
                 else:
                     # Metrics is likely a Metrics object with attributes
-                    input_tokens = getattr(response.metrics, 'input_tokens', getattr(response.metrics, 'input', 0))
-                    output_tokens = getattr(response.metrics, 'output_tokens', getattr(response.metrics, 'output', 0))
-                    self.metrics['token_usage']['input'] += input_tokens
-                    self.metrics['token_usage']['output'] += output_tokens
-            
+                    input_tokens = getattr(
+                        response.metrics,
+                        "input_tokens",
+                        getattr(response.metrics, "input", 0),
+                    )
+                    output_tokens = getattr(
+                        response.metrics,
+                        "output_tokens",
+                        getattr(response.metrics, "output", 0),
+                    )
+                    self.metrics["token_usage"]["input"] += input_tokens
+                    self.metrics["token_usage"]["output"] += output_tokens
+
             # Extract metadata with performance metrics
             metadata = {
                 "has_context": context is not None,
                 "message_count": len(messages),
-                "model": str(self.agno_agent.model) if hasattr(self.agno_agent, 'model') else None,
+                "model": (
+                    str(self.agno_agent.model)
+                    if hasattr(self.agno_agent, "model")
+                    else None
+                ),
                 # Performance metrics for agent dashboard
                 "processing_time": round(duration, 3),  # in seconds
                 "tokens": {
                     "input": input_tokens,
                     "output": output_tokens,
-                    "total": input_tokens + output_tokens
+                    "total": input_tokens + output_tokens,
                 },
                 "cache_hit": cache_hit,  # Already determined above
             }
-            
+
             # Add tool calls if available (optimize: limit tool call history)
-            if hasattr(response, 'tool_calls') and response.tool_calls:
+            if hasattr(response, "tool_calls") and response.tool_calls:
                 tool_calls_list = response.tool_calls
                 # Limit tool calls stored in metadata (optimization: reduce context size)
                 if len(tool_calls_list) > self.max_tool_calls_from_history:
-                    tool_calls_list = tool_calls_list[-self.max_tool_calls_from_history:]
+                    tool_calls_list = tool_calls_list[
+                        -self.max_tool_calls_from_history :
+                    ]
                 metadata["tool_calls"] = [str(tc) for tc in tool_calls_list]
-                self.metrics['tool_calls'] += len(tool_calls_list)
-            
+                self.metrics["tool_calls"] += len(tool_calls_list)
+
             # Create response
             agent_response = AgentResponse(
                 agent_type=self.role,
                 response=response_content,
                 metadata=metadata,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.utcnow(),
             )
-            
+
             # Store in cache (async Redis)
             if self.cache_enabled:
                 await self._store_in_cache(cache_key, agent_response)
-            
+
             # Log performance metrics for profiling
             self.logger.info(
                 "agent_metrics",
                 agent=self.name,
                 duration=duration,
-                total_calls=self.metrics['total_calls'],
-                avg_time=self.metrics['avg_time'],
-                tool_calls=self.metrics['tool_calls'],
-                token_usage=self.metrics['token_usage'],
-                cache_hits=self.metrics['cache_hits'],
-                cache_misses=self.metrics['cache_misses'],
-                cache_hit_rate=self.metrics['cache_hits'] / (self.metrics['cache_hits'] + self.metrics['cache_misses']) if (self.metrics['cache_hits'] + self.metrics['cache_misses']) > 0 else 0.0
+                total_calls=self.metrics["total_calls"],
+                avg_time=self.metrics["avg_time"],
+                tool_calls=self.metrics["tool_calls"],
+                token_usage=self.metrics["token_usage"],
+                cache_hits=self.metrics["cache_hits"],
+                cache_misses=self.metrics["cache_misses"],
+                cache_hit_rate=(
+                    self.metrics["cache_hits"]
+                    / (self.metrics["cache_hits"] + self.metrics["cache_misses"])
+                    if (self.metrics["cache_hits"] + self.metrics["cache_misses"]) > 0
+                    else 0.0
+                ),
             )
-            
+
             return agent_response
-            
+
         except Exception as e:
             self.logger.error("agno_agent_error", error=str(e), agent=self.name)
             # Restore original instructions on error
-            if original_instructions and hasattr(self, 'agno_agent') and self.agno_agent:
-                if hasattr(self.agno_agent, 'instructions'):
+            if (
+                original_instructions
+                and hasattr(self, "agno_agent")
+                and self.agno_agent
+            ):
+                if hasattr(self.agno_agent, "instructions"):
                     self.agno_agent.instructions = original_instructions
             raise
         finally:
             # Ensure original instructions are restored
-            if original_instructions and hasattr(self, 'agno_agent') and self.agno_agent:
-                if hasattr(self.agno_agent, 'instructions'):
+            if (
+                original_instructions
+                and hasattr(self, "agno_agent")
+                and self.agno_agent
+            ):
+                if hasattr(self.agno_agent, "instructions"):
                     self.agno_agent.instructions = original_instructions
-    
-    def _format_messages_to_query(self, messages: List[AgentMessage], context: Optional[Dict[str, Any]]) -> str:
+
+    def _format_messages_to_query(
+        self, messages: List[AgentMessage], context: Optional[Dict[str, Any]]
+    ) -> str:
         """Convert AgentMessage list to query string for Agno.
-        
+
         CRITICAL OPTIMIZATION: System context is handled by Agno's 'instructions' parameter.
         This method should ONLY return the user query, NOT system context.
         This reduces token usage by 40-60% and improves latency significantly.
-        
+
         Limits history to last N messages for performance (30-50% latency reduction).
         Compresses tool results and context to reduce token usage.
-        
+
         LATENCY OPTIMIZATION (30% reduction):
         - Split long user queries into focused sub-queries
         - Remove redundant information
         - Extract only the core question/request
         """
         # Limit message history to recent messages only (last max_history_runs)
-        recent_messages = messages[-self.max_history_runs:] if len(messages) > self.max_history_runs else messages
-        
+        recent_messages = (
+            messages[-self.max_history_runs :]
+            if len(messages) > self.max_history_runs
+            else messages
+        )
+
         # Extract user messages (the actual query) - only from recent messages
         user_messages = [msg.content for msg in recent_messages if msg.role == "user"]
-        user_query = "\n".join(user_messages[-1:]) if user_messages else ""  # Only last user message
-        
+        user_query = (
+            "\n".join(user_messages[-1:]) if user_messages else ""
+        )  # Only last user message
+
         # LATENCY OPTIMIZATION: Split and focus the query
         # Remove common prefixes/suffixes that don't add value
         if user_query:
             # Remove redundant phrases
             redundant_phrases = [
-                "please", "can you", "could you", "would you", "i need", "i want",
-                "help me", "assist me", "guide me", "tell me", "show me"
+                "please",
+                "can you",
+                "could you",
+                "would you",
+                "i need",
+                "i want",
+                "help me",
+                "assist me",
+                "guide me",
+                "tell me",
+                "show me",
             ]
             query_lower = user_query.lower()
             for phrase in redundant_phrases:
                 if query_lower.startswith(phrase):
                     # Remove the phrase and capitalize the next word
-                    user_query = user_query[len(phrase):].strip()
+                    user_query = user_query[len(phrase) :].strip()
                     if user_query:
                         user_query = user_query[0].upper() + user_query[1:]
                     break
-            
+
             # If query is very long (>800 chars), extract the core question (Option E: increased from 500)
             if len(user_query) > 800:
                 # Try to find the main question (look for question marks or key question words)
-                sentences = user_query.split('.')
-                questions = [s.strip() for s in sentences if '?' in s or any(qw in s.lower()[:20] for qw in ['what', 'how', 'why', 'when', 'where', 'which', 'who'])]
+                sentences = user_query.split(".")
+                questions = [
+                    s.strip()
+                    for s in sentences
+                    if "?" in s
+                    or any(
+                        qw in s.lower()[:20]
+                        for qw in [
+                            "what",
+                            "how",
+                            "why",
+                            "when",
+                            "where",
+                            "which",
+                            "who",
+                        ]
+                    )
+                ]
                 if questions:
                     user_query = questions[0]  # Use the first question
                 else:
                     # Take first 500 chars and add ellipsis (increased from 300)
                     user_query = user_query[:500] + "..."
-        
+
         # Summarize older context if needed (Option E: increased limit, intelligent summarization)
         if len(messages) > self.max_history_runs:
-            older_messages = messages[:-self.max_history_runs]
+            older_messages = messages[: -self.max_history_runs]
             context_summary = self._summarize_context(older_messages)
             if context_summary:
                 # Increased limit to 300 chars for better context preservation (Option E)
                 user_query = f"{context_summary[:300]}\n\n{user_query}"
-        
+
         # CRITICAL: Do NOT add system context here - it's already in Agno's 'instructions' parameter
         # Adding it here would duplicate tokens and increase latency by 40-60%
         # System context (form_data, phase_name, product_id, etc.) should be accessed via
         # the agent's system prompt/instructions, not in the user query
-        
+
         # Return ONLY the user query - system context is handled by Agno framework
         return user_query
-    
+
     async def consult_agent(
         self,
         target_agent_type: str,
         query: str,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Consult another agent for specialized expertise."""
         if not self.coordinator:
             raise ValueError("Coordinator not set. Cannot consult other agents.")
-        
+
         interaction = await self.coordinator.route_agent_consultation(
             from_agent=self.role,
             to_agent=target_agent_type,
             query=query,
-            context=context
+            context=context,
         )
-        
+
         self.interactions.append(interaction)
         return interaction.response
-    
+
     def can_handle(self, query: str) -> bool:
         """Determine if this agent can handle the query."""
         query_lower = query.lower()
@@ -979,30 +1335,32 @@ Your response MUST show that you've used this context. Generic responses that ig
             if capability.lower() in query_lower:
                 return True
         return False
-    
+
     def get_confidence(self, query: str) -> float:
         """Get confidence score for handling a query (0.0 to 1.0)."""
         if not self.capabilities:
             return 0.5
-        
+
         query_lower = query.lower()
         matches = sum(1 for cap in self.capabilities if cap.lower() in query_lower)
         return min(1.0, matches / len(self.capabilities) + 0.3)
-    
+
     def get_interactions(self) -> List[AgentInteraction]:
         """Get all agent-to-agent interactions."""
         return self.interactions.copy()
-    
-    def set_coordinator(self, coordinator: Union['AgnoCoordinatorAgent', 'AgnoEnhancedCoordinator']):
+
+    def set_coordinator(
+        self, coordinator: Union["AgnoCoordinatorAgent", "AgnoEnhancedCoordinator"]
+    ):
         """Set the coordinator for agent-to-agent communication."""
         self.coordinator = coordinator
-    
+
     async def log_activity(
         self,
         user_id: UUID,
         product_id: Optional[UUID],
         action: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         """Log agent activity."""
         self.logger.info(
@@ -1012,102 +1370,141 @@ Your response MUST show that you've used this context. Generic responses that ig
             agent=self.name,
             action=action,
             metadata=metadata,
-            timestamp=datetime.utcnow().isoformat()
+            timestamp=datetime.utcnow().isoformat(),
         )
-    
-    async def add_to_knowledge_base(self, content: str, metadata: Optional[Dict[str, Any]] = None):
+
+    async def add_to_knowledge_base(
+        self, content: str, metadata: Optional[Dict[str, Any]] = None
+    ):
         """Add content to knowledge base (if RAG is enabled). Creates knowledge base lazily if needed.
-        
+
         Uses async method for better performance with vector database operations.
         The Agno Knowledge API uses text_content parameter, not content.
-        
+
         Note: This method processes documents one at a time. For batch operations,
         consider using add_contents_async if available.
         """
         # Ensure knowledge base is created (lazy creation)
         if self.enable_rag:
             self._ensure_knowledge_base()
-        
-        if self.agno_agent is not None and hasattr(self.agno_agent, 'knowledge') and self.agno_agent.knowledge:
+
+        if (
+            self.agno_agent is not None
+            and hasattr(self.agno_agent, "knowledge")
+            and self.agno_agent.knowledge
+        ):
             try:
                 # Use add_content_async method - this is the correct async Agno Knowledge API
                 # The method signature uses text_content parameter, not content
                 # This is async but processes one document at a time
-                if hasattr(self.agno_agent.knowledge, 'add_content_async'):
-                    await self.agno_agent.knowledge.add_content_async(text_content=content, metadata=metadata or {})
-                elif hasattr(self.agno_agent.knowledge, 'add_content'):
+                if hasattr(self.agno_agent.knowledge, "add_content_async"):
+                    await self.agno_agent.knowledge.add_content_async(
+                        text_content=content, metadata=metadata or {}
+                    )
+                elif hasattr(self.agno_agent.knowledge, "add_content"):
                     # Fallback to sync version if async not available
-                    self.agno_agent.knowledge.add_content(text_content=content, metadata=metadata or {})
+                    self.agno_agent.knowledge.add_content(
+                        text_content=content, metadata=metadata or {}
+                    )
                 else:
-                    raise AttributeError("Knowledge base does not have add_content or add_content_async method")
-                self.logger.info("content_added_to_knowledge_base", agent=self.name, content_length=len(content))
+                    raise AttributeError(
+                        "Knowledge base does not have add_content or add_content_async method"
+                    )
+                self.logger.info(
+                    "content_added_to_knowledge_base",
+                    agent=self.name,
+                    content_length=len(content),
+                )
             except Exception as e:
                 self.logger.error("failed_to_add_to_knowledge_base", error=str(e))
         else:
             self.logger.warning("knowledge_base_not_available", agent=self.name)
-    
+
     async def add_multiple_to_knowledge_base(self, contents: List[Dict[str, Any]]):
         """Add multiple documents to knowledge base in parallel for better performance.
-        
+
         Args:
             contents: List of dicts with 'content' and 'metadata' keys
         """
         if not self.enable_rag:
             return
-        
+
         # Ensure knowledge base is created
         self._ensure_knowledge_base()
-        
-        if self.agno_agent is not None and hasattr(self.agno_agent, 'knowledge') and self.agno_agent.knowledge:
+
+        if (
+            self.agno_agent is not None
+            and hasattr(self.agno_agent, "knowledge")
+            and self.agno_agent.knowledge
+        ):
             try:
                 # Check if batch method is available
-                if hasattr(self.agno_agent.knowledge, 'add_contents_async'):
+                if hasattr(self.agno_agent.knowledge, "add_contents_async"):
                     # Use batch async method if available
                     contents_list = [
-                        {"text_content": item.get("content", ""), "metadata": item.get("metadata", {})}
+                        {
+                            "text_content": item.get("content", ""),
+                            "metadata": item.get("metadata", {}),
+                        }
                         for item in contents
                     ]
                     await self.agno_agent.knowledge.add_contents_async(contents_list)
-                    self.logger.info("multiple_contents_added_to_knowledge_base", 
-                                   agent=self.name, count=len(contents))
+                    self.logger.info(
+                        "multiple_contents_added_to_knowledge_base",
+                        agent=self.name,
+                        count=len(contents),
+                    )
                 else:
                     # Fallback: process in parallel using asyncio.gather
                     import asyncio
+
                     tasks = [
-                        self.add_to_knowledge_base(item.get("content", ""), item.get("metadata"))
+                        self.add_to_knowledge_base(
+                            item.get("content", ""), item.get("metadata")
+                        )
                         for item in contents
                     ]
                     await asyncio.gather(*tasks, return_exceptions=True)
-                    self.logger.info("multiple_contents_added_to_knowledge_base_parallel", 
-                                   agent=self.name, count=len(contents))
+                    self.logger.info(
+                        "multiple_contents_added_to_knowledge_base_parallel",
+                        agent=self.name,
+                        count=len(contents),
+                    )
             except Exception as e:
-                self.logger.error("failed_to_add_multiple_to_knowledge_base", error=str(e))
+                self.logger.error(
+                    "failed_to_add_multiple_to_knowledge_base", error=str(e)
+                )
         else:
             self.logger.warning("knowledge_base_not_available", agent=self.name)
-    
-    def _generate_cache_key(self, messages: List[AgentMessage], context: Optional[Dict[str, Any]]) -> str:
+
+    def _generate_cache_key(
+        self, messages: List[AgentMessage], context: Optional[Dict[str, Any]]
+    ) -> str:
         """Generate cache key from messages and context."""
         normalized = {
-            'messages': [{'role': m.role, 'content': m.content} for m in messages[-self.max_history_runs:]],
-            'context': self._normalize_context(context) if context else None
+            "messages": [
+                {"role": m.role, "content": m.content}
+                for m in messages[-self.max_history_runs :]
+            ],
+            "context": self._normalize_context(context) if context else None,
         }
         key_str = json.dumps(normalized, sort_keys=True)
         return hashlib.md5(key_str.encode()).hexdigest()
-    
+
     def _normalize_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize context for caching (remove non-deterministic fields)."""
         normalized = {}
-        for key in ['product_id', 'phase_name', 'form_data']:
+        for key in ["product_id", "phase_name", "form_data"]:
             if key in context:
                 normalized[key] = context[key]
         return normalized
-    
+
     async def _get_cache_instance(self):
         """Get or create Redis cache instance."""
         if self._cache is None:
             self._cache = await get_cache()
         return self._cache
-    
+
     async def _get_from_cache(self, key: str) -> Optional[AgentResponse]:
         """Retrieve response from cache (Redis-based)."""
         if not self.cache_enabled:
@@ -1123,7 +1520,7 @@ Your response MUST show that you've used this context. Generic responses that ig
         except Exception as e:
             self.logger.warning("cache_retrieval_error", error=str(e), key=key[:20])
         return None
-    
+
     async def _store_in_cache(self, key: str, response: AgentResponse):
         """Store response in cache (Redis-based)."""
         if not self.cache_enabled:
@@ -1132,50 +1529,87 @@ Your response MUST show that you've used this context. Generic responses that ig
             cache = await self._get_cache_instance()
             # Serialize AgentResponse
             response_dict = {
-                'agent_type': response.agent_type,
-                'response': response.response,
-                'metadata': response.metadata,
-                'timestamp': response.timestamp.isoformat() if isinstance(response.timestamp, datetime) else str(response.timestamp)
+                "agent_type": response.agent_type,
+                "response": response.response,
+                "metadata": response.metadata,
+                "timestamp": (
+                    response.timestamp.isoformat()
+                    if isinstance(response.timestamp, datetime)
+                    else str(response.timestamp)
+                ),
             }
             await cache.set(key, response_dict)
         except Exception as e:
             self.logger.warning("cache_storage_error", error=str(e), key=key[:20])
-    
-    def _build_enhanced_system_prompt(self, base_prompt: str, messages: List[AgentMessage], context: Optional[Dict[str, Any]]) -> str:
+
+    def _build_enhanced_system_prompt(
+        self,
+        base_prompt: str,
+        messages: List[AgentMessage],
+        context: Optional[Dict[str, Any]],
+    ) -> str:
         """Build enhanced system prompt that emphasizes context usage (Option E - Phase 1).
-        
+
         This method enhances the base system prompt with explicit instructions
         to use ALL provided context, ensuring no critical information is lost.
         """
         enhanced_parts = [base_prompt]
-        
+
         # Add detailed conversation summary from messages
         if messages:
             conversation_summary = self._summarize_context(messages)
             if conversation_summary:
-                enhanced_parts.append(f"\n=== CONVERSATION HISTORY SUMMARY ===\n{conversation_summary}")
-        
+                enhanced_parts.append(
+                    f"\n=== CONVERSATION HISTORY SUMMARY ===\n{conversation_summary}"
+                )
+
         # Add other relevant context from the coordinator or direct call
         if context:
             context_summary_parts = []
             for key, value in context.items():
-                if key not in ["messages", "query", "user_id", "product_id", "session_ids", "db"] and value:
+                if (
+                    key
+                    not in [
+                        "messages",
+                        "query",
+                        "user_id",
+                        "product_id",
+                        "session_ids",
+                        "db",
+                    ]
+                    and value
+                ):
                     # Option E: Preserve full form_data content (no truncation for form_data)
                     if key == "form_data" and isinstance(value, dict):
                         # Include full form_data without truncation to preserve all user details
-                        form_data_str = "\n".join([f"  {k.replace('_', ' ').title()}: {str(v)}" for k, v in value.items() if v])
-                        context_summary_parts.append(f"{key.replace('_', ' ').title()}:\n{form_data_str}")
+                        form_data_str = "\n".join(
+                            [
+                                f"  {k.replace('_', ' ').title()}: {str(v)}"
+                                for k, v in value.items()
+                                if v
+                            ]
+                        )
+                        context_summary_parts.append(
+                            f"{key.replace('_', ' ').title()}:\n{form_data_str}"
+                        )
                     elif isinstance(value, (dict, list)):
-                        context_summary_parts.append(f"{key.replace('_', ' ').title()}: {json.dumps(value, indent=2)[:2000]}")  # Increased from 500
+                        context_summary_parts.append(
+                            f"{key.replace('_', ' ').title()}: {json.dumps(value, indent=2)[:2000]}"
+                        )  # Increased from 500
                     else:
                         # Increase limit for other context values too (Option E)
-                        context_summary_parts.append(f"{key.replace('_', ' ').title()}: {str(value)[:2000]}")  # Increased from 500
+                        context_summary_parts.append(
+                            f"{key.replace('_', ' ').title()}: {str(value)[:2000]}"
+                        )  # Increased from 500
             if context_summary_parts:
-                enhanced_parts.append(f"\n=== ADDITIONAL CONTEXT ===\n" + "\n".join(context_summary_parts))
-        
+                enhanced_parts.append(
+                    f"\n=== ADDITIONAL CONTEXT ===\n" + "\n".join(context_summary_parts)
+                )
+
         # Add critical context usage instructions
         if context or messages:
-            enhanced_parts.append("""
+            enhanced_parts.append(
+                """
 === CRITICAL CONTEXT USAGE INSTRUCTIONS ===
 You MUST use ALL provided context in your response. This includes:
 - Conversation history and previous messages
@@ -1191,39 +1625,47 @@ CRITICAL REQUIREMENTS:
 - If context contains specific requirements, preferences, or decisions, you MUST use them
 - Demonstrate context awareness by referencing specific details from the provided context
 
-Your response MUST show that you've used this context. Generic responses that ignore context are not acceptable.""")
-        
+Your response MUST show that you've used this context. Generic responses that ignore context are not acceptable."""
+            )
+
         return "\n\n".join(enhanced_parts)
-    
+
     def _summarize_context(self, messages: List[AgentMessage]) -> str:
         """Summarize older message context for history limiting.
-        
+
         Option E Enhancement: Intelligent summarization that preserves key facts,
         requirements, decisions, and preferences instead of just truncating.
         """
         if not messages:
             return ""
-        
+
         if self.enable_intelligent_summarization:
             # Intelligent summarization: extract key facts, requirements, decisions
             key_facts = []
             requirements = []
             decisions = []
             preferences = []
-            
+
             for msg in messages:
                 content = msg.content.lower()
                 # Extract key information patterns
-                if any(kw in content for kw in ["require", "need", "must", "should", "requirement"]):
+                if any(
+                    kw in content
+                    for kw in ["require", "need", "must", "should", "requirement"]
+                ):
                     requirements.append(msg.content[:150])
-                elif any(kw in content for kw in ["decide", "chose", "selected", "decision"]):
+                elif any(
+                    kw in content for kw in ["decide", "chose", "selected", "decision"]
+                ):
                     decisions.append(msg.content[:150])
-                elif any(kw in content for kw in ["prefer", "like", "want", "favorite"]):
+                elif any(
+                    kw in content for kw in ["prefer", "like", "want", "favorite"]
+                ):
                     preferences.append(msg.content[:150])
                 elif msg.role == "user":
                     # Extract key facts from user messages
                     key_facts.append(msg.content[:150])
-            
+
             summary_parts = []
             if requirements:
                 summary_parts.append(f"Requirements: {'; '.join(requirements[:2])}")
@@ -1233,13 +1675,16 @@ Your response MUST show that you've used this context. Generic responses that ig
                 summary_parts.append(f"Preferences: {'; '.join(preferences[:2])}")
             if key_facts:
                 summary_parts.append(f"Key facts: {'; '.join(key_facts[:3])}")
-            
+
             if summary_parts:
-                return f"Previous context ({len(messages)} messages): " + " | ".join(summary_parts)
-        
+                return f"Previous context ({len(messages)} messages): " + " | ".join(
+                    summary_parts
+                )
+
         # Fallback to simple summarization
         user_messages = [msg.content[:200] for msg in messages if msg.role == "user"]
         if user_messages:
-            return f"Previous conversation ({len(messages)} messages): " + " | ".join(user_messages[:3])
+            return f"Previous conversation ({len(messages)} messages): " + " | ".join(
+                user_messages[:3]
+            )
         return f"Previous conversation ({len(messages)} messages)"
-
