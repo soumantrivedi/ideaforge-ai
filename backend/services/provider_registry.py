@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from threading import Lock
 from typing import List, Optional
+import random
+import os
 
 from openai import OpenAI
 from anthropic import Anthropic
@@ -12,7 +14,11 @@ from backend.services.ai_gateway_client import AIGatewayClient
 
 
 class ProviderRegistry:
-    """Centralized registry for AI provider credentials and clients."""
+    """Centralized registry for AI provider credentials and clients.
+    
+    Supports multiple OpenAI API keys for rate limiting - keys are rotated
+    using round-robin or random selection to distribute load.
+    """
 
     def __init__(self):
         self._lock = Lock()
@@ -20,6 +26,12 @@ class ProviderRegistry:
         self._openai_key: Optional[str] = (settings.openai_api_key.strip() if settings.openai_api_key else None) or None
         self._claude_key: Optional[str] = (settings.anthropic_api_key.strip() if settings.anthropic_api_key else None) or None
         self._gemini_key: Optional[str] = (settings.google_api_key.strip() if settings.google_api_key else None) or None
+        
+        # Multiple OpenAI API keys support (for rate limiting)
+        # Parse OPENAI_API_KEYS (comma-separated) or use single OPENAI_API_KEY
+        self._openai_keys: List[str] = []
+        self._openai_key_index: int = 0  # For round-robin selection
+        self._load_openai_keys()
         
         # AI Gateway credentials (service account)
         self._ai_gateway_client_id: Optional[str] = (getattr(settings, 'ai_gateway_client_id', None) or "").strip() or None
@@ -31,12 +43,47 @@ class ProviderRegistry:
         self._ai_gateway_client: Optional[AIGatewayClient] = None
 
         self._rebuild_clients()
+    
+    def _load_openai_keys(self) -> None:
+        """Load OpenAI API keys from environment variables.
+        
+        Supports:
+        - OPENAI_API_KEY: Single key (backward compatible)
+        - OPENAI_API_KEYS: Comma-separated list of keys (for rate limiting)
+        """
+        # Check for multiple keys first (OPENAI_API_KEYS)
+        openai_keys_env = os.getenv("OPENAI_API_KEYS", "").strip()
+        if openai_keys_env:
+            # Parse comma-separated keys
+            keys = [key.strip().strip('"').strip("'") for key in openai_keys_env.split(",")]
+            self._openai_keys = [key for key in keys if key and key.startswith("sk-")]
+            if self._openai_keys:
+                # Use first key as primary for backward compatibility
+                self._openai_key = self._openai_keys[0]
+                return
+        
+        # Fall back to single OPENAI_API_KEY
+        if self._openai_key:
+            self._openai_keys = [self._openai_key]
+        else:
+            self._openai_keys = []
 
     def _rebuild_clients(self) -> None:
         """Rebuild provider clients from current keys. Can be called to refresh clients after keys are updated."""
         # Only create clients if keys are non-empty after stripping
+        # For OpenAI, we create a client with the primary key (first in list)
         self._openai_client = None
-        if self._openai_key and self._openai_key.strip():
+        if self._openai_keys:
+            primary_key = self._openai_keys[0].strip()
+            if primary_key:
+                try:
+                    self._openai_client = OpenAI(api_key=primary_key)
+                except Exception as e:
+                    import structlog
+                    logger = structlog.get_logger()
+                    logger.warning("openai_client_creation_failed", error=str(e))
+                    self._openai_client = None
+        elif self._openai_key and self._openai_key.strip():
             try:
                 self._openai_client = OpenAI(api_key=self._openai_key.strip())
             except Exception as e:
@@ -116,9 +163,15 @@ class ProviderRegistry:
                 # If empty string, fall back to .env key, otherwise use provided key
                 if openai_key.strip():
                     self._openai_key = openai_key.strip()
+                    # Update keys list if single key provided
+                    if not self._openai_keys:
+                        self._openai_keys = [self._openai_key]
+                    elif len(self._openai_keys) == 1:
+                        self._openai_keys[0] = self._openai_key
                 else:
                     # Empty string means clear user override, fall back to .env
                     self._openai_key = (settings.openai_api_key.strip() if settings.openai_api_key else None) or None
+                    self._load_openai_keys()  # Reload keys from environment
             if claude_key is not None:
                 if claude_key.strip():
                     self._claude_key = claude_key.strip()
@@ -173,9 +226,33 @@ class ProviderRegistry:
             providers.append("ai_gateway")
         return providers
 
-    def get_openai_key(self) -> Optional[str]:
-        """Get OpenAI API key."""
-        return self._openai_key
+    def get_openai_key(self, strategy: str = "round_robin") -> Optional[str]:
+        """Get OpenAI API key with rotation support for rate limiting.
+        
+        Args:
+            strategy: "round_robin" (default) or "random" for key selection
+        
+        Returns:
+            An OpenAI API key, rotated if multiple keys are available
+        """
+        if not self._openai_keys:
+            return self._openai_key
+        
+        if len(self._openai_keys) == 1:
+            return self._openai_keys[0]
+        
+        # Multiple keys available - rotate
+        with self._lock:
+            if strategy == "random":
+                return random.choice(self._openai_keys)
+            else:  # round_robin (default)
+                key = self._openai_keys[self._openai_key_index]
+                self._openai_key_index = (self._openai_key_index + 1) % len(self._openai_keys)
+                return key
+    
+    def get_openai_keys_count(self) -> int:
+        """Get the number of available OpenAI API keys."""
+        return len(self._openai_keys) if self._openai_keys else (1 if self._openai_key else 0)
     
     def get_claude_key(self) -> Optional[str]:
         """Get Claude API key."""
@@ -234,6 +311,7 @@ class ProviderRegistry:
             # Update keys if they're different
             if openai_key and openai_key != self._openai_key:
                 self._openai_key = openai_key
+                self._load_openai_keys()  # Reload keys (handles multiple keys)
             if anthropic_key and anthropic_key != self._claude_key:
                 self._claude_key = anthropic_key
             if google_key and google_key != self._gemini_key:
