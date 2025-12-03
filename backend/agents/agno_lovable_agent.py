@@ -210,43 +210,68 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             response = await self.process([message], context={"task": "lovable_prompt_generation", "disable_tools": True})
             prompt_text = response.response
             
-            # If response is a RunOutput object (string representation), extract actual content
-            # First, try to get the raw Agno response from metadata if available
+            # Get the raw Agno response from metadata if available (always try this first)
             raw_agno_response = None
             if response.metadata and "_agno_raw_response" in response.metadata:
                 raw_agno_response = response.metadata["_agno_raw_response"]
             
-            # If response is a RunOutput object (string representation), extract actual content
-            # The base agent should handle most cases, but we do additional cleanup here
-            if isinstance(prompt_text, str) and ("RunOutput" in prompt_text or "run_id=" in prompt_text):
-                # Strategy 0: Try to extract from raw Agno response in metadata first
+            # CRITICAL: If prompt_text is empty, too short, or is a RunOutput string, try extraction
+            # Don't just check for RunOutput - also check if content is missing/empty
+            needs_extraction = False
+            if not prompt_text or not isinstance(prompt_text, str):
+                needs_extraction = True
+            elif len(prompt_text.strip()) < 50:
+                needs_extraction = True
+            elif "RunOutput" in prompt_text or "run_id=" in prompt_text:
+                needs_extraction = True
+            
+            if needs_extraction:
+                # Strategy 0: Try to extract from raw Agno response in metadata first (MOST RELIABLE)
                 if raw_agno_response:
                     try:
-                        # Check messages array in raw response
+                        # Check messages array in raw response - this is the most reliable source
                         if hasattr(raw_agno_response, "messages") and raw_agno_response.messages:
                             for msg in reversed(raw_agno_response.messages):
                                 if hasattr(msg, "role") and msg.role == "assistant":
+                                    # Try content first (most common)
                                     if hasattr(msg, "content") and msg.content:
                                         content = msg.content
-                                        if isinstance(content, str) and content.strip() and "RunOutput" not in content and len(content) > 50:
-                                            prompt_text = content
+                                        if isinstance(content, str) and content.strip() and "RunOutput" not in content and len(content.strip()) > 50:
+                                            prompt_text = content.strip()
                                             logger.info("lovable_prompt_extracted_from_raw_response_metadata", 
                                                       extracted_length=len(prompt_text))
                                             break
+                                    # Try reasoning_content if content is empty
                                     elif hasattr(msg, "reasoning_content") and msg.reasoning_content:
                                         reasoning = msg.reasoning_content
-                                        if isinstance(reasoning, str) and reasoning.strip() and "RunOutput" not in reasoning and len(reasoning) > 50:
-                                            prompt_text = reasoning
+                                        if isinstance(reasoning, str) and reasoning.strip() and "RunOutput" not in reasoning and len(reasoning.strip()) > 50:
+                                            prompt_text = reasoning.strip()
                                             logger.info("lovable_prompt_extracted_from_raw_reasoning", 
                                                       extracted_length=len(prompt_text))
                                             break
+                                    # Try text attribute
+                                    elif hasattr(msg, "text") and msg.text:
+                                        text = msg.text
+                                        if isinstance(text, str) and text.strip() and "RunOutput" not in text and len(text.strip()) > 50:
+                                            prompt_text = text.strip()
+                                            logger.info("lovable_prompt_extracted_from_raw_text", 
+                                                      extracted_length=len(prompt_text))
+                                            break
+                        # Also check raw response content directly
+                        if (not prompt_text or len(prompt_text.strip()) < 50) and hasattr(raw_agno_response, "content") and raw_agno_response.content:
+                            content = raw_agno_response.content
+                            if isinstance(content, str) and content.strip() and "RunOutput" not in content and len(content.strip()) > 50:
+                                prompt_text = content.strip()
+                                logger.info("lovable_prompt_extracted_from_raw_response_content", 
+                                          extracted_length=len(prompt_text))
                     except Exception as raw_extract_error:
                         logger.warning("lovable_prompt_raw_response_extraction_failed", 
-                                     error=str(raw_extract_error))
+                                     error=str(raw_extract_error),
+                                     error_type=type(raw_extract_error).__name__)
                 
                 # Continue with existing extraction strategies if still not found
                 # Try multiple extraction strategies
-                if hasattr(self, 'agno_agent') and self.agno_agent:
+                if (not prompt_text or len(prompt_text.strip()) < 50) and hasattr(self, 'agno_agent') and self.agno_agent:
                     try:
                         # Strategy 1: Check if response object itself has content (not just response.response)
                         if hasattr(response, 'content') and response.content:
