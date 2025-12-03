@@ -1096,37 +1096,77 @@ Your response MUST show that you've used this context. Generic responses that ig
             # Extract response content - try multiple attributes for Agno response
             response_content = ""
             
-            # Try different ways to extract content from Agno response
-            if hasattr(response, "content"):
+            # PRIORITY 1: Check messages array FIRST (most reliable for RunOutput)
+            # This is critical for V0/Lovable agents when tools are disabled
+            if hasattr(response, "messages") and response.messages:
+                # Find the last assistant message with actual content
+                for msg in reversed(response.messages):
+                    if hasattr(msg, "role") and msg.role == "assistant":
+                        # Try content first (most common)
+                        if hasattr(msg, "content") and msg.content:
+                            content = msg.content
+                            if isinstance(content, str) and content.strip() and "RunOutput" not in content:
+                                response_content = content.strip()
+                                break
+                        # Try reasoning_content if content is empty
+                        elif hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                            reasoning = msg.reasoning_content
+                            if isinstance(reasoning, str) and reasoning.strip() and "RunOutput" not in reasoning:
+                                response_content = reasoning.strip()
+                                break
+                        # Try text attribute
+                        elif hasattr(msg, "text") and msg.text:
+                            text = msg.text
+                            if isinstance(text, str) and text.strip() and "RunOutput" not in text:
+                                response_content = text.strip()
+                                break
+                        # Try string representation (last resort)
+                        elif isinstance(msg, str) and "RunOutput" not in msg:
+                            response_content = msg.strip()
+                            break
+            
+            # PRIORITY 2: Try different ways to extract content from Agno response
+            # Only if messages array didn't yield content
+            if not response_content and hasattr(response, "content"):
                 content = response.content
                 if content:
-                    if isinstance(content, str):
-                        response_content = content
+                    if isinstance(content, str) and "RunOutput" not in content:
+                        response_content = content.strip() if content.strip() else ""
                     elif isinstance(content, list) and len(content) > 0:
                         # Handle Anthropic-style response with content array
                         if hasattr(content[0], "text"):
                             response_content = content[0].text
-                        elif isinstance(content[0], str):
+                        elif isinstance(content[0], str) and "RunOutput" not in content[0]:
                             response_content = content[0]
                         else:
-                            response_content = str(content[0])
+                            content_str = str(content[0])
+                            if "RunOutput" not in content_str:
+                                response_content = content_str
                     else:
-                        response_content = str(content) if content else ""
+                        content_str = str(content) if content else ""
+                        if "RunOutput" not in content_str:
+                            response_content = content_str
             
             # Try .text attribute
             if not response_content and hasattr(response, "text") and response.text:
-                response_content = response.text
+                text = response.text
+                if isinstance(text, str) and "RunOutput" not in text:
+                    response_content = text.strip()
             
             # Try .message attribute
             if not response_content and hasattr(response, "message"):
                 message = response.message
                 if message:
                     if hasattr(message, "content") and message.content:
-                        response_content = message.content
-                    elif isinstance(message, str):
-                        response_content = message
+                        content = message.content
+                        if isinstance(content, str) and "RunOutput" not in content:
+                            response_content = content.strip()
+                    elif isinstance(message, str) and "RunOutput" not in message:
+                        response_content = message.strip()
                     else:
-                        response_content = str(message)
+                        msg_str = str(message)
+                        if "RunOutput" not in msg_str:
+                            response_content = msg_str
             
             # Try .choices attribute (OpenAI-style)
             if not response_content and hasattr(response, "choices") and response.choices:
@@ -1134,46 +1174,24 @@ Your response MUST show that you've used this context. Generic responses that ig
                     choice = response.choices[0]
                     if hasattr(choice, "message") and choice.message:
                         if hasattr(choice.message, "content") and choice.message.content:
-                            response_content = choice.message.content
+                            content = choice.message.content
+                            if isinstance(content, str) and "RunOutput" not in content:
+                                response_content = content.strip()
             
             # Try .response attribute (nested response)
             if not response_content and hasattr(response, "response"):
                 nested_response = response.response
                 if nested_response:
-                    if isinstance(nested_response, str):
-                        response_content = nested_response
+                    if isinstance(nested_response, str) and "RunOutput" not in nested_response:
+                        response_content = nested_response.strip()
                     elif hasattr(nested_response, "content") and nested_response.content:
-                        response_content = nested_response.content
+                        content = nested_response.content
+                        if isinstance(content, str) and "RunOutput" not in content:
+                            response_content = content.strip()
                     elif hasattr(nested_response, "text") and nested_response.text:
-                        response_content = nested_response.text
-            
-            # Try .messages attribute (RunOutput-style response) - CHECK THIS EARLY, BEFORE STRING CONVERSION
-            if not response_content and hasattr(response, "messages") and response.messages:
-                # Find the last assistant message with actual content
-                for msg in reversed(response.messages):
-                    if hasattr(msg, "role") and msg.role == "assistant":
-                        # Try content first
-                        if hasattr(msg, "content") and msg.content:
-                            content = msg.content
-                            if isinstance(content, str) and content.strip():
-                                response_content = content
-                                break
-                        # Try reasoning_content if content is empty
-                        elif hasattr(msg, "reasoning_content") and msg.reasoning_content:
-                            reasoning = msg.reasoning_content
-                            if isinstance(reasoning, str) and reasoning.strip():
-                                response_content = reasoning
-                                break
-                        # Try text attribute
-                        elif hasattr(msg, "text") and msg.text:
-                            text = msg.text
-                            if isinstance(text, str) and text.strip():
-                                response_content = text
-                                break
-                        # Try string representation
-                        elif isinstance(msg, str):
-                            response_content = msg
-                            break
+                        text = nested_response.text
+                        if isinstance(text, str) and "RunOutput" not in text:
+                            response_content = text.strip()
             
             # Try model_provider_data if still no content (for cases where content is stored in model response)
             if not response_content and hasattr(response, "model_provider_data") and response.model_provider_data:
