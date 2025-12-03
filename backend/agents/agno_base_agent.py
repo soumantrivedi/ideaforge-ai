@@ -312,41 +312,28 @@ class AgnoBaseAgent(ABC):
                         )
                         if not default_model:
                             # Tier-based model selection for AI Gateway (prefer ChatGPT-5)
+                            # Use settings from env.kind, fallback to agent_model_primary
+                            fallback_model = getattr(settings, "agent_model_primary", "gpt-5.1")
                             if model_tier == "fast":
-                                default_model = getattr(
-                                    settings,
-                                    "ai_gateway_fast_model",
-                                    "gpt-5.1-chat-latest",
-                                )
+                                default_model = getattr(settings, "ai_gateway_fast_model", None) or fallback_model
                             elif model_tier == "standard":
-                                default_model = getattr(
-                                    settings, "ai_gateway_standard_model", "gpt-5.1"
-                                )
+                                default_model = getattr(settings, "ai_gateway_standard_model", None) or fallback_model
                             else:  # premium
-                                default_model = getattr(
-                                    settings, "ai_gateway_premium_model", "gpt-5.1"
-                                )
+                                default_model = getattr(settings, "ai_gateway_premium_model", None) or fallback_model
                 except Exception as e:
                     self.logger.warning(
                         "ai_gateway_model_discovery_failed", error=str(e)
                     )
                     # Fall back to settings/defaults
-                    default_model = getattr(
-                        settings, "ai_gateway_default_model", "gpt-5.1"
-                    )
+                    fallback_model = getattr(settings, "agent_model_primary", "gpt-5.1")
+                    default_model = getattr(settings, "ai_gateway_default_model", None) or fallback_model
                     if not default_model:
                         if model_tier == "fast":
-                            default_model = getattr(
-                                settings, "ai_gateway_fast_model", "gpt-5.1-chat-latest"
-                            )
+                            default_model = getattr(settings, "ai_gateway_fast_model", None) or fallback_model
                         elif model_tier == "standard":
-                            default_model = getattr(
-                                settings, "ai_gateway_standard_model", "gpt-5.1"
-                            )
+                            default_model = getattr(settings, "ai_gateway_standard_model", None) or fallback_model
                         else:
-                            default_model = getattr(
-                                settings, "ai_gateway_premium_model", "gpt-5.1"
-                            )
+                            default_model = getattr(settings, "ai_gateway_premium_model", None) or fallback_model
 
                 try:
                     # Determine max_tokens based on model and tier
@@ -388,9 +375,8 @@ class AgnoBaseAgent(ABC):
             if use_ai_gateway:
                 gateway_client = provider_registry.get_ai_gateway_client()
                 if gateway_client:
-                    model_id = getattr(
-                        settings, "ai_gateway_fast_model", "gpt-5.1-chat-latest"
-                    )
+                    # Use AI Gateway fast model from settings, fallback to agent_model_primary
+                    model_id = getattr(settings, "ai_gateway_fast_model", None) or getattr(settings, "agent_model_primary", "gpt-5.1")
                     try:
                         return AIGatewayModel(
                             id=model_id,
@@ -410,10 +396,10 @@ class AgnoBaseAgent(ABC):
             if not use_ai_gateway and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
-                # Use AGENT_MODEL_FAST if set, otherwise default to gpt-5.1-nano (Dec 2025)
+                # Use AGENT_MODEL_FAST from settings (env.kind), fallback to agent_model_primary
                 model_id = getattr(
-                    settings, "agent_model_fast", getattr(settings, "ai_gateway_fast_model", "gpt-5.1-nano")
-                )
+                    settings, "agent_model_fast", None
+                ) or getattr(settings, "ai_gateway_fast_model", None) or getattr(settings, "agent_model_primary", "gpt-5.1")
 
                 self.logger.info(
                     "creating_fast_model",
@@ -453,7 +439,8 @@ class AgnoBaseAgent(ABC):
             if use_ai_gateway:
                 gateway_client = provider_registry.get_ai_gateway_client()
                 if gateway_client:
-                    model_id = getattr(settings, "ai_gateway_standard_model", "gpt-5.1")
+                    # Use AI Gateway standard model from settings, fallback to agent_model_primary
+                    model_id = getattr(settings, "ai_gateway_standard_model", None) or getattr(settings, "agent_model_primary", "gpt-5.1")
                     try:
                         return AIGatewayModel(
                             id=model_id,
@@ -471,10 +458,10 @@ class AgnoBaseAgent(ABC):
             if not use_ai_gateway and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
-                # Use AGENT_MODEL_STANDARD if set, otherwise default to gpt-5.1-mini (Dec 2025)
+                # Use AGENT_MODEL_STANDARD from settings (env.kind), fallback to agent_model_primary
                 model_id = getattr(
-                    settings, "agent_model_standard", getattr(settings, "ai_gateway_standard_model", "gpt-5.1-mini")
-                )
+                    settings, "agent_model_standard", None
+                ) or getattr(settings, "ai_gateway_standard_model", None) or getattr(settings, "agent_model_primary", "gpt-5.1")
                 if api_key:
                     # Only use direct OpenAI API if base_url is NOT an AI Gateway URL
                     if base_url and "ai-gateway" in base_url:
@@ -508,9 +495,8 @@ class AgnoBaseAgent(ABC):
             if use_ai_gateway:
                 gateway_client = provider_registry.get_ai_gateway_client()
                 if gateway_client:
-                    model_id = getattr(
-                        settings, "ai_gateway_premium_model", settings.agent_model_primary
-                    )
+                    # Use AI Gateway premium model from settings, fallback to agent_model_primary
+                    model_id = getattr(settings, "ai_gateway_premium_model", None) or getattr(settings, "agent_model_primary", "gpt-5.1")
                     try:
                         return AIGatewayModel(
                             id=model_id,
@@ -528,10 +514,10 @@ class AgnoBaseAgent(ABC):
             if not use_ai_gateway and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
-                # Use AGENT_MODEL_PREMIUM if set, otherwise default to gpt-5.1 (Dec 2025)
+                # Use AGENT_MODEL_PREMIUM from settings (env.kind), fallback to agent_model_primary
                 model_id = getattr(
-                    settings, "agent_model_premium", getattr(settings, "ai_gateway_premium_model", settings.agent_model_primary)
-                )
+                    settings, "agent_model_premium", None
+                ) or getattr(settings, "ai_gateway_premium_model", None) or getattr(settings, "agent_model_primary", "gpt-5.1")
                 if api_key:
                     # Only use direct OpenAI API if base_url is NOT an AI Gateway URL
                     if base_url and "ai-gateway" in base_url:

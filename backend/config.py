@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     ai_gateway_base_url: Optional[str] = os.getenv("AI_GATEWAY_BASE_URL", "https://ai-gateway.quantumblack.com")
     ai_gateway_enabled: bool = os.getenv("AI_GATEWAY_ENABLED", "true").lower() == "true"  # Default to enabled
     ai_gateway_default_model: Optional[str] = os.getenv("AI_GATEWAY_DEFAULT_MODEL", "gpt-5.1")
-    ai_gateway_fast_model: Optional[str] = os.getenv("AI_GATEWAY_FAST_MODEL", "gpt-5.1-chat-latest")
+    ai_gateway_fast_model: Optional[str] = os.getenv("AI_GATEWAY_FAST_MODEL")
     ai_gateway_standard_model: Optional[str] = os.getenv("AI_GATEWAY_STANDARD_MODEL", "gpt-5.1")
     ai_gateway_premium_model: Optional[str] = os.getenv("AI_GATEWAY_PREMIUM_MODEL", "gpt-5.1")
 
@@ -142,13 +142,11 @@ class Settings(BaseSettings):
     )  # Gemini 3.0 Pro
     
     # Model tier overrides for direct OpenAI API (Dec 2025 GPT-5.1 models)
-    # Official GPT-5.1 models as of December 2025:
-    # - Fast: gpt-5.1-nano (fastest, most economical - for most agents)
-    # - Standard: gpt-5.1-mini (balanced performance/cost - for coordinators)
-    # - Premium: gpt-5.1 (flagship model - for critical reasoning)
-    agent_model_fast: Optional[str] = os.getenv("AGENT_MODEL_FAST", "gpt-5.1-nano")
-    agent_model_standard: Optional[str] = os.getenv("AGENT_MODEL_STANDARD", "gpt-5.1-mini")
-    agent_model_premium: Optional[str] = os.getenv("AGENT_MODEL_PREMIUM", "gpt-5.1")
+    # These values come from env.kind or environment variables
+    # Default to agent_model_primary if not set (no hardcoded model names)
+    agent_model_fast: Optional[str] = os.getenv("AGENT_MODEL_FAST")
+    agent_model_standard: Optional[str] = os.getenv("AGENT_MODEL_STANDARD")
+    agent_model_premium: Optional[str] = os.getenv("AGENT_MODEL_PREMIUM")
 
     # AI Response Timeout (seconds) - Set to 50s to avoid Cloudflare 60s timeout
     agent_response_timeout: float = float(os.getenv("AGENT_RESPONSE_TIMEOUT", "50.0"))

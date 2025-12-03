@@ -114,7 +114,9 @@ class AgnoEnhancedCoordinator:
                 api_key = provider_registry.get_openai_key()
                 if api_key:
                     # GPT-5.1 models require max_completion_tokens instead of max_tokens
-                    return OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key, max_completion_tokens=2000)
+                    # Use fast model from settings (env.kind), fallback to agent_model_primary
+                    fast_model_id = getattr(settings, "agent_model_fast", None) or getattr(settings, "agent_model_primary", "gpt-5.1")
+                    return OpenAIChat(id=fast_model_id, api_key=api_key, max_completion_tokens=2000)
             elif provider_registry.has_gemini_key():
                 api_key = provider_registry.get_gemini_key()
                 if api_key:
@@ -1557,7 +1559,9 @@ INSTRUCTIONS:
                     fast_model = None
                     if provider_registry.has_openai_key():
                         # GPT-5.1 models require max_completion_tokens instead of max_tokens
-                        fast_model = OpenAIChat(id="gpt-5.1-chat-latest", api_key=provider_registry.get_openai_key(), max_completion_tokens=2000)
+                        # Use fast model from settings (env.kind), fallback to agent_model_primary
+                        fast_model_id = getattr(settings, "agent_model_fast", None) or getattr(settings, "agent_model_primary", "gpt-5.1")
+                        fast_model = OpenAIChat(id=fast_model_id, api_key=provider_registry.get_openai_key(), max_completion_tokens=2000)
                     elif provider_registry.has_gemini_key():
                         fast_model = Gemini(id="gemini-1.5-flash", api_key=provider_registry.get_gemini_key())
                     elif provider_registry.has_claude_key():
