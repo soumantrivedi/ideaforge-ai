@@ -28,7 +28,7 @@ This document summarizes the implementation of McKinsey SSO (Single Sign-On) API
 
 ---
 
-### 2. GET /api/auth/mckinsey/callback
+### 2. GET /auth/mckinsey/callback
 
 **Purpose**: Handle McKinsey SSO callback after user authentication
 

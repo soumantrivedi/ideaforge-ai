@@ -22,7 +22,7 @@ This document describes the comprehensive error logging implementation for McKin
 - `OAuthErrorLogger.log_state_validation_failure()` method specifically handles state validation failures
 - Logs as a security event with WARNING level for visibility
 - Includes state parameter (truncated), failure reason, provider, and IP address
-- Used in `/api/auth/mckinsey/callback` endpoint when state validation fails
+- Used in `/auth/mckinsey/callback` endpoint when state validation fails
 
 ### Requirement 6.3: Token Exchange Error Logging
 **Requirement**: WHEN token exchange fails THEN the Backend System SHALL return a user-friendly error message and log the detailed error
@@ -31,7 +31,7 @@ This document describes the comprehensive error logging implementation for McKin
 - `OAuthErrorLogger.log_token_exchange_error()` method handles token exchange failures
 - Logs detailed error information including status code, response body (truncated), and authorization code prefix
 - User receives friendly error message while detailed error is logged for troubleshooting
-- Used in `/api/auth/mckinsey/callback` endpoint during token exchange
+- Used in `/auth/mckinsey/callback` endpoint during token exchange
 
 ### Requirement 6.4: Token Validation Error Logging
 **Requirement**: WHEN ID Token validation fails THEN the Backend System SHALL reject the authentication and log the validation failure reason
@@ -40,7 +40,7 @@ This document describes the comprehensive error logging implementation for McKin
 - `OAuthErrorLogger.log_token_validation_error()` method handles ID token validation failures
 - Logs specific validation failure reason (signature invalid, issuer mismatch, expired, etc.)
 - Includes sanitized token claims for debugging (only non-sensitive claims)
-- Used in `/api/auth/mckinsey/callback` endpoint during ID token validation
+- Used in `/auth/mckinsey/callback` endpoint during ID token validation
 
 ## Architecture
 
@@ -88,7 +88,7 @@ Main class providing comprehensive error logging functionality:
 - Logs performance metrics for authorization URL generation
 - Logs comprehensive errors if authorization fails
 
-**GET /api/auth/mckinsey/callback**
+**GET /auth/mckinsey/callback**
 - Logs state validation failures as security events (Requirement 6.2)
 - Logs token exchange errors with detailed context (Requirement 6.3)
 - Logs token validation errors with failure reasons (Requirement 6.4)

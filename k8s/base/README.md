@@ -63,7 +63,7 @@ Template for McKinsey SSO OAuth 2.0 credentials. **Do not apply this template di
    kubectl create secret generic mckinsey-sso-secrets \
      --from-literal=MCKINSEY_CLIENT_ID='your-client-id' \
      --from-literal=MCKINSEY_CLIENT_SECRET='your-client-secret' \
-     --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/api/auth/mckinsey/callback' \
+     --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/auth/mckinsey/callback' \
      --from-literal=MCKINSEY_TOKEN_ENCRYPTION_KEY='your-encryption-key' \
      --namespace=your-namespace
    ```
@@ -74,7 +74,7 @@ Template for McKinsey SSO OAuth 2.0 credentials. **Do not apply this template di
    cat > mckinsey-sso.env << EOF
    MCKINSEY_CLIENT_ID=your-client-id
    MCKINSEY_CLIENT_SECRET=your-client-secret
-   MCKINSEY_REDIRECT_URI=https://your-domain.com/api/auth/mckinsey/callback
+   MCKINSEY_REDIRECT_URI=https://your-domain.com/auth/mckinsey/callback
    MCKINSEY_TOKEN_ENCRYPTION_KEY=your-encryption-key
    EOF
    

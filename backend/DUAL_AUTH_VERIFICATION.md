@@ -150,7 +150,7 @@ To verify the implementation works correctly:
    curl http://localhost:8000/api/auth/mckinsey/authorize
    
    # Complete callback (after user authenticates)
-   curl "http://localhost:8000/api/auth/mckinsey/callback?code=AUTH_CODE&state=STATE"
+   curl "http://localhost:8000/auth/mckinsey/callback?code=AUTH_CODE&state=STATE"
    ```
    - Should return session token
    - Token should work with `/api/auth/me`

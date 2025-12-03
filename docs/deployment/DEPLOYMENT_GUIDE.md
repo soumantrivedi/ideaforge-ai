@@ -217,7 +217,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 kubectl create secret generic mckinsey-sso-secrets \
   --from-literal=MCKINSEY_CLIENT_ID='your-client-id' \
   --from-literal=MCKINSEY_CLIENT_SECRET='your-client-secret' \
-  --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/api/auth/mckinsey/callback' \
+  --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/auth/mckinsey/callback' \
   --from-literal=MCKINSEY_TOKEN_ENCRYPTION_KEY='your-encryption-key' \
   --namespace=your-namespace
 ```

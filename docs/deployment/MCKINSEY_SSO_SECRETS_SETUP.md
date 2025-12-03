@@ -49,7 +49,7 @@ Application Details:
 - Environment: Production
 
 Redirect URIs:
-- https://ideaforge-ai-prod.cf.platform.mckinsey.cloud/api/auth/mckinsey/callback
+- https://ideaforge-ai-prod.cf.platform.mckinsey.cloud/auth/mckinsey/callback
 
 Required Scopes:
 - openid
@@ -104,7 +104,7 @@ NAMESPACE="your-namespace"
 kubectl create secret generic mckinsey-sso-secrets \
   --from-literal=MCKINSEY_CLIENT_ID='your-actual-client-id' \
   --from-literal=MCKINSEY_CLIENT_SECRET='your-actual-client-secret' \
-  --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/api/auth/mckinsey/callback' \
+  --from-literal=MCKINSEY_REDIRECT_URI='https://your-domain.com/auth/mckinsey/callback' \
   --from-literal=MCKINSEY_TOKEN_ENCRYPTION_KEY='your-actual-encryption-key' \
   --namespace=$NAMESPACE
 ```
@@ -116,7 +116,7 @@ kubectl create secret generic mckinsey-sso-secrets \
    cat > mckinsey-sso.env << EOF
    MCKINSEY_CLIENT_ID=your-actual-client-id
    MCKINSEY_CLIENT_SECRET=your-actual-client-secret
-   MCKINSEY_REDIRECT_URI=https://your-domain.com/api/auth/mckinsey/callback
+   MCKINSEY_REDIRECT_URI=https://your-domain.com/auth/mckinsey/callback
    MCKINSEY_TOKEN_ENCRYPTION_KEY=your-actual-encryption-key
    EOF
    ```
@@ -227,7 +227,7 @@ kubectl exec -it deployment/backend -n your-namespace -- env | grep MCKINSEY
 ```
 MCKINSEY_CLIENT_ID=your-client-id
 MCKINSEY_CLIENT_SECRET=your-client-secret
-MCKINSEY_REDIRECT_URI=https://your-domain.com/api/auth/mckinsey/callback
+MCKINSEY_REDIRECT_URI=https://your-domain.com/auth/mckinsey/callback
 MCKINSEY_TOKEN_ENCRYPTION_KEY=your-encryption-key
 ```
 
@@ -275,7 +275,7 @@ kubectl logs -f deployment/backend -n your-namespace | grep -i mckinsey
 kubectl create secret generic mckinsey-sso-secrets \
   --from-literal=MCKINSEY_CLIENT_ID='' \
   --from-literal=MCKINSEY_CLIENT_SECRET='' \
-  --from-literal=MCKINSEY_REDIRECT_URI='http://localhost:80/api/auth/mckinsey/callback' \
+  --from-literal=MCKINSEY_REDIRECT_URI='http://localhost:80/auth/mckinsey/callback' \
   --from-literal=MCKINSEY_TOKEN_ENCRYPTION_KEY='' \
   --namespace=ideaforge-ai
 ```
@@ -286,7 +286,7 @@ kubectl create secret generic mckinsey-sso-secrets \
 kubectl create secret generic mckinsey-sso-secrets \
   --from-literal=MCKINSEY_CLIENT_ID='staging-client-id' \
   --from-literal=MCKINSEY_CLIENT_SECRET='staging-client-secret' \
-  --from-literal=MCKINSEY_REDIRECT_URI='https://ideaforge-ai-staging.cf.platform.mckinsey.cloud/api/auth/mckinsey/callback' \
+  --from-literal=MCKINSEY_REDIRECT_URI='https://ideaforge-ai-staging.cf.platform.mckinsey.cloud/auth/mckinsey/callback' \
   --from-literal=MCKINSEY_TOKEN_ENCRYPTION_KEY='staging-encryption-key' \
   --namespace=ideaforge-ai-staging
 ```
@@ -297,7 +297,7 @@ kubectl create secret generic mckinsey-sso-secrets \
 kubectl create secret generic mckinsey-sso-secrets \
   --from-literal=MCKINSEY_CLIENT_ID='prod-client-id' \
   --from-literal=MCKINSEY_CLIENT_SECRET='prod-client-secret' \
-  --from-literal=MCKINSEY_REDIRECT_URI='https://ideaforge-ai-prod.cf.platform.mckinsey.cloud/api/auth/mckinsey/callback' \
+  --from-literal=MCKINSEY_REDIRECT_URI='https://ideaforge-ai-prod.cf.platform.mckinsey.cloud/auth/mckinsey/callback' \
   --from-literal=MCKINSEY_TOKEN_ENCRYPTION_KEY='prod-encryption-key' \
   --namespace=ideaforge-ai-prod
 ```
@@ -320,7 +320,7 @@ aws secretsmanager create-secret \
 
 aws secretsmanager create-secret \
   --name ideaforge-ai/mckinsey-sso/redirect-uri \
-  --secret-string 'https://your-domain.com/api/auth/mckinsey/callback'
+  --secret-string 'https://your-domain.com/auth/mckinsey/callback'
 
 aws secretsmanager create-secret \
   --name ideaforge-ai/mckinsey-sso/encryption-key \
