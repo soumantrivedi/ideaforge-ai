@@ -94,15 +94,61 @@ Focus on:
 - Customer needs and pain points
 Provide data-driven, actionable research guidance.""",
 
-    "requirement": """You are an expert Requirements Analysis Specialist for product development.
-Your role is to help users define clear, actionable product requirements and specifications.
-Focus on:
-- Functional requirements definition
-- Non-functional requirements (performance, security, scalability)
-- User story creation
-- Acceptance criteria
-- Requirement prioritization
-Provide clear, structured requirements guidance.""",
+    "requirement": """You are the Requirements Agent within IdeaForge AI, operating exclusively in the Requirements Phase.
+
+Your role is to translate user inputs, validated ideas, market research, personas, competitive insights, constraints, and Knowledge Base content into precise, unambiguous, implementation-ready product requirements.
+
+CORE MISSION:
+Transform high-level feature descriptions into detailed, explicit, testable, and enforceable requirements that engineering, design, and business teams can immediately act on.
+
+CRITICAL RULES:
+- NEVER produce general answers
+- NEVER output vague, template-like requirements
+- All requirements MUST describe exact system behaviors, data interactions, and measurable thresholds
+- Write content AS IF THE USER TYPED IT DIRECTLY - no coaching language
+
+REQUIRED OUTPUTS (in strict order):
+1. Product Summary (2-4 crisp sentences): What the product does, who it serves, core value
+2. Functional Requirements (FR-XX): Each with ID, trigger, system behavior, data inputs/outputs, rules, validation, error handling
+3. Non-Functional Requirements (NFR-Category-XX): Performance, Security, Availability, Accessibility, Compliance, Reliability, Scalability, Maintainability - all with numeric targets
+4. User Stories + Acceptance Criteria: Gherkin syntax (Given/When/Then), edge cases, failure conditions
+5. Scope Definition (MoSCoW): Must-Haves, Should-Haves, Could-Haves, Will-Not-Have with justifications
+6. Constraints & Dependencies: Technical, business, platform, organizational constraints and feature dependencies
+7. Risks & Assumptions: Uncertainties, dependencies at risk, missing inputs, explicit assumptions
+
+FUNCTIONAL REQUIREMENT FORMAT:
+FR-XX — [Requirement Name]
+- Trigger: [What causes this requirement to activate]
+- System Behavior: [Exact actions the system takes]
+- Data Inputs & Outputs: [What data flows in/out]
+- Rules & Validation: [Validation logic and error handling]
+- NEVER use generic verbs like "support," "enable," "allow" without definition
+
+NON-FUNCTIONAL REQUIREMENT FORMAT:
+NFR-Category-XX: [Specific, measurable criterion]
+Example: NFR-Performance-03: All read operations must return in <180ms at P95 under 3,000 concurrent requests.
+No adjectives. No soft descriptions. Only measurable criteria.
+
+BEHAVIOR RULES:
+- If user input is vague, request missing detail OR propose specific, justified assumption
+- Convert subjective terms ("fast," "secure") into quantifiable metrics
+- Requirements must be MECE (no overlaps, contradictions, duplication)
+- Requirements must be developer-ready (engineering can estimate and build directly)
+- Requirements must support downstream phases (Design, Planning, Development, QA)
+
+PROHIBITED:
+- Generic example requirements
+- Vague statements like "the system should be user friendly"
+- Filler statements or abstract summaries
+- Skipping measurable thresholds
+- Marketing copy
+- Content irrelevant to Requirements Phase
+
+CONTEXT USAGE:
+- Use ALL information from previous phases (ideation, market research) - reference specific details
+- Reference Knowledge Base for organizational standards and constraints
+- Link requirements back to objectives for traceability
+- NEVER truncate - provide complete, comprehensive requirements""",
 
     "design": """You are an expert Product Design and Strategy Specialist for product development.
 Your role is to help users design user experiences, create design specifications, and plan product architecture.
@@ -134,7 +180,7 @@ def get_phase_expert_agent(phase_name: str) -> str:
     elif "research" in phase_lower or "market" in phase_lower:
         return "research"
     elif "requirement" in phase_lower:
-        return "analysis"
+        return "requirements"  # Use dedicated Requirements Agent for requirements phase
     elif "design" in phase_lower:
         return "strategy"
     elif "development" in phase_lower:
@@ -203,15 +249,11 @@ async def stream_phase_form_help(
                     logger.info("phase_form_help_orchestrator_reinitialized", has_provider=has_provider)
                 except Exception as e:
                     logger.warning("phase_form_help_agno_reinit_failed", error=str(e))
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Agno framework not available"
-                    )
+                    yield f"data: {json.dumps({'type': 'error', 'error': 'Agno framework not available'})}\n\n"
+                    return
             else:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Agno framework not available. Please configure at least one API key (OpenAI, Claude, or Gemini) in Settings → Integrations."
-                )
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Agno framework not available. Please configure at least one API key (OpenAI, Claude, or Gemini) in Settings → Integrations.'})}\n\n"
+                return
         
         # CRITICAL: Load ALL previous phase submissions (form_data and generated_content)
         # This ensures the agent has access to ideation, market research, and other phase data
@@ -282,10 +324,16 @@ async def stream_phase_form_help(
         # Get phase expert agent
         agent_name = get_phase_expert_agent(request.phase_name)
         if agent_name not in orchestrator.agents:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Agent '{agent_name}' not found"
+            logger.error(
+                "phase_form_help_agent_not_found",
+                agent=agent_name,
+                available_agents=list(orchestrator.agents.keys()),
+                phase=request.phase_name
             )
+            available_agents_str = ', '.join(orchestrator.agents.keys())
+            error_msg = f"Agent '{agent_name}' not found. Available agents: {available_agents_str}"
+            yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
+            return
         
         agent = orchestrator.agents[agent_name]
         
@@ -309,38 +357,83 @@ async def stream_phase_form_help(
             system_context_parts.append("\n=== IDEATION FROM CHATBOT ===")
             system_context_parts.append(comprehensive_context["ideation_from_chat"])
         
-        # Add knowledge base
+        # Add knowledge base (CRITICAL: preserve full content for requirements phase)
+        # For requirements phase, knowledge base content is critical - preserve full content
         if comprehensive_context.get("knowledge_base"):
             system_context_parts.append("\n=== KNOWLEDGE BASE ===")
+            system_context_parts.append("CRITICAL: Use knowledge base articles to support requirements with industry best practices.")
             for kb_item in comprehensive_context["knowledge_base"][:10]:
                 kb_content = kb_item.get('content', '')
                 if kb_content:
-                    system_context_parts.append(f"- {kb_content[:500]}")
+                    # For requirements phase, include full content (no truncation)
+                    # Knowledge base articles may contain critical requirements templates and examples
+                    system_context_parts.append(f"- {kb_content}")
         
-        # Add current phase form data (other fields)
+        # Add current phase form data (other fields) - CRITICAL: preserve full content
         if current_phase_form_data:
             current_field = request.current_field
             other_fields = {k: v for k, v in current_phase_form_data.items() if k != current_field and v and str(v).strip()}
             if other_fields:
                 system_context_parts.append("\n=== OTHER FIELDS IN CURRENT PHASE (Already Filled) ===")
+                system_context_parts.append("CRITICAL: Use ALL information from these fields to ensure requirements are comprehensive and consistent.")
                 for field, value in other_fields.items():
-                    system_context_parts.append(f"- {field.replace('_', ' ').title()}: {str(value)[:500]}")
+                    # Preserve full field values - requirements need complete context
+                    # No truncation - all details are critical for requirements generation
+                    system_context_parts.append(f"- {field.replace('_', ' ').title()}: {str(value)}")
         
         system_context = "\n".join(system_context_parts)
         
         # Add critical instructions for using ALL context
         system_context += """
 
-CRITICAL INSTRUCTIONS:
-- You MUST use ALL information from previous phases (ideation, market research, etc.) in your response
-- Reference specific details from previous phase submissions when relevant
-- Use knowledge base articles to support your recommendations
-- Provide data-driven, specific responses - NOT generic guidance
+=== CRITICAL INSTRUCTIONS FOR REQUIREMENTS PHASE ===
+
+OUTPUT REQUIREMENTS (STRICT ORDER):
+You MUST produce these outputs in this exact order:
+1. Product Summary (2-4 crisp sentences)
+2. Functional Requirements (FR-XX) - with triggers, behaviors, data flows, validation
+3. Non-Functional Requirements (NFR-Category-XX) - with numeric targets
+4. User Stories + Acceptance Criteria (Gherkin: Given/When/Then)
+5. Scope Definition (MoSCoW: Must/Should/Could/Will-Not-Have)
+6. Constraints & Dependencies
+7. Risks & Assumptions
+
+CONTEXT USAGE (MANDATORY):
+- You MUST use ALL information from previous phases (ideation, market research, etc.) - nothing should be omitted
+- Reference specific details from previous phase submissions - use actual numbers, names, and details
+- Use knowledge base articles to support requirements with industry best practices
+- Link requirements back to objectives from previous phases for traceability
+- Preserve ALL user-provided details - addresses, specific requirements, preferences, decisions
+- Include ALL form data fields - nothing should be omitted or skipped
+- Reference specific conversation history details when relevant
+- Use exact numbers, names, and specifics from user input - do not generalize
+
+QUALITY STANDARDS (ENFORCED):
+- MECE Thinking: Requirements must be Mutually Exclusive, Collectively Exhaustive (no gaps, no overlaps, no contradictions, no duplication)
+- SMART Framework: All objectives must be Specific, Measurable, Achievable, Relevant, Time-bound
+- Quantify Everything: Avoid vague terms like "fast", "good", "many" - use specific numbers, percentages, timeframes
+- Developer-Ready: Engineering must be able to estimate and build directly from requirements
+- Testable: QA must be able to validate using acceptance criteria
+
+WRITING STYLE:
 - Write content AS IF THE USER TYPED IT DIRECTLY - do not use coaching language
 - DO NOT say "Since the earlier context only states..." or "Because your previous question was..."
 - Instead, directly use the information: "Based on your ideation phase, the problem is X, therefore the functional requirements are Y"
 - Be crisp, specific, and data-driven - use actual information from previous phases
-- Format your response according to the current field requirements (e.g., functional requirements in a structured format)
+- Format your response according to the current field requirements (e.g., functional requirements in FR-XX format)
+
+PROHIBITED BEHAVIORS:
+- NEVER give generic example requirements
+- NEVER say "the system should be user friendly" or similar vague statements
+- NEVER use filler statements or abstract summaries
+- NEVER skip measurable thresholds
+- NEVER produce marketing copy
+- NEVER truncate responses - provide complete, comprehensive content even if lengthy
+
+VAGUE INPUT HANDLING:
+- If user input is vague, request missing detail OR propose specific, justified assumption
+- If requirement includes subjective terms ("fast," "secure"), convert to quantifiable metrics
+- Respond with: "To generate precise, implementation-ready requirements, I need the following missing inputs: …"
 """
         
         # Add instructions for plain text response (NO HTML, NO word limits)
@@ -353,11 +446,17 @@ CRITICAL INSTRUCTIONS:
         
         system_context += f"\n\nCRITICAL REQUIREMENTS:\n- Return PLAIN TEXT only (NO HTML, NO markdown formatting)\n- Be {response_style}\n- {response_guidance}\n- Use natural language, no formatting codes\n- Write as if speaking directly to the user\n- Structure your response clearly with logical flow"
         
-        # Build user prompt - Include FULL user input (Option E: preserve all details)
+        # Build user prompt - Include FULL user input (CRITICAL: preserve all details)
         # Include the complete user input to preserve critical details like addresses, requirements, etc.
+        # NEVER truncate user input - all details are critical for requirements generation
         if request.user_input and request.user_input.strip():
-            # Include FULL user input (no truncation) - Option E enhancement
-            user_prompt = f"User input for {request.current_field}:\n{request.user_input}\n\nQuestion: {request.current_prompt}"
+            # Include FULL user input (no truncation) - preserve all user details
+            user_prompt = f"""User input for {request.current_field}:
+{request.user_input}
+
+Question: {request.current_prompt}
+
+CRITICAL: Use ALL details from the user input above. Preserve specific numbers, names, addresses, requirements, preferences, and any other details exactly as provided. Do not generalize or omit any information."""
         else:
             user_prompt = f"Question: {request.current_prompt}"
         
@@ -422,11 +521,15 @@ CRITICAL INSTRUCTIONS:
                 "response_length": request.response_length,
             })
             
-            # Add current field's user input to form_data
+            # Add current field's user input to form_data (CRITICAL: preserve all details)
+            # Include FULL user input - never truncate as all details are critical
             if request.user_input and request.user_input.strip():
                 if "form_data" not in context:
                     context["form_data"] = {}
+                # Preserve complete user input - all details matter for requirements
                 context["form_data"][request.current_field] = request.user_input
+                # Also add to context as separate field for emphasis
+                context["current_field_user_input"] = request.user_input
             
             # Merge with current phase form data
             if current_phase_form_data:
@@ -444,9 +547,31 @@ CRITICAL INSTRUCTIONS:
                 has_conversation_history=bool(comprehensive_context.get("conversation_history"))
             )
             
-            response = await agent.process(messages, context)
+            # Process with agent - wrap in try-except to catch any processing errors
+            try:
+                response = await agent.process(messages, context)
+            except Exception as process_error:
+                logger.error(
+                    "phase_form_help_agent_process_error",
+                    error=str(process_error),
+                    error_type=type(process_error).__name__,
+                    agent=agent_name,
+                    exc_info=True
+                )
+                yield f"data: {json.dumps({'type': 'error', 'error': f'Agent processing failed: {str(process_error)}'})}\n\n"
+                return
+            
+            if not response:
+                logger.error("phase_form_help_empty_response", agent=agent_name)
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Agent returned empty response'})}\n\n"
+                return
             
             response_text = response.response if hasattr(response, 'response') else str(response)
+            
+            if not response_text or not response_text.strip():
+                logger.error("phase_form_help_empty_response_text", agent=agent_name)
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Agent returned empty response text'})}\n\n"
+                return
             
             # Log initial response length
             initial_word_count = len(response_text.split())
@@ -466,12 +591,16 @@ CRITICAL INSTRUCTIONS:
             
             # Stream the plain text response in chunks for smooth streaming
             chunk_size = 50  # Characters per chunk
-            for i in range(0, len(plain_text), chunk_size):
-                chunk = plain_text[i:i+chunk_size]
-                yield f"data: {json.dumps({'type': 'chunk', 'content': chunk, 'word_count': word_count})}\n\n"
-                await asyncio.sleep(0.01)  # Small delay for smooth streaming
-            
-            yield f"data: {json.dumps({'type': 'complete', 'content': plain_text, 'word_count': word_count, 'agent': agent_name})}\n\n"
+            try:
+                for i in range(0, len(plain_text), chunk_size):
+                    chunk = plain_text[i:i+chunk_size]
+                    yield f"data: {json.dumps({'type': 'chunk', 'content': chunk, 'word_count': word_count})}\n\n"
+                    await asyncio.sleep(0.01)  # Small delay for smooth streaming
+                
+                yield f"data: {json.dumps({'type': 'complete', 'content': plain_text, 'word_count': word_count, 'agent': agent_name})}\n\n"
+            except Exception as stream_error:
+                logger.error("phase_form_help_streaming_error", error=str(stream_error), agent=agent_name)
+                yield f"data: {json.dumps({'type': 'error', 'error': f'Streaming error: {str(stream_error)}'})}\n\n"
             
             # Restore original system prompt
             if original_system_prompt and hasattr(agent, 'system_prompt'):

@@ -69,6 +69,27 @@ class McKinseyOIDCProvider:
             client_id=...&redirect_uri=...&response_type=code&scope=openid+profile+email&
             state=...&nonce=...
         """
+        # Validate required configuration
+        if not self.client_id or not self.client_id.strip():
+            logger.error(
+                "mckinsey_client_id_missing",
+                client_id=self.client_id,
+                has_client_id=bool(self.client_id),
+            )
+            raise ValueError(
+                "McKinsey SSO client ID is not configured. Please set MCKINSEY_CLIENT_ID environment variable."
+            )
+        
+        if not self.redirect_uri or not self.redirect_uri.strip():
+            logger.error(
+                "mckinsey_redirect_uri_missing",
+                redirect_uri=self.redirect_uri,
+                has_redirect_uri=bool(self.redirect_uri),
+            )
+            raise ValueError(
+                "McKinsey SSO redirect URI is not configured. Please set MCKINSEY_REDIRECT_URI environment variable."
+            )
+        
         params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,

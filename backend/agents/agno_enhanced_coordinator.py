@@ -19,6 +19,7 @@ except ImportError as e:
 
 from backend.agents.agno_base_agent import AgnoBaseAgent
 from backend.agents.agno_prd_authoring_agent import AgnoPRDAuthoringAgent
+from backend.agents.agno_requirements_agent import AgnoRequirementsAgent
 from backend.agents.agno_ideation_agent import AgnoIdeationAgent
 from backend.agents.agno_research_agent import AgnoResearchAgent
 from backend.agents.agno_analysis_agent import AgnoAnalysisAgent
@@ -55,6 +56,7 @@ class AgnoEnhancedCoordinator:
         self.analysis_agent = AgnoAnalysisAgent(enable_rag=True)  # Always enable RAG for analysis
         self.ideation_agent = AgnoIdeationAgent(enable_rag=True)  # Always enable RAG for ideation
         self.prd_agent = AgnoPRDAuthoringAgent(enable_rag=True)  # Always enable RAG for PRD authoring
+        self.requirements_agent = AgnoRequirementsAgent(enable_rag=True)  # Dedicated requirements agent
         self.summary_agent = AgnoSummaryAgent(enable_rag=enable_rag)
         self.scoring_agent = AgnoScoringAgent(enable_rag=enable_rag)
         self.strategy_agent = AgnoStrategyAgent(enable_rag=enable_rag)
@@ -71,6 +73,7 @@ class AgnoEnhancedCoordinator:
             "analysis": self.analysis_agent,
             "ideation": self.ideation_agent,
             "prd_authoring": self.prd_agent,
+            "requirements": self.requirements_agent,  # Dedicated requirements agent
             "summary": self.summary_agent,
             "scoring": self.scoring_agent,
             "strategy": self.strategy_agent,
@@ -638,8 +641,8 @@ INSTRUCTIONS:
             "ideation": "ideation",
             "market research": "research",
             "market_research": "research",
-            "requirements": "prd_authoring",
-            "requirements phase": "prd_authoring",
+            "requirements": "requirements",  # Use dedicated requirements agent
+            "requirements phase": "requirements",  # Use dedicated requirements agent
             "design": "prd_authoring",  # Design phase may need PRD content
             "strategy": "strategy",
             "analysis": "analysis",
@@ -670,7 +673,8 @@ INSTRUCTIONS:
         phase_specific_keywords = {
             "ideation": ["ideation", "idea", "brainstorm", "concept", "innovation", "problem statement", "what problem"],
             "research": ["market research", "competitive analysis", "trend", "market trend", "competitor", "industry analysis", "user research"],
-            "prd_authoring": ["requirement", "prd", "user story", "acceptance criteria", "functional requirement", "non-functional", "specification"],
+            "requirements": ["requirement", "requirements", "requirements phase", "build requirements", "create requirements", "define requirements", "functional requirement", "non-functional requirement", "user story", "acceptance criteria", "prd", "product requirements", "requirements review", "prd review", "export prd", "requirements validation"],
+            "prd_authoring": ["prd", "product requirements document", "specification", "spec"],
             "strategy": ["strategy", "roadmap", "go-to-market", "gtm", "business model", "positioning"],
             "analysis": ["analyze", "analysis", "swot", "feasibility", "risk analysis", "gap analysis"],
             "validation": ["validate", "validation", "review", "quality check", "verify"],
@@ -720,14 +724,14 @@ INSTRUCTIONS:
         if best_confidence < 0.3 and not phase_name:
             # Check if query mentions other phases
             mentions_research = any(kw in query_lower for kw in ["research", "market", "competitive", "trend"])
-            mentions_requirements = any(kw in query_lower for kw in ["requirement", "prd", "specification", "user story"])
+            mentions_requirements = any(kw in query_lower for kw in ["requirement", "requirements", "build requirements", "create requirements", "define requirements", "prd", "specification", "user story"])
             mentions_strategy = any(kw in query_lower for kw in ["strategy", "roadmap", "gtm", "go-to-market"])
             
             if mentions_research:
                 best_agent = "research"
                 best_confidence = 0.6
             elif mentions_requirements:
-                best_agent = "prd_authoring"
+                best_agent = "requirements"  # Use dedicated requirements agent
                 best_confidence = 0.6
             elif mentions_strategy:
                 best_agent = "strategy"
@@ -853,14 +857,24 @@ INSTRUCTIONS:
         if should_include_validation and primary_agent != "validation":
             supporting.append("validation")
         
-        # PRD Authoring agent: Only for requirements phase or explicit PRD queries
+        # Requirements agent: For requirements phase or explicit requirements queries
+        should_include_requirements = False
+        if phase_name and ("requirement" in phase_name or "requirements" in phase_name):
+            should_include_requirements = True
+        elif any(kw in query_lower for kw in ["requirement", "requirements", "build requirements", "create requirements", "define requirements", "requirements phase", "functional requirement", "non-functional requirement"]):
+            should_include_requirements = True
+        
+        if should_include_requirements and primary_agent != "requirements":
+            supporting.append("requirements")
+        
+        # PRD Authoring agent: Only for explicit PRD document creation queries (not requirements phase)
         should_include_prd = False
-        if phase_name and ("requirement" in phase_name or "prd" in phase_name):
+        if phase_name and "prd" in phase_name and "requirement" not in phase_name:
             should_include_prd = True
-        elif any(kw in query_lower for kw in ["prd", "product requirements", "requirements document", "specification", "user story"]):
+        elif any(kw in query_lower for kw in ["prd", "product requirements document", "create prd", "write prd"]) and "requirement" not in query_lower:
             should_include_prd = True
         
-        if should_include_prd and primary_agent != "prd_authoring":
+        if should_include_prd and primary_agent != "prd_authoring" and primary_agent != "requirements":
             supporting.append("prd_authoring")
         
         # Atlassian agent: Only for explicit Confluence/Jira operations

@@ -284,23 +284,82 @@ async def save_conversation_async(
 ):
     """Save conversation to database asynchronously."""
     try:
-        from backend.api.database import router as db_router
         from sqlalchemy import text
         import uuid
+        
+        # Get session_id from request context or create one
+        session_id = request.context.get("session_id") if request.context else None
+        product_id_str = str(request.product_id) if request.product_id else None
+        
+        # Get user tenant_id
+        user_query = text("""
+            SELECT tenant_id FROM user_profiles WHERE id = :user_id
+        """)
+        user_result = await db.execute(user_query, {"user_id": str(user_id)})
+        user_row = user_result.fetchone()
+        tenant_id = str(user_row[0]) if user_row and user_row[0] else None
+        
+        # Create or get session_id if not provided
+        if not session_id:
+            if product_id_str:
+                # Check if a session exists for this product and user
+                session_check_query = text("""
+                    SELECT id FROM conversation_sessions
+                    WHERE product_id = :product_id
+                    AND user_id = :user_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                session_result = await db.execute(session_check_query, {
+                    "product_id": product_id_str,
+                    "user_id": str(user_id)
+                })
+                existing_session = session_result.fetchone()
+                
+                if existing_session:
+                    session_id = str(existing_session[0])
+                else:
+                    # Create a new session
+                    session_id = str(uuid.uuid4())
+                    session_create_query = text("""
+                        INSERT INTO conversation_sessions (id, user_id, product_id, tenant_id, title)
+                        VALUES (:id, :user_id, :product_id, :tenant_id, :title)
+                    """)
+                    await db.execute(session_create_query, {
+                        "id": session_id,
+                        "user_id": str(user_id),
+                        "product_id": product_id_str,
+                        "tenant_id": tenant_id,
+                        "title": f"Product {product_id_str[:8]}..." if product_id_str else "New Conversation"
+                    })
+            else:
+                # Create a new session without product
+                session_id = str(uuid.uuid4())
+                session_create_query = text("""
+                    INSERT INTO conversation_sessions (id, user_id, tenant_id, title)
+                    VALUES (:id, :user_id, :tenant_id, :title)
+                """)
+                await db.execute(session_create_query, {
+                    "id": session_id,
+                    "user_id": str(user_id),
+                    "tenant_id": tenant_id,
+                    "title": "New Conversation"
+                })
         
         # Save user message
         user_message_id = str(uuid.uuid4())
         await db.execute(
             text("""
                 INSERT INTO conversation_history 
-                (id, product_id, user_id, message_type, content, agent_name, created_at)
-                VALUES (:id, :product_id, :user_id, 'user', :content, NULL, NOW())
+                (id, session_id, product_id, message_type, content, agent_name, tenant_id, created_at)
+                VALUES (:id, :session_id, :product_id, 'user', :content, NULL, :tenant_id, NOW())
             """),
             {
                 "id": user_message_id,
-                "product_id": str(request.product_id) if request.product_id else None,
-                "user_id": str(user_id),
-                "content": request.query
+                "session_id": session_id,
+                "product_id": product_id_str,
+                "content": request.query,
+                "tenant_id": tenant_id
             }
         )
         
@@ -309,20 +368,22 @@ async def save_conversation_async(
         await db.execute(
             text("""
                 INSERT INTO conversation_history 
-                (id, product_id, user_id, message_type, content, agent_name, created_at)
-                VALUES (:id, :product_id, :user_id, 'assistant', :content, :agent_name, NOW())
+                (id, session_id, product_id, message_type, content, agent_name, agent_role, tenant_id, created_at)
+                VALUES (:id, :session_id, :product_id, 'agent', :content, :agent_name, :agent_role, :tenant_id, NOW())
             """),
             {
                 "id": assistant_message_id,
-                "product_id": str(request.product_id) if request.product_id else None,
-                "user_id": str(user_id),
+                "session_id": session_id,
+                "product_id": product_id_str,
                 "content": response,
-                "agent_name": request.primary_agent or "multi-agent"
+                "agent_name": request.primary_agent or "multi-agent",
+                "agent_role": request.primary_agent or "coordinator",
+                "tenant_id": tenant_id
             }
         )
         
         await db.commit()
-        logger.info("conversation_saved", user_id=str(user_id), message_count=2)
+        logger.info("conversation_saved", user_id=str(user_id), session_id=session_id, message_count=2)
     except Exception as e:
         logger.error("failed_to_save_conversation", error=str(e))
         await db.rollback()

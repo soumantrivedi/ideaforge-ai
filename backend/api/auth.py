@@ -18,6 +18,10 @@ from backend.config import settings
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
+# Separate router for callback endpoint without /api prefix
+# This is needed because McKinsey SSO redirects to /auth/mckinsey/callback (not /api/auth/mckinsey/callback)
+callback_router = APIRouter(prefix="/auth", tags=["authentication"])
+
 # Password hashing
 # Use bcrypt directly to avoid passlib compatibility issues
 import bcrypt
@@ -442,16 +446,58 @@ async def mckinsey_authorize():
 
         error_logger = get_oauth_error_logger()
 
+        # Validate McKinsey configuration (check for empty strings too)
+        client_id_empty = not settings.mckinsey_client_id or not settings.mckinsey_client_id.strip()
+        client_secret_empty = not settings.mckinsey_client_secret or not settings.mckinsey_client_secret.strip()
+        
+        if client_id_empty or client_secret_empty:
+            logger.error(
+                "mckinsey_configuration_missing",
+                client_id=settings.mckinsey_client_id,
+                has_client_id=bool(settings.mckinsey_client_id),
+                client_id_empty=client_id_empty,
+                has_client_secret=bool(settings.mckinsey_client_secret),
+                client_secret_empty=client_secret_empty,
+            )
+            error_logger.log_authorization_error(
+                error_message="McKinsey SSO not configured. MCKINSEY_CLIENT_ID and MCKINSEY_CLIENT_SECRET must be set.",
+                error_type=OAuthErrorType.CONFIGURATION_ERROR,
+                provider="mckinsey",
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="McKinsey SSO is not configured. Please contact your administrator.",
+            )
+
         # Get service instances
         provider = await get_mckinsey_provider()
         state_manager = await get_state_manager()
+        
+        # Validate provider configuration
+        if not provider.client_id or not provider.client_id.strip():
+            logger.error(
+                "mckinsey_provider_missing_client_id",
+                client_id=provider.client_id,
+                has_client_id=bool(provider.client_id),
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="McKinsey SSO client ID is not configured. Please set MCKINSEY_CLIENT_ID environment variable.",
+            )
 
         # Generate state and nonce for CSRF protection
         state = await state_manager.create_state()
         nonce = await state_manager.create_nonce()
 
-        # Generate authorization URL
-        authorization_url = await provider.get_authorization_url(state, nonce)
+        # Generate authorization URL (will validate client_id internally)
+        try:
+            authorization_url = await provider.get_authorization_url(state, nonce)
+        except ValueError as e:
+            logger.error("mckinsey_authorization_url_generation_failed", error=str(e))
+            raise HTTPException(
+                status_code=500,
+                detail=str(e),
+            )
 
         # Log performance metric
         duration_ms = (dt.now() - start_time).total_seconds() * 1000
@@ -872,6 +918,11 @@ async def mckinsey_callback(
         raise HTTPException(
             status_code=500, detail="McKinsey SSO login failed. Please try again."
         )
+
+
+# Register the same callback function on the callback_router (without /api prefix)
+# This allows McKinsey SSO to redirect to /auth/mckinsey/callback
+callback_router.get("/mckinsey/callback", response_model=LoginResponse)(mckinsey_callback)
 
 
 class McKinseyRefreshResponse(BaseModel):

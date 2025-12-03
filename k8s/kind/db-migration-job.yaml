@@ -27,18 +27,18 @@ spec:
           set -e
           echo "🔄 Starting database migration with backup..."
           
-          # Wait for PostgreSQL to be ready
-          echo "⏳ Waiting for PostgreSQL to be ready..."
-          until pg_isready -h postgres -U agentic_pm -d agentic_pm_db; do
+          # Wait for PostgreSQL HA primary to be ready
+          echo "⏳ Waiting for PostgreSQL HA primary to be ready..."
+          until pg_isready -h postgres-ha-primary -U agentic_pm -d agentic_pm_db; do
             echo "   PostgreSQL not ready, waiting..."
             sleep 2
           done
-          echo "✅ PostgreSQL is ready"
+          echo "✅ PostgreSQL HA primary is ready"
           
           # Create backup before migration
           BACKUP_FILE="/tmp/pre_migration_backup_$(date +%Y%m%d_%H%M%S).sql"
           echo "💾 Creating pre-migration backup..."
-          pg_dump -h postgres -U agentic_pm -d agentic_pm_db \
+          pg_dump -h postgres-ha-primary -U agentic_pm -d agentic_pm_db \
             --clean --if-exists --create \
             --verbose \
             --format=plain \
@@ -54,7 +54,7 @@ spec:
           
           # Check current schema version (if migration tracking table exists)
           echo "🔍 Checking current schema version..."
-          SCHEMA_VERSION=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "
+          SCHEMA_VERSION=$(psql -h postgres-ha-primary -U agentic_pm -d agentic_pm_db -t -c "
             SELECT version FROM schema_migrations ORDER BY applied_at DESC LIMIT 1;
           " 2>/dev/null | xargs || echo "0")
           
@@ -70,7 +70,7 @@ spec:
                 echo "   Running migration: $MIGRATION_NAME"
                 
                 # Check if migration already applied (if tracking table exists)
-                ALREADY_APPLIED=$(psql -h postgres -U agentic_pm -d agentic_pm_db -t -c "
+                ALREADY_APPLIED=$(psql -h postgres-ha-primary -U agentic_pm -d agentic_pm_db -t -c "
                   SELECT EXISTS (
                     SELECT 1 FROM schema_migrations 
                     WHERE version = '$MIGRATION_NAME'
@@ -81,10 +81,10 @@ spec:
                   echo "   ⏭️  Migration $MIGRATION_NAME already applied, skipping"
                 else
                   # Run migration
-                  psql -h postgres -U agentic_pm -d agentic_pm_db -f "$migration" 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
+                  psql -h postgres-ha-primary -U agentic_pm -d agentic_pm_db -f "$migration" 2>&1 | grep -v "NOTICE" | grep -v "already exists" || true
                   
                   # Record migration (if tracking table exists)
-                  psql -h postgres -U agentic_pm -d agentic_pm_db -c "
+                  psql -h postgres-ha-primary -U agentic_pm -d agentic_pm_db -c "
                     INSERT INTO schema_migrations (version, applied_at)
                     VALUES ('$MIGRATION_NAME', NOW())
                     ON CONFLICT (version) DO NOTHING;
@@ -102,7 +102,7 @@ spec:
           
           # Verify migration
           echo "📊 Verifying database schema..."
-          psql -h postgres -U agentic_pm -d agentic_pm_db -c "
+          psql -h postgres-ha-primary -U agentic_pm -d agentic_pm_db -c "
             SELECT 
               (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public') as tables,
               (SELECT COUNT(*) FROM schema_migrations) as migrations_applied;
@@ -134,27 +134,5 @@ spec:
       - name: migrations
         configMap:
           name: db-migrations
-      initContainers:
-      - name: wait-for-postgres
-        image: postgres:15-alpine
-        command:
-        - sh
-        - -c
-        - |
-          until pg_isready -h postgres -U agentic_pm; do
-            echo "Waiting for PostgreSQL..."
-            sleep 2
-          done
-          echo "PostgreSQL is ready!"
-        env:
-        - name: PGPASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: ideaforge-ai-secrets
-              key: POSTGRES_PASSWORD
-        - name: POSTGRES_USER
-          valueFrom:
-            configMapKeyRef:
-              name: ideaforge-ai-config
-              key: POSTGRES_USER
+      # Note: No init containers - job will handle PostgreSQL readiness checks in main container
 

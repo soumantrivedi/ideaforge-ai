@@ -27,6 +27,12 @@ spec:
           name: http
           protocol: TCP
         env:
+        # Database Connection Pool Configuration (increased to handle agent initialization)
+        # With 3 backend pods: 3 × (10 + 10) = 60 max connections (safe for PostgreSQL max_connections=100)
+        - name: DB_POOL_SIZE
+          value: "10"
+        - name: DB_MAX_OVERFLOW
+          value: "10"
         # Database Configuration
         # DATABASE_URL is constructed from individual components below
         - name: POSTGRES_HOST
@@ -366,29 +372,8 @@ spec:
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
-      initContainers:
-      - name: wait-for-postgres
-        image: busybox:1.36
-        command:
-        - sh
-        - -c
-        - |
-          until nc -z postgres 5432; do
-            echo "Waiting for postgres..."
-            sleep 2
-          done
-          echo "Postgres is ready!"
-      - name: wait-for-redis
-        image: busybox:1.36
-        command:
-        - sh
-        - -c
-        - |
-          until nc -z redis 6379; do
-            echo "Waiting for redis..."
-            sleep 2
-          done
-          echo "Redis is ready!"
+      # Note: Database migrations are handled separately via Kubernetes Jobs (db-migration-job.yaml)
+      # No init containers needed - backend will handle connection retries internally
 
 ---
 apiVersion: v1
