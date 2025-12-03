@@ -290,15 +290,29 @@ class ProviderRegistry:
         with self._lock:
             # Reload from settings (which reads from os.getenv)
             import os
-            openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+            # Check for OPENAI_API_KEYS first (comma-separated), then fall back to OPENAI_API_KEY
+            openai_keys_env = os.getenv("OPENAI_API_KEYS", "").strip()
+            if openai_keys_env:
+                # Reload multiple keys using the existing method
+                self._load_openai_keys()
+            else:
+                # Fall back to single OPENAI_API_KEY
+                openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+                # Remove quotes if present
+                if openai_key.startswith('"') and openai_key.endswith('"'):
+                    openai_key = openai_key[1:-1]
+                self._openai_key = openai_key if openai_key else None
+                if self._openai_key:
+                    self._openai_keys = [self._openai_key]
+                else:
+                    self._openai_keys = []
+            
             anthropic_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
             google_key = os.getenv("GOOGLE_API_KEY", "").strip()
             ai_gateway_client_id = os.getenv("AI_GATEWAY_CLIENT_ID", "").strip()
             ai_gateway_client_secret = os.getenv("AI_GATEWAY_CLIENT_SECRET", "").strip()
             
             # Remove quotes if present
-            if openai_key.startswith('"') and openai_key.endswith('"'):
-                openai_key = openai_key[1:-1]
             if anthropic_key.startswith('"') and anthropic_key.endswith('"'):
                 anthropic_key = anthropic_key[1:-1]
             if google_key.startswith('"') and google_key.endswith('"'):
@@ -308,10 +322,12 @@ class ProviderRegistry:
             if ai_gateway_client_secret.startswith('"') and ai_gateway_client_secret.endswith('"'):
                 ai_gateway_client_secret = ai_gateway_client_secret[1:-1]
             
-            # Update keys if they're different
-            if openai_key and openai_key != self._openai_key:
-                self._openai_key = openai_key
-                self._load_openai_keys()  # Reload keys (handles multiple keys)
+            # Update keys if they're different (OPENAI_API_KEYS already handled above)
+            if not openai_keys_env:
+                # Only update if using single key and it's different
+                if openai_key and openai_key != self._openai_key:
+                    self._openai_key = openai_key
+                    self._load_openai_keys()  # Reload keys (handles multiple keys)
             if anthropic_key and anthropic_key != self._claude_key:
                 self._claude_key = anthropic_key
             if google_key and google_key != self._gemini_key:
