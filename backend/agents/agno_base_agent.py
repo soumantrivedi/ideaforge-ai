@@ -1303,6 +1303,13 @@ Your response MUST show that you've used this context. Generic responses that ig
                 metadata["tool_calls"] = [str(tc) for tc in tool_calls_list]
                 self.metrics["tool_calls"] += len(tool_calls_list)
 
+            # Store the raw Agno response (RunOutput) in metadata for advanced extraction
+            # This allows V0/Lovable agents to access the original RunOutput if needed
+            if hasattr(response, "messages") or hasattr(response, "content") or hasattr(response, "model_provider_data"):
+                if metadata is None:
+                    metadata = {}
+                metadata["_agno_raw_response"] = response  # Store for advanced extraction
+            
             # Create response
             agent_response = AgentResponse(
                 agent_type=self.role,

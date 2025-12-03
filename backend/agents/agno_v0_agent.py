@@ -314,8 +314,40 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             prompt_text = response.response
             
             # If response is a RunOutput object (string representation), extract actual content
+            # First, try to get the raw Agno response from metadata if available
+            raw_agno_response = None
+            if response.metadata and "_agno_raw_response" in response.metadata:
+                raw_agno_response = response.metadata["_agno_raw_response"]
+            
+            # If response is a RunOutput object (string representation), extract actual content
             # The base agent should handle most cases, but we do additional cleanup here
             if isinstance(prompt_text, str) and ("RunOutput" in prompt_text or "run_id=" in prompt_text):
+                # Strategy 0: Try to extract from raw Agno response in metadata first
+                if raw_agno_response:
+                    try:
+                        # Check messages array in raw response
+                        if hasattr(raw_agno_response, "messages") and raw_agno_response.messages:
+                            for msg in reversed(raw_agno_response.messages):
+                                if hasattr(msg, "role") and msg.role == "assistant":
+                                    if hasattr(msg, "content") and msg.content:
+                                        content = msg.content
+                                        if isinstance(content, str) and content.strip() and "RunOutput" not in content and len(content) > 50:
+                                            prompt_text = content
+                                            logger.info("v0_prompt_extracted_from_raw_response_metadata", 
+                                                      extracted_length=len(prompt_text))
+                                            break
+                                    elif hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                                        reasoning = msg.reasoning_content
+                                        if isinstance(reasoning, str) and reasoning.strip() and "RunOutput" not in reasoning and len(reasoning) > 50:
+                                            prompt_text = reasoning
+                                            logger.info("v0_prompt_extracted_from_raw_reasoning", 
+                                                      extracted_length=len(prompt_text))
+                                            break
+                    except Exception as raw_extract_error:
+                        logger.warning("v0_prompt_raw_response_extraction_failed", 
+                                     error=str(raw_extract_error))
+                
+                # Continue with existing extraction strategies if still not found
                 # Try multiple extraction strategies
                 if hasattr(self, 'agno_agent') and self.agno_agent:
                     try:
