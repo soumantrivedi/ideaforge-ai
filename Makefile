@@ -1,4 +1,4 @@
-.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-test-agents kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace eks-setup-hpa eks-prewarm eks-performance-test eks-rollout-images kind-test-coordinator eks-test-coordinator kind-test-integration eks-test-integration
+.PHONY: help build-apps build-no-cache version kind-create kind-delete kind-deploy kind-test kind-test-agents kind-cleanup eks-deploy eks-test kind-agno-init eks-agno-init kind-load-secrets eks-load-secrets eks-setup-ghcr-secret eks-prepare-namespace eks-setup-hpa eks-prewarm eks-performance-test eks-db-backup eks-run-migrations eks-rollout eks-rollout-images kind-test-coordinator eks-test-coordinator kind-test-integration eks-test-integration
 
 # Get git SHA for versioning
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -1446,30 +1446,24 @@ eks-test-integration: ## Run comprehensive integration tests in EKS cluster (coo
 	echo ""; \
 	echo "✅ Integration tests completed"
 
-eks-rollout-images: ## Deploy new images with verification, database dump, and cleanup (use EKS_NAMESPACE=ns, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag, KUBECONFIG=path, BASE_URL=url)
-	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BACKEND_IMAGE_TAG)" ] || [ -z "$(FRONTEND_IMAGE_TAG)" ]; then \
-		echo "❌ Required parameters: EKS_NAMESPACE, BACKEND_IMAGE_TAG, FRONTEND_IMAGE_TAG"; \
-		echo "   Usage: make eks-rollout-images EKS_NAMESPACE=ns BACKEND_IMAGE_TAG=tag FRONTEND_IMAGE_TAG=tag [KUBECONFIG=path] [BASE_URL=url]"; \
-		echo "   Example: make eks-rollout-images EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BACKEND_IMAGE_TAG=3b0a9d6 FRONTEND_IMAGE_TAG=3b0a9d6 KUBECONFIG=/tmp/kubeconfig.sake62 BASE_URL=https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud"; \
+eks-db-backup: ## Create database backup before rollout (use EKS_NAMESPACE=ns, KUBECONFIG=path)
+	@if [ -z "$(EKS_NAMESPACE)" ]; then \
+		echo "❌ Required parameter: EKS_NAMESPACE"; \
+		echo "   Usage: make eks-db-backup EKS_NAMESPACE=ns [KUBECONFIG=path]"; \
+		echo "   Example: make eks-db-backup EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 KUBECONFIG=/tmp/kubeconfig.KmzJhr"; \
 		exit 1; \
 	fi
 	@if [ -n "$(KUBECONFIG)" ]; then \
 		export KUBECONFIG=$(KUBECONFIG); \
 		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
 	fi
-	@echo "🚀 EKS Image Rollout with Verification"
-	@echo "======================================"
-	@echo "   Namespace: $(EKS_NAMESPACE)"
-	@echo "   Backend Image: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
-	@echo "   Frontend Image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
-	@echo ""
-	@echo "📦 Step 1: Creating database backup..."
+	@echo "📦 Creating database backup..."
 	@BACKUP_DIR=$${BACKUP_DIR:-./backups}; \
 	mkdir -p $$BACKUP_DIR; \
 	TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
 	BACKUP_FILE="$$BACKUP_DIR/eks_db_backup_$(EKS_NAMESPACE)_$$TIMESTAMP.sql"; \
-	POSTGRES_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || \
-	                 kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (postgres,postgres-ha)' -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo ""); \
+	POSTGRES_POD=$$(kubectl get pods -n $(EKS_NAMESPACE) -l app=postgres-ha -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || \
+	                 kubectl get pods -n $(EKS_NAMESPACE) -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo ""); \
 	if [ -n "$$POSTGRES_POD" ]; then \
 		echo "   Found PostgreSQL pod: $$POSTGRES_POD"; \
 		POSTGRES_USER=$$(kubectl get configmap ideaforge-ai-config -n $(EKS_NAMESPACE) -o jsonpath='{.data.POSTGRES_USER}' 2>/dev/null || echo "agentic_pm"); \
@@ -1489,26 +1483,81 @@ eks-rollout-images: ## Deploy new images with verification, database dump, and c
 	else \
 		echo "   ⚠️  PostgreSQL pod not found, skipping backup"; \
 	fi
+
+eks-run-migrations: eks-db-backup ## Run database migrations as K8s job (use EKS_NAMESPACE=ns, BACKEND_IMAGE_TAG=tag, KUBECONFIG=path)
+	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BACKEND_IMAGE_TAG)" ]; then \
+		echo "❌ Required parameters: EKS_NAMESPACE, BACKEND_IMAGE_TAG"; \
+		echo "   Usage: make eks-run-migrations EKS_NAMESPACE=ns BACKEND_IMAGE_TAG=tag [KUBECONFIG=path]"; \
+		echo "   Example: make eks-run-migrations EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BACKEND_IMAGE_TAG=8685427 KUBECONFIG=/tmp/kubeconfig.KmzJhr"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "🔄 Running database migrations..."
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@echo "   Backend Image: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Updating migration job with backend image: $(BACKEND_IMAGE_TAG)"
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		sed -i '' "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" $(K8S_DIR)/eks/db-migrations-job.yaml; \
+	else \
+		sed -i "s|ghcr\.io/soumantrivedi/ideaforge-ai/backend:.*|ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)|g" $(K8S_DIR)/eks/db-migrations-job.yaml; \
+	fi
+	@echo "   Deleting any existing migration job..."
+	@kubectl delete job db-migrations -n $(EKS_NAMESPACE) --ignore-not-found=true || true
+	@echo "   Creating migration job..."
+	@kubectl apply -f $(K8S_DIR)/eks/db-migrations-job.yaml
+	@echo "⏳ Waiting for database migrations to complete..."
+	@if kubectl wait --for=condition=complete job/db-migrations -n $(EKS_NAMESPACE) --timeout=600s; then \
+		echo "✅ Database migrations completed successfully"; \
+		kubectl logs -n $(EKS_NAMESPACE) job/db-migrations --tail=20 || true; \
+	else \
+		echo "❌ Database migrations failed!"; \
+		echo "   Migration job logs:"; \
+		kubectl logs -n $(EKS_NAMESPACE) job/db-migrations --tail=50 || true; \
+		echo "   Migration job status:"; \
+		kubectl describe job db-migrations -n $(EKS_NAMESPACE) | tail -20 || true; \
+		echo ""; \
+		echo "⚠️  Migration failed. Backend rollout will not proceed."; \
+		exit 1; \
+	fi
+
+eks-rollout: eks-run-migrations ## Run migrations then rollout backend (use EKS_NAMESPACE=ns, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag, KUBECONFIG=path, BASE_URL=url)
+	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BACKEND_IMAGE_TAG)" ] || [ -z "$(FRONTEND_IMAGE_TAG)" ]; then \
+		echo "❌ Required parameters: EKS_NAMESPACE, BACKEND_IMAGE_TAG, FRONTEND_IMAGE_TAG"; \
+		echo "   Usage: make eks-rollout EKS_NAMESPACE=ns BACKEND_IMAGE_TAG=tag FRONTEND_IMAGE_TAG=tag [KUBECONFIG=path] [BASE_URL=url]"; \
+		echo "   Example: make eks-rollout EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BACKEND_IMAGE_TAG=8685427 FRONTEND_IMAGE_TAG=8685427 KUBECONFIG=/tmp/kubeconfig.KmzJhr BASE_URL=https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
 	@echo ""
-	@echo "🔄 Step 2: Updating image tags in deployments..."
+	@echo "🚀 Rolling out backend after successful migrations..."
+	@echo "   Backend Image: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend Image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
+	@echo ""
+	@echo "🔄 Step 1: Updating image tags in deployments..."
 	@kubectl set image deployment/backend backend=ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
 		(echo "❌ Failed to update backend image" && exit 1)
 	@kubectl set image deployment/frontend frontend=ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
 		(echo "❌ Failed to update frontend image" && exit 1)
 	@echo "   ✅ Image tags updated"
 	@echo ""
-	@echo "⏳ Step 3: Rolling out deployments (low timeout)..."
-	@kubectl rollout status deployment/backend -n $(EKS_NAMESPACE) --timeout=120s || \
-		(echo "⚠️  Backend rollout timeout (120s), checking status..." && \
+	@echo "⏳ Step 2: Rolling out deployments..."
+	@kubectl rollout status deployment/backend -n $(EKS_NAMESPACE) --timeout=300s || \
+		(echo "❌ Backend rollout failed!" && \
 		 kubectl get pods -n $(EKS_NAMESPACE) -l app=backend && \
-		 echo "   Continuing with verification...")
-	@kubectl rollout status deployment/frontend -n $(EKS_NAMESPACE) --timeout=120s || \
-		(echo "⚠️  Frontend rollout timeout (120s), checking status..." && \
+		 exit 1)
+	@kubectl rollout status deployment/frontend -n $(EKS_NAMESPACE) --timeout=300s || \
+		(echo "❌ Frontend rollout failed!" && \
 		 kubectl get pods -n $(EKS_NAMESPACE) -l app=frontend && \
-		 echo "   Continuing with verification...")
+		 exit 1)
 	@echo "   ✅ Rollouts completed"
 	@echo ""
-	@echo "🧹 Step 4: Cleaning up old replicasets..."
+	@echo "🧹 Step 3: Cleaning up old replicasets..."
 	@kubectl get replicasets -n $(EKS_NAMESPACE) -o json 2>/dev/null | \
 		jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' 2>/dev/null | \
 		while read rs; do \
@@ -1519,7 +1568,81 @@ eks-rollout-images: ## Deploy new images with verification, database dump, and c
 		done || echo "   No old replicasets to clean up"
 	@echo "   ✅ Cleanup complete"
 	@echo ""
-	@echo "🧪 Step 5: Verifying deployment..."
+	@echo "🧪 Step 4: Verifying deployment..."
+	@echo "   Checking pod status..."
+	@kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (backend,frontend)' --no-headers | \
+		awk '{if ($$3 != "Running") {print "   ⚠️  Pod " $$1 " is " $$3; exit 1}}' || true
+	@echo "   ✅ All pods are running"
+	@if [ -n "$(BASE_URL)" ]; then \
+		echo ""; \
+		echo "   Testing backend health endpoint via ingress..."; \
+		API_RESPONSE=$$(curl -s -f "$(BASE_URL)/api/health" 2>/dev/null || echo ""); \
+		if echo "$$API_RESPONSE" | grep -q "healthy\|status"; then \
+			echo "   ✅ API endpoint accessible"; \
+		else \
+			echo "   ⚠️  API endpoint may not be accessible"; \
+		fi; \
+		echo ""; \
+		echo "   Testing frontend via ingress..."; \
+		FRONTEND_RESPONSE=$$(curl -s -f "$(BASE_URL)/" -o /dev/null -w "%{http_code}" 2>/dev/null || echo "000"); \
+		if [ "$$FRONTEND_RESPONSE" = "200" ] || [ "$$FRONTEND_RESPONSE" = "304" ]; then \
+			echo "   ✅ Frontend accessible"; \
+		else \
+			echo "   ⚠️  Frontend returned HTTP $$FRONTEND_RESPONSE"; \
+		fi; \
+	fi
+	@echo ""
+	@echo "✅ Rollout complete!"
+	@echo "   Backend: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
+
+eks-rollout-images: eks-run-migrations ## Deploy new images with verification and cleanup (use EKS_NAMESPACE=ns, BACKEND_IMAGE_TAG=tag, FRONTEND_IMAGE_TAG=tag, KUBECONFIG=path, BASE_URL=url)
+	@if [ -z "$(EKS_NAMESPACE)" ] || [ -z "$(BACKEND_IMAGE_TAG)" ] || [ -z "$(FRONTEND_IMAGE_TAG)" ]; then \
+		echo "❌ Required parameters: EKS_NAMESPACE, BACKEND_IMAGE_TAG, FRONTEND_IMAGE_TAG"; \
+		echo "   Usage: make eks-rollout-images EKS_NAMESPACE=ns BACKEND_IMAGE_TAG=tag FRONTEND_IMAGE_TAG=tag [KUBECONFIG=path] [BASE_URL=url]"; \
+		echo "   Example: make eks-rollout-images EKS_NAMESPACE=20890-ideaforge-ai-dev-58a50 BACKEND_IMAGE_TAG=3b0a9d6 FRONTEND_IMAGE_TAG=3b0a9d6 KUBECONFIG=/tmp/kubeconfig.sake62 BASE_URL=https://ideaforge-ai-dev-58a50.cf.platform.mckinsey.cloud"; \
+		exit 1; \
+	fi
+	@if [ -n "$(KUBECONFIG)" ]; then \
+		export KUBECONFIG=$(KUBECONFIG); \
+		echo "   Using KUBECONFIG: $(KUBECONFIG)"; \
+	fi
+	@echo "🚀 EKS Image Rollout with Verification"
+	@echo "======================================"
+	@echo "   Namespace: $(EKS_NAMESPACE)"
+	@echo "   Backend Image: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
+	@echo "   Frontend Image: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
+	@echo ""
+	@echo "🔄 Step 1: Updating image tags in deployments..."
+	@kubectl set image deployment/backend backend=ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
+		(echo "❌ Failed to update backend image" && exit 1)
+	@kubectl set image deployment/frontend frontend=ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG) -n $(EKS_NAMESPACE) || \
+		(echo "❌ Failed to update frontend image" && exit 1)
+	@echo "   ✅ Image tags updated"
+	@echo ""
+	@echo "⏳ Step 2: Rolling out deployments..."
+	@kubectl rollout status deployment/backend -n $(EKS_NAMESPACE) --timeout=120s || \
+		(echo "⚠️  Backend rollout timeout (120s), checking status..." && \
+		 kubectl get pods -n $(EKS_NAMESPACE) -l app=backend && \
+		 echo "   Continuing with verification...")
+	@kubectl rollout status deployment/frontend -n $(EKS_NAMESPACE) --timeout=120s || \
+		(echo "⚠️  Frontend rollout timeout (120s), checking status..." && \
+		 kubectl get pods -n $(EKS_NAMESPACE) -l app=frontend && \
+		 echo "   Continuing with verification...")
+	@echo "   ✅ Rollouts completed"
+	@echo ""
+	@echo "🧹 Step 3: Cleaning up old replicasets..."
+	@kubectl get replicasets -n $(EKS_NAMESPACE) -o json 2>/dev/null | \
+		jq -r '.items[] | select(.spec.replicas == 0) | .metadata.name' 2>/dev/null | \
+		while read rs; do \
+			if [ -n "$$rs" ]; then \
+				echo "   Deleting replicaset: $$rs"; \
+				kubectl delete replicaset $$rs -n $(EKS_NAMESPACE) --ignore-not-found=true; \
+			fi; \
+		done || echo "   No old replicasets to clean up"
+	@echo "   ✅ Cleanup complete"
+	@echo ""
+	@echo "🧪 Step 4: Verifying deployment..."
 	@echo "   Checking pod status..."
 	@kubectl get pods -n $(EKS_NAMESPACE) -l 'app in (backend,frontend)' --no-headers | \
 		awk '{if ($$3 != "Running") {print "   ⚠️  Pod " $$1 " is " $$3; exit 1}}' || true
@@ -1575,6 +1698,3 @@ eks-rollout-images: ## Deploy new images with verification, database dump, and c
 	@echo "✅ Deployment complete!"
 	@echo "   Backend: ghcr.io/soumantrivedi/ideaforge-ai/backend:$(BACKEND_IMAGE_TAG)"
 	@echo "   Frontend: ghcr.io/soumantrivedi/ideaforge-ai/frontend:$(FRONTEND_IMAGE_TAG)"
-	@if [ -n "$$BACKUP_FILE" ] && [ -f "$$BACKUP_FILE" ]; then \
-		echo "   Database backup: $$BACKUP_FILE"; \
-	fi

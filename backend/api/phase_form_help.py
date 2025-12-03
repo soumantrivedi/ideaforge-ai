@@ -636,6 +636,9 @@ async def stream_phase_form_help_endpoint(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "X-Accel-Charset": "utf-8",
+            # Force HTTP/1.1 for streaming to avoid HTTP/2 protocol errors
+            "Upgrade": "",
         }
     )
 

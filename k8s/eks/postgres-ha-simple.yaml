@@ -257,7 +257,7 @@ spec:
           storage: 20Gi
 
 ---
-# Service for PostgreSQL HA - routes to primary (postgres-ha-0)
+# Service for PostgreSQL HA - routes to all pods (for read replicas)
 apiVersion: v1
 kind: Service
 metadata:
@@ -275,8 +275,30 @@ spec:
     name: postgres
   selector:
     app: postgres-ha
-  # Note: This service points to all pods, but application should connect to postgres-ha-0 for writes
-  # For automatic primary detection, use a sidecar or update connection string
+  # Note: This service points to all pods (primary + replicas)
+  # Use postgres-ha-primary service for writes
+
+---
+# Service for PostgreSQL HA Primary - routes only to postgres-ha-0 (writable)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-ha-primary
+  namespace: 20890-ideaforge-ai-dev-58a50
+  labels:
+    app: postgres-ha
+    component: database
+    role: primary
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgres-ha
+    statefulset.kubernetes.io/pod-name: postgres-ha-0
 
 ---
 # Headless service for StatefulSet DNS

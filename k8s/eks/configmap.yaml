@@ -5,7 +5,9 @@ metadata:
   namespace: 20890-ideaforge-ai-dev-58a50
 data:
   # Database Configuration
-  POSTGRES_HOST: postgres
+  # Use postgres-ha-primary service which routes only to postgres-ha-0 (primary writable instance)
+  # This ensures all writes go to the primary, not read-only replicas
+  POSTGRES_HOST: postgres-ha-primary
   POSTGRES_PORT: "5432"
   POSTGRES_USER: agentic_pm
   POSTGRES_DB: agentic_pm_db

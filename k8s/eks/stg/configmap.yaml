@@ -5,7 +5,9 @@ metadata:
   namespace: 20890-ideaforge-ai-stg-60df9
 data:
   # Database Configuration
-  POSTGRES_HOST: postgres-ha-0.postgres-ha
+  # Use postgres-ha-primary service which routes only to postgres-ha-0 (primary writable instance)
+  # This ensures all writes go to the primary, not read-only replicas
+  POSTGRES_HOST: postgres-ha-primary
   POSTGRES_PORT: "5432"
   POSTGRES_USER: agentic_pm
   POSTGRES_DB: agentic_pm_db
@@ -30,6 +32,10 @@ data:
   V0_API_TIMEOUT: "90.0"  # V0 API initial request timeout (90 seconds - returns immediately, background polling continues)
   V0_POLL_INTERVAL: "10"  # V0 status polling interval in seconds
   V0_POLL_MAX_DURATION: "900"  # V0 status polling maximum duration in seconds (15 minutes)
+  
+  # AI Gateway Configuration (DISABLED in staging - use OpenAI directly)
+  # AI Gateway is not fully tested in lower environments
+  AI_GATEWAY_ENABLED: "false"
   
   # Async Job Processing Configuration
   JOB_POLL_INTERVAL_MS: "10000"  # Polling interval in milliseconds (10 seconds for 400+ concurrent users)

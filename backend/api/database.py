@@ -222,25 +222,27 @@ async def create_knowledge_article(
         await db.execute(text(f"SET LOCAL app.current_user_id = '{current_user['id']}'"))
         
         product_id = article.get("product_id")
-        if product_id:
-            # Verify product access
-            product_check = text("""
-                SELECT id, tenant_id FROM products 
-                WHERE id = :product_id
-                AND (
-                  user_id = :user_id
-                  OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id AND permission IN ('edit', 'admin'))
-                )
-            """)
-            check_result = await db.execute(product_check, {
-                "product_id": product_id,
-                "user_id": current_user["id"]
-            })
-            product_row = check_result.fetchone()
-            if not product_row:
-                raise HTTPException(status_code=403, detail="Access denied to product")
-            if str(product_row[1]) != current_user["tenant_id"]:
-                raise HTTPException(status_code=403, detail="Product belongs to different tenant")
+        if not product_id:
+            raise HTTPException(status_code=400, detail="product_id is required for knowledge articles")
+        
+        # Verify product access
+        product_check = text("""
+            SELECT id, tenant_id FROM products 
+            WHERE id = :product_id
+            AND (
+              user_id = :user_id
+              OR id IN (SELECT product_id FROM product_shares WHERE shared_with_user_id = :user_id AND permission IN ('edit', 'admin'))
+            )
+        """)
+        check_result = await db.execute(product_check, {
+            "product_id": product_id,
+            "user_id": current_user["id"]
+        })
+        product_row = check_result.fetchone()
+        if not product_row:
+            raise HTTPException(status_code=403, detail="Access denied to product")
+        if str(product_row[1]) != current_user["tenant_id"]:
+            raise HTTPException(status_code=403, detail="Product belongs to different tenant")
         
         query = text("""
             INSERT INTO knowledge_articles 

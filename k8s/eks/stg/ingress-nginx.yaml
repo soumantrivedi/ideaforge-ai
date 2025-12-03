@@ -20,11 +20,25 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "600"
     nginx.ingress.kubernetes.io/upstream-keepalive-connections: "50"
     nginx.ingress.kubernetes.io/upstream-keepalive-timeout: "60"
-    # Specific timeout for multi-agent endpoint (longer processing time)
+    # Specific timeout and HTTP/2 configuration for long-running AI endpoints
     nginx.ingress.kubernetes.io/configuration-snippet: |
       location ~ ^/api/multi-agent/process$ {
         proxy_read_timeout 1800s;
         proxy_send_timeout 1800s;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        chunked_transfer_encoding on;
+      }
+      location ~ ^/api/phase-form-help/stream$ {
+        proxy_read_timeout 1800s;
+        proxy_send_timeout 1800s;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        chunked_transfer_encoding on;
       }
     # SPA support - serve index.html for all routes (handled by frontend's internal nginx)
     nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
@@ -41,6 +55,14 @@ spec:
       paths:
       # Multi-agent endpoint with longer timeout (must come before /api)
       - path: /api/multi-agent/process
+        pathType: Exact
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8000
+      # Phase form help endpoint with longer timeout (must come before /api)
+      - path: /api/phase-form-help/stream
         pathType: Exact
         backend:
           service:

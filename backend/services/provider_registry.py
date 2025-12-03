@@ -66,9 +66,14 @@ class ProviderRegistry:
                 logger.warning("gemini_client_creation_failed", error=str(e))
                 self._gemini_configured = False
         
-        # Rebuild AI Gateway client
+        # Rebuild AI Gateway client (only if enabled)
         self._ai_gateway_client = None
-        if self._ai_gateway_client_id and self._ai_gateway_client_secret:
+        ai_gateway_enabled = getattr(settings, 'ai_gateway_enabled', False)
+        # Check if AI Gateway is enabled (can be bool True, string "true", or "1")
+        if isinstance(ai_gateway_enabled, str):
+            ai_gateway_enabled = ai_gateway_enabled.lower() in ('true', '1', 'yes')
+        
+        if ai_gateway_enabled and self._ai_gateway_client_id and self._ai_gateway_client_secret:
             try:
                 # Get provider-specific base URLs and instance ID
                 instance_id = getattr(settings, 'ai_gateway_instance_id', None)
@@ -181,8 +186,12 @@ class ProviderRegistry:
         return self._gemini_key
     
     def has_ai_gateway(self) -> bool:
-        """Check if AI Gateway is configured."""
-        return self._ai_gateway_client is not None
+        """Check if AI Gateway is configured and enabled."""
+        ai_gateway_enabled = getattr(settings, 'ai_gateway_enabled', False)
+        # Check if AI Gateway is enabled (can be bool True, string "true", or "1")
+        if isinstance(ai_gateway_enabled, str):
+            ai_gateway_enabled = ai_gateway_enabled.lower() in ('true', '1', 'yes')
+        return ai_gateway_enabled and self._ai_gateway_client is not None
     
     def get_ai_gateway_client(self) -> Optional[AIGatewayClient]:
         """Get AI Gateway client."""

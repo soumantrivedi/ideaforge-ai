@@ -237,41 +237,8 @@ async def lifespan(app: FastAPI):
     db_connected = await init_db()
     if db_connected:
         logger.info("database_initialized", status="success")
-        
-        # Run database migrations automatically on startup
-        try:
-            import sys
-            import os
-            from pathlib import Path
-            # Add backend directory to path for migration module
-            backend_path = Path(__file__).parent
-            if str(backend_path) not in sys.path:
-                sys.path.insert(0, str(backend_path))
-            
-            # Import migrate module
-            migrate_path = backend_path / "database" / "migrate.py"
-            if migrate_path.exists():
-                import importlib.util
-                spec = importlib.util.spec_from_file_location("database.migrate", migrate_path)
-                migrate_module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(migrate_module)
-                
-                from database import DATABASE_URL
-                
-                logger.info("running_database_migrations")
-                migration_success = await migrate_module.run_migrations(DATABASE_URL)
-                if migration_success:
-                    logger.info("database_migrations_completed", status="success")
-                else:
-                    logger.error("database_migrations_failed", status="error")
-                    # Don't fail startup, but log the error
-            else:
-                logger.warning("migration_file_not_found", path=str(migrate_path))
-        except Exception as e:
-            logger.warning("database_migration_error", 
-                         error=str(e),
-                         error_type=type(e).__name__,
-                         message="Migrations failed but continuing startup")
+        # Note: Database migrations are run as separate Kubernetes jobs, not in the backend application
+        # This keeps migrations independent and avoids issues with backend deployment
     else:
         logger.warning("database_initialization_failed", status="warning")
     
