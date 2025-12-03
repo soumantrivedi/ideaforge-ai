@@ -471,17 +471,39 @@ CRITICAL: Use ALL details from the user input above. Preserve specific numbers, 
             from agno.models.openai import OpenAIChat
             from agno.models.anthropic import Claude
             from agno.models.google import Gemini
+            from backend.models.ai_gateway_model import AIGatewayModel
             
             original_model = agent.agno_agent.model
             fast_model = None
             
-            if provider_registry.has_openai_key():
-                # GPT-5.1 models require max_completion_tokens instead of max_tokens
-                fast_model = OpenAIChat(id="gpt-5.1-chat-latest", api_key=provider_registry.get_openai_key(), max_completion_tokens=2000)
-            elif provider_registry.has_gemini_key():
-                fast_model = Gemini(id="gemini-1.5-flash", api_key=provider_registry.get_gemini_key())
-            elif provider_registry.has_claude_key():
-                fast_model = Claude(id="claude-3-haiku-20240307", api_key=provider_registry.get_claude_key())
+            # Check AI Gateway first if enabled
+            if provider_registry.has_ai_gateway():
+                gateway_client = provider_registry.get_ai_gateway_client()
+                if gateway_client:
+                    fast_model_id = getattr(settings, "ai_gateway_fast_model", "gpt-5.1-chat-latest")
+                    try:
+                        fast_model = AIGatewayModel(
+                            id=fast_model_id,
+                            client=gateway_client,
+                            max_completion_tokens=2000,
+                        )
+                    except Exception as e:
+                        logger.warning("ai_gateway_fast_model_creation_failed", error=str(e))
+                        # Fall through to other providers
+            
+            # Only use direct providers if AI Gateway is not enabled or failed
+            if fast_model is None:
+                if provider_registry.has_openai_key():
+                    # GPT-5.1 models require max_completion_tokens instead of max_tokens
+                    api_key = provider_registry.get_openai_key()
+                    base_url = getattr(settings, "ai_gateway_openai_base_url", None)
+                    # Don't use AI Gateway URLs with direct API keys
+                    if not (base_url and "ai-gateway" in base_url):
+                        fast_model = OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key, max_completion_tokens=2000)
+                elif provider_registry.has_gemini_key():
+                    fast_model = Gemini(id="gemini-1.5-flash", api_key=provider_registry.get_gemini_key())
+                elif provider_registry.has_claude_key():
+                    fast_model = Claude(id="claude-3-haiku-20240307", api_key=provider_registry.get_claude_key())
             
             if fast_model:
                 agent.agno_agent.model = fast_model
