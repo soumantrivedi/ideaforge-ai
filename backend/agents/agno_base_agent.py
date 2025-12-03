@@ -403,7 +403,10 @@ class AgnoBaseAgent(ABC):
                         # Fall through to other providers
             
             # If AI Gateway not enabled or failed, try direct OpenAI
-            if provider_registry.has_openai_key():
+            # Only check has_openai_key if AI Gateway is NOT enabled
+            # When AI Gateway is enabled, has_openai_key() returns True (client_id stored as OpenAI key)
+            # but we should NOT use it - we should have used AIGatewayModel above
+            if not use_ai_gateway and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
                 model_id = getattr(
@@ -420,7 +423,6 @@ class AgnoBaseAgent(ABC):
 
                 if api_key:
                     # Only use direct OpenAI API if base_url is NOT an AI Gateway URL
-                    # If base_url contains "ai-gateway", we should have used AIGatewayModel above
                     if base_url and "ai-gateway" in base_url:
                         self.logger.warning(
                             "ai_gateway_url_but_not_using_gateway_model",
@@ -462,7 +464,8 @@ class AgnoBaseAgent(ABC):
                         # Fall through to other providers
             
             # If AI Gateway not enabled or failed, try direct OpenAI
-            if provider_registry.has_openai_key():
+            # Only check has_openai_key if AI Gateway is NOT enabled
+            if not use_ai_gateway and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
                 model_id = getattr(settings, "ai_gateway_standard_model", "gpt-5.1")
@@ -514,7 +517,8 @@ class AgnoBaseAgent(ABC):
                         # Fall through to other providers
             
             # If AI Gateway not enabled or failed, try direct OpenAI
-            if provider_registry.has_openai_key():
+            # Only check has_openai_key if AI Gateway is NOT enabled
+            if not use_ai_gateway and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
                 model_id = getattr(
