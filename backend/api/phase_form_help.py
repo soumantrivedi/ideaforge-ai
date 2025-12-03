@@ -499,7 +499,9 @@ CRITICAL: Use ALL details from the user input above. Preserve specific numbers, 
                     base_url = getattr(settings, "ai_gateway_openai_base_url", None)
                     # Don't use AI Gateway URLs with direct API keys
                     if not (base_url and "ai-gateway" in base_url):
-                        fast_model = OpenAIChat(id="gpt-5.1-chat-latest", api_key=api_key, max_completion_tokens=2000)
+                        # Use gpt-5.1-nano for fast model (Dec 2025 official model)
+                        fast_model_id = getattr(settings, "agent_model_fast", "gpt-5.1-nano")
+                        fast_model = OpenAIChat(id=fast_model_id, api_key=api_key, max_completion_tokens=2000)
                 elif provider_registry.has_gemini_key():
                     fast_model = Gemini(id="gemini-1.5-flash", api_key=provider_registry.get_gemini_key())
                 elif provider_registry.has_claude_key():

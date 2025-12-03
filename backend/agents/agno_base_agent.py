@@ -410,8 +410,9 @@ class AgnoBaseAgent(ABC):
             if not use_ai_gateway and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
+                # Use AGENT_MODEL_FAST if set, otherwise default to gpt-5.1-nano (Dec 2025)
                 model_id = getattr(
-                    settings, "ai_gateway_fast_model", "gpt-5.1-chat-latest"
+                    settings, "agent_model_fast", getattr(settings, "ai_gateway_fast_model", "gpt-5.1-nano")
                 )
 
                 self.logger.info(
@@ -470,7 +471,10 @@ class AgnoBaseAgent(ABC):
             if not use_ai_gateway and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
-                model_id = getattr(settings, "ai_gateway_standard_model", "gpt-5.1")
+                # Use AGENT_MODEL_STANDARD if set, otherwise default to gpt-5.1-mini (Dec 2025)
+                model_id = getattr(
+                    settings, "agent_model_standard", getattr(settings, "ai_gateway_standard_model", "gpt-5.1-mini")
+                )
                 if api_key:
                     # Only use direct OpenAI API if base_url is NOT an AI Gateway URL
                     if base_url and "ai-gateway" in base_url:
@@ -524,8 +528,9 @@ class AgnoBaseAgent(ABC):
             if not use_ai_gateway and provider_registry.has_openai_key():
                 api_key = provider_registry.get_openai_key()
                 base_url = getattr(settings, "ai_gateway_openai_base_url", None)
+                # Use AGENT_MODEL_PREMIUM if set, otherwise default to gpt-5.1 (Dec 2025)
                 model_id = getattr(
-                    settings, "ai_gateway_premium_model", settings.agent_model_primary
+                    settings, "agent_model_premium", getattr(settings, "ai_gateway_premium_model", settings.agent_model_primary)
                 )
                 if api_key:
                     # Only use direct OpenAI API if base_url is NOT an AI Gateway URL
