@@ -241,6 +241,7 @@ async def stream_design_prompt_generation(
                     
                     all_phases_data = []
                     current_phase_data = None
+                    design_form_data = {}
                     for row in phase_rows:
                         form_data_raw = row[0]
                         # Ensure form_data is a dict, not a list
@@ -263,16 +264,46 @@ async def stream_design_prompt_generation(
                             "phase_order": row[3]
                         }
                         all_phases_data.append(phase_item)
-                        # If this is the Design phase, mark it as current
+                        # If this is the Design phase, mark it as current and extract form data
                         if row[2] and "design" in row[2].lower():
                             current_phase_data = phase_item
+                            design_form_data = form_data
+                    
+                    # Fetch conversation history for the product to include in system context
+                    # Note: We need to get tenant_id from current_user, but in streaming we only have user_id
+                    # We'll fetch it from the database or use a default query
+                    conversation_history_query = text("""
+                        SELECT ch.message_type, ch.agent_name, ch.content, ch.created_at
+                        FROM conversation_history ch
+                        WHERE ch.product_id = :product_id
+                        ORDER BY ch.created_at ASC
+                        LIMIT 100
+                    """)
+                    conv_result = await db.execute(conversation_history_query, {
+                        "product_id": request.product_id
+                    })
+                    conv_rows = conv_result.fetchall()
+                    
+                    # Summarize conversation history for system context
+                    conversation_summary_parts = []
+                    for conv_row in conv_rows:
+                        msg_type = conv_row[0]
+                        agent_name = conv_row[1] or ""
+                        content = conv_row[2] or ""  # content is at index 2
+                        if content:
+                            agent_label = f" ({agent_name})" if agent_name else ""
+                            conversation_summary_parts.append(f"{msg_type.upper()}{agent_label}: {content[:500]}")
+                    
+                    conversation_summary = "\n".join(conversation_summary_parts) if conversation_summary_parts else ""
                     
                     # Use Agno agent's process method which supports streaming via arun
-                    # Pass comprehensive context with all phases data
+                    # Pass comprehensive context with all phases data, conversation summary, and design form data
                     prompt = await agno_v0_agent.generate_v0_prompt(
                         product_context=product_context,
                         phase_data=current_phase_data,
-                        all_phases_data=all_phases_data
+                        all_phases_data=all_phases_data,
+                        conversation_summary=conversation_summary,
+                        design_form_data=design_form_data
                     )
                     
                     # Stream the prompt in chunks for smooth UX
@@ -310,6 +341,7 @@ async def stream_design_prompt_generation(
             
             all_phases_data = []
             current_phase_data = None
+            design_form_data = {}
             for row in phase_rows:
                 form_data_raw = row[0]
                 # Ensure form_data is a dict, not a list
@@ -334,6 +366,32 @@ async def stream_design_prompt_generation(
                 all_phases_data.append(phase_item)
                 if row[2] and "design" in row[2].lower():
                     current_phase_data = phase_item
+                    design_form_data = form_data
+            
+            # Fetch conversation history for the product to include in system context
+            conversation_history_query = text("""
+                SELECT ch.message_type, ch.agent_name, ch.content, ch.created_at
+                FROM conversation_history ch
+                WHERE ch.product_id = :product_id
+                ORDER BY ch.created_at ASC
+                LIMIT 100
+            """)
+            conv_result = await db.execute(conversation_history_query, {
+                "product_id": request.product_id
+            })
+            conv_rows = conv_result.fetchall()
+            
+            # Summarize conversation history for system context
+            conversation_summary_parts = []
+            for conv_row in conv_rows:
+                msg_type = conv_row[0]
+                agent_name = conv_row[1] or ""
+                content = conv_row[3] or ""
+                if content:
+                    agent_label = f" ({agent_name})" if agent_name else ""
+                    conversation_summary_parts.append(f"{msg_type.upper()}{agent_label}: {content[:500]}")
+            
+            conversation_summary = "\n".join(conversation_summary_parts) if conversation_summary_parts else ""
             
             # Ensure product_context is a dict before passing to agent
             if not isinstance(product_context, dict):
@@ -347,7 +405,9 @@ async def stream_design_prompt_generation(
                 prompt = await agno_lovable_agent.generate_lovable_prompt(
                     product_context=product_context,
                     phase_data=current_phase_data,
-                    all_phases_data=all_phases_data
+                    all_phases_data=all_phases_data,
+                    conversation_summary=conversation_summary,
+                    design_form_data=design_form_data
                 )
                 
                 # Stream the prompt in chunks
@@ -548,6 +608,7 @@ async def generate_design_prompt(
                     
                     all_phases_data = []
                     current_phase_data = None
+                    design_form_data = {}
                     for row in phase_rows:
                         form_data_raw = row[0]
                         # Ensure form_data is a dict, not a list
@@ -570,15 +631,45 @@ async def generate_design_prompt(
                             "phase_order": row[3]
                         }
                         all_phases_data.append(phase_item)
-                        # If this is the Design phase, mark it as current
+                        # If this is the Design phase, mark it as current and extract form data
                         if row[2] and "design" in row[2].lower():
                             current_phase_data = phase_item
+                            design_form_data = form_data
+                    
+                    # Fetch conversation history for the product to include in system context
+                    conversation_history_query = text("""
+                        SELECT ch.message_type, ch.agent_name, ch.content, ch.created_at
+                        FROM conversation_history ch
+                        WHERE ch.product_id = :product_id
+                        AND ch.tenant_id = :tenant_id
+                        ORDER BY ch.created_at ASC
+                        LIMIT 100
+                    """)
+                    conv_result = await db.execute(conversation_history_query, {
+                        "product_id": request.product_id,
+                        "tenant_id": current_user["tenant_id"]
+                    })
+                    conv_rows = conv_result.fetchall()
+                    
+                    # Summarize conversation history for system context
+                    conversation_summary_parts = []
+                    for conv_row in conv_rows:
+                        msg_type = conv_row[0]
+                        agent_name = conv_row[1] or ""
+                        content = conv_row[2] or ""  # content is at index 2
+                        if content:
+                            agent_label = f" ({agent_name})" if agent_name else ""
+                            conversation_summary_parts.append(f"{msg_type.upper()}{agent_label}: {content[:500]}")
+                    
+                    conversation_summary = "\n".join(conversation_summary_parts) if conversation_summary_parts else ""
                     
                     # Optimized prompt generation with comprehensive context (uses fast model tier and optimized system prompt)
                     prompt = await agno_v0_agent.generate_v0_prompt(
                         product_context=product_context,
                         phase_data=current_phase_data,
-                        all_phases_data=all_phases_data
+                        all_phases_data=all_phases_data,
+                        conversation_summary=conversation_summary,
+                        design_form_data=design_form_data
                     )
                 except Exception as e:
                     # If error mentions V0 API key, provide helpful message
@@ -617,6 +708,7 @@ async def generate_design_prompt(
             # Build all phases data (limit to essential info)
             all_phases_data = []
             current_phase_data = None
+            design_form_data = {}
             for row in phase_rows:
                 form_data_raw = row[0]
                 # Ensure form_data is a dict, not a list
@@ -639,9 +731,37 @@ async def generate_design_prompt(
                     "phase_order": row[3]
                 }
                 all_phases_data.append(phase_item)
-                # If this is the Design phase, mark it as current
+                # If this is the Design phase, mark it as current and extract form data
                 if row[2] and "design" in row[2].lower():
                     current_phase_data = phase_item
+                    design_form_data = form_data
+            
+            # Fetch conversation history for the product to include in system context
+            conversation_history_query = text("""
+                SELECT ch.message_type, ch.agent_name, ch.content, ch.created_at
+                FROM conversation_history ch
+                WHERE ch.product_id = :product_id
+                AND ch.tenant_id = :tenant_id
+                ORDER BY ch.created_at ASC
+                LIMIT 100
+            """)
+            conv_result = await db.execute(conversation_history_query, {
+                "product_id": request.product_id,
+                "tenant_id": current_user["tenant_id"]
+            })
+            conv_rows = conv_result.fetchall()
+            
+            # Summarize conversation history for system context
+            conversation_summary_parts = []
+            for conv_row in conv_rows:
+                msg_type = conv_row[0]
+                agent_name = conv_row[1] or ""
+                content = conv_row[3] or ""
+                if content:
+                    agent_label = f" ({agent_name})" if agent_name else ""
+                    conversation_summary_parts.append(f"{msg_type.upper()}{agent_label}: {content[:500]}")
+            
+            conversation_summary = "\n".join(conversation_summary_parts) if conversation_summary_parts else ""
             
             # Ensure product_context is a dict before passing to agent
             if not isinstance(product_context, dict):
@@ -654,7 +774,9 @@ async def generate_design_prompt(
             prompt = await agno_lovable_agent.generate_lovable_prompt(
                 product_context=product_context,
                 phase_data=current_phase_data,
-                all_phases_data=all_phases_data
+                all_phases_data=all_phases_data,
+                conversation_summary=conversation_summary,
+                design_form_data=design_form_data
             )
         else:
             raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")

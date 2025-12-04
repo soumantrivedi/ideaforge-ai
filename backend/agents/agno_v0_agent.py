@@ -251,7 +251,9 @@ Guidelines:
         self,
         product_context: Dict[str, Any],
         phase_data: Optional[Dict[str, Any]] = None,
-        all_phases_data: Optional[List[Dict[str, Any]]] = None
+        all_phases_data: Optional[List[Dict[str, Any]]] = None,
+        conversation_summary: Optional[str] = None,
+        design_form_data: Optional[Dict[str, Any]] = None
     ) -> str:
         """Generate a detailed, comprehensive V0 prompt based on complete product context.
         
@@ -309,9 +311,27 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             self.agno_agent.tools = []
         
         try:
+            # Build context with conversation summary and design form data for system context
+            process_context = {
+                "task": "v0_prompt_generation",
+                "disable_tools": True
+            }
+            
+            # Add conversation history summary to context (will be included in system prompt)
+            if conversation_summary:
+                process_context["conversation_history"] = [
+                    {"role": "user", "content": msg.split(": ", 1)[1] if ": " in msg else msg}
+                    for msg in conversation_summary.split("\n") if msg.strip()
+                ]
+            
+            # Add design form data to context (will be included in system prompt)
+            if design_form_data:
+                process_context["form_data"] = design_form_data
+            
             # Use fast model tier (already set in __init__)
             # Context explicitly indicates this is prompt generation only, not submission
-            response = await self.process([message], context={"task": "v0_prompt_generation", "disable_tools": True})
+            # The conversation_history and form_data in context will be included in enhanced system prompt
+            response = await self.process([message], context=process_context)
             prompt_text = response.response
             
             # Clean the prompt - remove headers/footers that AI might add
