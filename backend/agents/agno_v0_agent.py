@@ -604,7 +604,28 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         
         # Get or create project
         project_id = existing_project_id
-        project_name = f"V0 Project {product_id[:8] if product_id else 'Default'}"
+        
+        # Get product name from database if available
+        product_name = None
+        if db and product_id:
+            try:
+                from sqlalchemy import text
+                product_query = text("SELECT name FROM products WHERE id = :product_id")
+                product_result = await db.execute(product_query, {"product_id": product_id})
+                product_row = product_result.fetchone()
+                if product_row:
+                    product_name = product_row[0]
+            except Exception as product_error:
+                logger.warning("failed_to_fetch_product_name",
+                             error=str(product_error),
+                             product_id=product_id)
+        
+        # Use product name with product ID appended, or fallback to default
+        if product_name:
+            project_name = f"{product_name} - {product_id}"
+        else:
+            project_name = f"V0 Project {product_id[:8] if product_id else 'Default'}"
+        
         project_url = None
         
         try:
@@ -930,7 +951,28 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         # Step 2: Get or create project (IMMEDIATE - < 1 second)
         # This MUST happen BEFORE submitting chat - matches test workflow
         project_id = existing_project_id
-        project_name = f"V0 Project {product_id[:8] if product_id else 'Default'}"
+        
+        # Get product name from database if available
+        product_name = None
+        if db and product_id:
+            try:
+                from sqlalchemy import text
+                product_query = text("SELECT name FROM products WHERE id = :product_id")
+                product_result = await db.execute(product_query, {"product_id": product_id})
+                product_row = product_result.fetchone()
+                if product_row:
+                    product_name = product_row[0]
+            except Exception as product_error:
+                logger.warning("failed_to_fetch_product_name",
+                             error=str(product_error),
+                             product_id=product_id)
+        
+        # Use product name with product ID appended, or fallback to default
+        if product_name:
+            project_name = f"{product_name} - {product_id}"
+        else:
+            project_name = f"V0 Project {product_id[:8] if product_id else 'Default'}"
+        
         project_url = None
         
         try:
