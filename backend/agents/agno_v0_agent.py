@@ -1544,18 +1544,24 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 }
                 
             except httpx.RequestError as e:
+                # Provide more descriptive error message
+                error_msg = str(e) if str(e) else f"{e.__class__.__name__}"
+                if hasattr(e, 'request') and e.request:
+                    error_msg += f" (URL: {e.request.url})"
                 logger.error("v0_status_check_error",
                            projectId=project_id,
-                           error=str(e),
+                           error=error_msg,
+                           error_type=e.__class__.__name__,
                            user_id=user_id)
-                raise ValueError(f"V0 API connection error: {str(e)}")
+                raise ValueError(f"V0 API connection error: {error_msg}")
             except Exception as e:
+                error_msg = str(e) if str(e) else f"{e.__class__.__name__}: Unknown error occurred"
                 logger.error("v0_status_check_error",
                            projectId=project_id,
-                           error=str(e),
+                           error=error_msg,
                            error_type=type(e).__name__,
                            user_id=user_id)
-                raise ValueError(f"V0 status check error: {str(e)}")
+                raise ValueError(f"V0 status check error: {error_msg}")
     
     async def poll_and_update_prototype_status(
         self,
