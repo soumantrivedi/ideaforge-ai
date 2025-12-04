@@ -763,60 +763,6 @@ INSTRUCTIONS:
         """Get shared context."""
         return self.shared_context.copy()
     
-    def _detect_phase_from_conversation(self, conversation_history: List[Dict[str, Any]]) -> Optional[str]:
-        """
-        Intelligently detect which phase the user is discussing from conversation history.
-        Analyzes recent messages to understand conversational context.
-        """
-        if not conversation_history:
-            return None
-        
-        # Analyze last 10 messages (most recent first) for phase indicators
-        recent_messages = conversation_history[-10:] if len(conversation_history) > 10 else conversation_history
-        recent_messages = list(reversed(recent_messages))  # Most recent last
-        
-        phase_keywords = {
-            "requirements": ["requirement", "prd", "functional requirement", "user story", "acceptance criteria", "nfr", "frs", "specification", "requirements phase"],
-            "ideation": ["ideation", "idea", "brainstorm", "concept", "innovation", "problem statement", "ideation phase"],
-            "research": ["market research", "competitive analysis", "trend", "market trend", "competitor", "industry analysis", "research phase"],
-            "design": ["design", "mockup", "ui", "ux", "wireframe", "prototype", "design phase"],
-            "strategy": ["strategy", "roadmap", "go-to-market", "gtm", "business model", "positioning", "strategy phase"],
-            "analysis": ["analysis", "swot", "feasibility", "risk analysis", "gap analysis", "analysis phase"],
-        }
-        
-        phase_scores = {}
-        for phase, keywords in phase_keywords.items():
-            score = 0
-            for msg in recent_messages:
-                content = msg.get("content", "").lower() if isinstance(msg.get("content"), str) else ""
-                agent_name = msg.get("agent_name", "").lower() if msg.get("agent_name") else ""
-                agent_role = msg.get("agent_role", "").lower() if msg.get("agent_role") else ""
-                
-                # Check if message content mentions phase keywords
-                for keyword in keywords:
-                    if keyword in content:
-                        # More recent messages have higher weight
-                        weight = 1.0 + (recent_messages.index(msg) * 0.1)
-                        score += weight
-                
-                # Check if agent name/role indicates phase
-                if phase in agent_name or phase in agent_role:
-                    weight = 1.5 + (recent_messages.index(msg) * 0.1)
-                    score += weight
-            
-            if score > 0:
-                phase_scores[phase] = score
-        
-        # Return phase with highest score if it's significant
-        if phase_scores:
-            best_phase = max(phase_scores.items(), key=lambda x: x[1])[0]
-            best_score = phase_scores[best_phase]
-            # Only return if score is significant (at least 2 mentions)
-            if best_score >= 2.0:
-                return best_phase
-        
-        return None
-    
     def determine_primary_agent(self, query: str, context: Optional[Dict[str, Any]] = None) -> tuple[str, float]:
         """
         Intelligently determine the best agent to handle a query based on:
