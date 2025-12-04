@@ -816,9 +816,22 @@ RESPONSE REQUIREMENTS:
             plain_text = extract_plain_text(response_text)
             
             # Apply hard character limits to prevent excessive generation
-            # Short mode: max 2000 characters, Verbose mode: max 8000 characters
-            MAX_CHARS_SHORT = 2000
-            MAX_CHARS_VERBOSE = 8000
+            # Phase-specific limits: Requirements and PRD phases need higher limits for comprehensive outputs
+            phase_name_lower = request.phase_name.lower() if request.phase_name else ""
+            is_requirements_phase = "requirement" in phase_name_lower or "prd" in phase_name_lower
+            
+            if is_requirements_phase:
+                # Requirements/PRD phases need comprehensive responses - much higher limits
+                MAX_CHARS_SHORT = 10000  # Increased from 2000 for requirements
+                MAX_CHARS_VERBOSE = 50000  # Increased from 8000 for requirements (comprehensive PRD sections)
+                logger.info("phase_form_help_using_extended_limits",
+                           phase=request.phase_name,
+                           short_limit=MAX_CHARS_SHORT,
+                           verbose_limit=MAX_CHARS_VERBOSE)
+            else:
+                # Other phases use standard limits
+                MAX_CHARS_SHORT = 2000
+                MAX_CHARS_VERBOSE = 8000
             
             def truncate_at_complete_thought(text: str, max_chars: int) -> str:
                 """Truncate text at a complete sentence or paragraph boundary to maintain usability."""
