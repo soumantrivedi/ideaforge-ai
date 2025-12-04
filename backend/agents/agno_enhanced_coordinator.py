@@ -466,6 +466,16 @@ class AgnoEnhancedCoordinator:
             context["user_inputs"] = self.shared_context.get("user_inputs", [])
             # Also include as message_history for NLU extraction
             context["message_history"] = self.shared_context["conversation_history"]
+            
+            # Extract phase context from conversation history if not already provided
+            # This helps the coordinator understand which phase the user is discussing
+            if not context.get("phase_name") and not user_context.get("phase_name"):
+                detected_phase = self._detect_phase_from_conversation(context["conversation_history"])
+                if detected_phase:
+                    context["phase_name"] = detected_phase
+                    self.logger.info("phase_detected_from_conversation", 
+                                   detected_phase=detected_phase,
+                                   product_id=product_id)
         
         # Retrieve knowledge from RAG - CRITICAL: Filter by product_id to get only relevant documents
         if session_ids or product_id:
@@ -691,6 +701,60 @@ INSTRUCTIONS:
             ))
         return capabilities
     
+    def _detect_phase_from_conversation(self, conversation_history: List[Dict[str, Any]]) -> Optional[str]:
+        """
+        Intelligently detect which phase the user is discussing from conversation history.
+        Analyzes recent messages to understand conversational context.
+        """
+        if not conversation_history:
+            return None
+        
+        # Analyze last 10 messages (most recent first) for phase indicators
+        recent_messages = conversation_history[-10:] if len(conversation_history) > 10 else conversation_history
+        recent_messages = list(reversed(recent_messages))  # Most recent last
+        
+        phase_keywords = {
+            "requirements": ["requirement", "prd", "functional requirement", "user story", "acceptance criteria", "nfr", "frs", "specification", "requirements phase"],
+            "ideation": ["ideation", "idea", "brainstorm", "concept", "innovation", "problem statement", "ideation phase"],
+            "research": ["market research", "competitive analysis", "trend", "market trend", "competitor", "industry analysis", "research phase"],
+            "design": ["design", "mockup", "ui", "ux", "wireframe", "prototype", "design phase"],
+            "strategy": ["strategy", "roadmap", "go-to-market", "gtm", "business model", "positioning", "strategy phase"],
+            "analysis": ["analysis", "swot", "feasibility", "risk analysis", "gap analysis", "analysis phase"],
+        }
+        
+        phase_scores = {}
+        for phase, keywords in phase_keywords.items():
+            score = 0
+            for msg in recent_messages:
+                content = msg.get("content", "").lower() if isinstance(msg.get("content"), str) else ""
+                agent_name = msg.get("agent_name", "").lower() if msg.get("agent_name") else ""
+                agent_role = msg.get("agent_role", "").lower() if msg.get("agent_role") else ""
+                
+                # Check if message content mentions phase keywords
+                for keyword in keywords:
+                    if keyword in content:
+                        # More recent messages have higher weight
+                        weight = 1.0 + (recent_messages.index(msg) * 0.1)
+                        score += weight
+                
+                # Check if agent name/role indicates phase
+                if phase in agent_name or phase in agent_role:
+                    weight = 1.5 + (recent_messages.index(msg) * 0.1)
+                    score += weight
+            
+            if score > 0:
+                phase_scores[phase] = score
+        
+        # Return phase with highest score if it's significant
+        if phase_scores:
+            best_phase = max(phase_scores.items(), key=lambda x: x[1])[0]
+            best_score = phase_scores[best_phase]
+            # Only return if score is significant (at least 2 mentions)
+            if best_score >= 2.0:
+                return best_phase
+        
+        return None
+    
     def get_interaction_history(self) -> List[AgentInteraction]:
         """Get all agent interactions."""
         return self.interaction_history.copy()
@@ -698,6 +762,60 @@ INSTRUCTIONS:
     def get_shared_context(self) -> Dict[str, Any]:
         """Get shared context."""
         return self.shared_context.copy()
+    
+    def _detect_phase_from_conversation(self, conversation_history: List[Dict[str, Any]]) -> Optional[str]:
+        """
+        Intelligently detect which phase the user is discussing from conversation history.
+        Analyzes recent messages to understand conversational context.
+        """
+        if not conversation_history:
+            return None
+        
+        # Analyze last 10 messages (most recent first) for phase indicators
+        recent_messages = conversation_history[-10:] if len(conversation_history) > 10 else conversation_history
+        recent_messages = list(reversed(recent_messages))  # Most recent last
+        
+        phase_keywords = {
+            "requirements": ["requirement", "prd", "functional requirement", "user story", "acceptance criteria", "nfr", "frs", "specification", "requirements phase"],
+            "ideation": ["ideation", "idea", "brainstorm", "concept", "innovation", "problem statement", "ideation phase"],
+            "research": ["market research", "competitive analysis", "trend", "market trend", "competitor", "industry analysis", "research phase"],
+            "design": ["design", "mockup", "ui", "ux", "wireframe", "prototype", "design phase"],
+            "strategy": ["strategy", "roadmap", "go-to-market", "gtm", "business model", "positioning", "strategy phase"],
+            "analysis": ["analysis", "swot", "feasibility", "risk analysis", "gap analysis", "analysis phase"],
+        }
+        
+        phase_scores = {}
+        for phase, keywords in phase_keywords.items():
+            score = 0
+            for msg in recent_messages:
+                content = msg.get("content", "").lower() if isinstance(msg.get("content"), str) else ""
+                agent_name = msg.get("agent_name", "").lower() if msg.get("agent_name") else ""
+                agent_role = msg.get("agent_role", "").lower() if msg.get("agent_role") else ""
+                
+                # Check if message content mentions phase keywords
+                for keyword in keywords:
+                    if keyword in content:
+                        # More recent messages have higher weight
+                        weight = 1.0 + (recent_messages.index(msg) * 0.1)
+                        score += weight
+                
+                # Check if agent name/role indicates phase
+                if phase in agent_name or phase in agent_role:
+                    weight = 1.5 + (recent_messages.index(msg) * 0.1)
+                    score += weight
+            
+            if score > 0:
+                phase_scores[phase] = score
+        
+        # Return phase with highest score if it's significant
+        if phase_scores:
+            best_phase = max(phase_scores.items(), key=lambda x: x[1])[0]
+            best_score = phase_scores[best_phase]
+            # Only return if score is significant (at least 2 mentions)
+            if best_score >= 2.0:
+                return best_phase
+        
+        return None
     
     def determine_primary_agent(self, query: str, context: Optional[Dict[str, Any]] = None) -> tuple[str, float]:
         """
@@ -828,20 +946,23 @@ INSTRUCTIONS:
         # Only default to ideation if:
         # 1. No phase context is available AND
         # 2. Confidence is very low AND
-        # 3. Query doesn't explicitly mention other phases
+        # 3. Query doesn't explicitly mention other phases AND
+        # 4. Query explicitly mentions ideation keywords
         if best_confidence < 0.3 and not phase_name:
-            # Check if query mentions other phases
+            # Check if query mentions other phases (prioritize these over ideation)
             mentions_research = any(kw in query_lower for kw in ["research", "market", "competitive", "trend", "market trend", "industry", "competitor"])
-            mentions_requirements = any(kw in query_lower for kw in ["requirement", "prd", "specification", "user story", "acceptance criteria", "functional requirement"])
+            mentions_requirements = any(kw in query_lower for kw in ["requirement", "prd", "specification", "user story", "acceptance criteria", "functional requirement", "nfr", "frs"])
             mentions_design = any(kw in query_lower for kw in ["design", "mockup", "ui", "ux", "wireframe", "prototype"])
             mentions_strategy = any(kw in query_lower for kw in ["strategy", "roadmap", "gtm", "go-to-market", "business model", "positioning"])
             mentions_ideation = any(kw in query_lower for kw in ["ideation", "brainstorm", "idea generation", "innovation", "problem statement", "what problem"])
             
+            # CRITICAL: Prioritize requirements/research/design/strategy over ideation
+            # Only use ideation if query explicitly mentions ideation AND no other phase keywords
             if mentions_research:
                 best_agent = "research"
                 best_confidence = 0.6
             elif mentions_requirements:
-                best_agent = "prd_authoring"
+                best_agent = "requirements"  # Fixed: Use requirements agent, not prd_authoring
                 best_confidence = 0.6
             elif mentions_design:
                 best_agent = "prd_authoring"
@@ -855,7 +976,7 @@ INSTRUCTIONS:
                 best_confidence = 0.6
             else:
                 # Last resort: default to research (safer than ideation for ambiguous queries)
-                # Only use ideation if query is very vague and has no phase context AND mentions ideation
+                # NEVER default to ideation - it should only be used when explicitly mentioned
                 best_agent = "research"  # Changed from ideation to research as safer default
                 best_confidence = 0.4
         
@@ -894,14 +1015,17 @@ INSTRUCTIONS:
         if context:
             phase_name = context.get("phase_name", "").lower() if context.get("phase_name") else None
         
-        # Phase-to-agent mapping
+        # Phase-to-agent mapping (consistent with determine_primary_agent)
         phase_agent_mapping = {
             "ideation": "ideation",
             "market research": "research",
             "market_research": "research",
-            "requirements": "prd_authoring",
-            "requirements phase": "prd_authoring",
-            "design": "prd_authoring",
+            "requirements": "requirements",  # Fixed: Use requirements agent, not prd_authoring
+            "requirements phase": "requirements",
+            "development planning": "prd_authoring",
+            "development_planning": "prd_authoring",
+            "prd": "prd_authoring",
+            "design": "prd_authoring",  # Design phase may need PRD content
             "strategy": "strategy",
             "analysis": "analysis",
             "validation": "validation",
@@ -938,19 +1062,21 @@ INSTRUCTIONS:
             supporting.append("analysis")
         
         # Ideation agent: Only for ideation phase or explicit ideation queries
-        # CRITICAL: Do NOT include ideation for market research or requirements phases
+        # CRITICAL: Do NOT include ideation for market research, requirements, design, strategy, or other phases
         should_include_ideation = False
         if phase_name and "ideation" in phase_name:
             should_include_ideation = True
         elif any(kw in query_lower for kw in ["ideation", "brainstorm", "idea generation", "innovation", "problem statement"]) and not phase_name:
-            # Only include if NOT in a different phase
+            # Only include if NOT in a different phase AND query explicitly mentions ideation
             should_include_ideation = True
         
-        # Explicitly exclude ideation for non-ideation phases
-        if phase_name and "ideation" not in phase_name and "research" in phase_name:
+        # Explicitly exclude ideation for ALL non-ideation phases
+        if phase_name and "ideation" not in phase_name:
+            # If we're in any other phase (research, requirements, design, strategy, etc.), exclude ideation
             should_include_ideation = False
-        if phase_name and "ideation" not in phase_name and "requirement" in phase_name:
-            should_include_ideation = False
+            self.logger.info("ideation_excluded_for_phase",
+                           phase_name=phase_name,
+                           reason="User is in a different phase")
         
         if should_include_ideation and primary_agent != "ideation":
             supporting.append("ideation")
