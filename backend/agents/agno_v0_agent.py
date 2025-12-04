@@ -309,7 +309,6 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         try:
             # Use fast model tier (already set in __init__)
             # Context explicitly indicates this is prompt generation only, not submission
-            # Trust the base agent's extraction - it should handle RunOutput correctly
             response = await self.process([message], context={"task": "v0_prompt_generation", "disable_tools": True})
             prompt_text = response.response
             

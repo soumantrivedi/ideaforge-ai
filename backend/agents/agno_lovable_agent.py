@@ -195,28 +195,14 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             timestamp=datetime.utcnow()
         )
 
-        # Temporarily disable tools during prompt generation to prevent accidental submission
-        # Store original tools
-        original_tools = None
-        if hasattr(self.agno_agent, 'tools') and self.agno_agent.tools:
-            original_tools = self.agno_agent.tools.copy()
-            # Clear tools to prevent tool invocation during prompt generation
-            self.agno_agent.tools = []
+        # Use fast model tier (already set in __init__)
+        response = await self.process([message], context={"task": "lovable_prompt_generation"})
+        prompt_text = response.response
         
-        try:
-            # Use fast model tier (already set in __init__)
-            # Trust the base agent's extraction - it should handle RunOutput correctly
-            response = await self.process([message], context={"task": "lovable_prompt_generation"})
-            prompt_text = response.response
-            
-            # Clean the prompt - remove headers/footers/notes that AI might add
-            prompt_text = self._clean_lovable_prompt(prompt_text)
-            
-            return prompt_text
-        finally:
-            # Restore original tools after prompt generation
-            if original_tools is not None:
-                self.agno_agent.tools = original_tools
+        # Clean the prompt - remove headers/footers/notes that AI might add
+        prompt_text = self._clean_lovable_prompt(prompt_text)
+        
+        return prompt_text
     
     def _summarize_context(
         self,
