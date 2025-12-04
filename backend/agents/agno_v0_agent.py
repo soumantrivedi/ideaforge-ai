@@ -258,15 +258,69 @@ Important:
         phase_data: Optional[Dict[str, Any]] = None,
         all_phases_data: Optional[List[Dict[str, Any]]] = None,
         conversation_summary: Optional[str] = None,
-        design_form_data: Optional[Dict[str, Any]] = None
+        design_form_data: Optional[Dict[str, Any]] = None,
+        rag_agent: Optional[Any] = None,
+        product_id: Optional[str] = None
     ) -> str:
         """Generate a detailed, comprehensive V0 prompt based on complete product context.
         
         This method ONLY generates the prompt text - it does NOT submit to V0.
         Tools are disabled during prompt generation to prevent accidental submission.
+        
+        Args:
+            rag_agent: Optional RAG agent instance to fetch knowledge base content
+            product_id: Optional product ID for filtering knowledge base content
         """
+        # Intelligently fetch knowledge base content using RAG agent if available
+        knowledge_base_context = ""
+        if rag_agent and product_id:
+            try:
+                # Build intelligent query from design form data and conversation summary
+                kb_query_parts = []
+                if design_form_data:
+                    # Extract key terms from design form for knowledge base search
+                    key_fields = ["user_experience", "target_users", "key_features", "design_style", "branding"]
+                    for field in key_fields:
+                        if field in design_form_data and design_form_data[field]:
+                            value = str(design_form_data[field])[:200]  # Limit length
+                            kb_query_parts.append(value)
+                
+                if conversation_summary:
+                    # Extract key terms from conversation (first 300 chars)
+                    kb_query_parts.append(conversation_summary[:300])
+                
+                # Build query for knowledge base search
+                kb_query = " ".join(kb_query_parts) if kb_query_parts else f"Product design and UX for product {product_id}"
+                
+                # Search knowledge base with product_id filter
+                filters = {"product_id": str(product_id)} if product_id else {}
+                knowledge_results = await rag_agent.search_knowledge(kb_query, top_k=5, filters=filters)
+                
+                if knowledge_results:
+                    # Intelligently summarize knowledge base content (limit to most relevant)
+                    kb_summaries = []
+                    for result in knowledge_results[:3]:  # Top 3 most relevant
+                        content = result.get("content", "") or result.get("text", "")
+                        if content:
+                            # Truncate to 500 chars per result to avoid overload
+                            kb_summaries.append(content[:500] + ("..." if len(content) > 500 else ""))
+                    
+                    if kb_summaries:
+                        knowledge_base_context = "\n\nKnowledge Base Context (Reference for best practices and patterns):\n" + "\n\n---\n\n".join(kb_summaries)
+                        logger.info("v0_prompt_knowledge_base_included",
+                                  product_id=product_id,
+                                  results_count=len(knowledge_results),
+                                  included_count=len(kb_summaries))
+            except Exception as e:
+                logger.warning("v0_prompt_kb_retrieval_failed",
+                             error=str(e),
+                             product_id=product_id)
+        
         # Extract and optimize context - focus on relevant design/build details only
-        context_summary = self._summarize_context(product_context, phase_data, all_phases_data)
+        context_summary = self._summarize_context(
+            product_context, phase_data, all_phases_data, 
+            conversation_summary, design_form_data
+        )
         
         # Optimized user prompt for faster processing - concise and focused
         user_prompt = f"""Generate a single, high-quality v0 prompt by combining the UX form data (primary source) with relevant chatbot conversation details (enrichment).
@@ -280,12 +334,15 @@ Product Context from All Phases:
 Chatbot Conversation Summary (Use only relevant design/build details):
 {conversation_summary if conversation_summary else "No conversation history"}
 
+{knowledge_base_context}
+
 Instructions:
 - Combine UX form (primary) and chatbot (enrichment) into ONE clear, concise v0 prompt
+- Use knowledge base context to inform best practices and patterns when relevant
 - Ignore small talk and irrelevant conversation parts
 - Preserve all critical facts, numbers, constraints, and edge cases
 - If conflicts exist, prefer the latest and most explicit user instructions
-- Never mention "forms", "chat history", or "inputs" in the final prompt
+- Never mention "forms", "chat history", "inputs", or "knowledge base" in the final prompt
 - Follow the recommended structure: Product overview → Target users → Key flows → Screens/components → Data/rules → Visual style → Success criteria
 - Be concise but complete - focus on relevance and clarity
 - Output ONLY the final v0 prompt text - no explanations or meta-instructions"""
@@ -341,7 +398,9 @@ Instructions:
         self,
         product_context: Dict[str, Any],
         phase_data: Optional[Dict[str, Any]] = None,
-        all_phases_data: Optional[List[Dict[str, Any]]] = None
+        all_phases_data: Optional[List[Dict[str, Any]]] = None,
+        conversation_summary: Optional[str] = None,
+        design_form_data: Optional[Dict[str, Any]] = None
     ) -> str:
         """Extract ALL product context without aggressive truncation - include everything.
         
@@ -387,18 +446,33 @@ Instructions:
                 phase_summary = f"\n--- {phase_name} Phase ---\n"
                 
                 # Include ALL form data fields, not just key fields
+                # Intelligently truncate long values to avoid context overload
                 if form_data:
                     phase_summary += "Form Data:\n"
                     for field, value in form_data.items():
                         if value:  # Only include non-empty fields
                             if isinstance(value, (dict, list)):
-                                phase_summary += f"  {field}: {json.dumps(value, indent=2)}\n"
+                                json_str = json.dumps(value, indent=2)
+                                # Truncate very long JSON to keep it concise (500 chars max)
+                                if len(json_str) > 500:
+                                    formatted = json_str[:500] + "... (truncated)"
+                                else:
+                                    formatted = json_str
+                                phase_summary += f"  {field}: {formatted}\n"
                             else:
-                                phase_summary += f"  {field}: {value}\n"
+                                value_str = str(value)
+                                # Truncate very long values to keep it concise (300 chars max)
+                                if len(value_str) > 300:
+                                    value_str = value_str[:300] + "... (truncated)"
+                                phase_summary += f"  {field}: {value_str}\n"
                 
-                # Include full generated content
+                # Include generated content with intelligent truncation
                 if generated_content:
-                    phase_summary += f"\nGenerated Content:\n{generated_content}\n"
+                    str_content = str(generated_content)
+                    # Truncate very long generated content (1000 chars max per phase)
+                    if len(str_content) > 1000:
+                        str_content = str_content[:1000] + "... (truncated)"
+                    phase_summary += f"\nGenerated Content:\n{str_content}\n"
                 
                 context_parts.append(phase_summary)
         
@@ -416,19 +490,33 @@ Instructions:
             
             phase_summary = f"\n=== CURRENT PHASE: {phase_name} ===\n"
             
-            # Include ALL form data fields
+            # Include ALL form data fields with intelligent truncation
             if form_data:
                 phase_summary += "Form Data (Complete):\n"
                 for field, value in form_data.items():
                     if value:
                         if isinstance(value, (dict, list)):
-                            phase_summary += f"  {field}: {json.dumps(value, indent=2)}\n"
+                            json_str = json.dumps(value, indent=2)
+                            # Truncate very long JSON to keep it concise (500 chars max)
+                            if len(json_str) > 500:
+                                formatted = json_str[:500] + "... (truncated)"
+                            else:
+                                formatted = json_str
+                            phase_summary += f"  {field}: {formatted}\n"
                         else:
-                            phase_summary += f"  {field}: {value}\n"
+                            value_str = str(value)
+                            # Truncate very long values to keep it concise (300 chars max)
+                            if len(value_str) > 300:
+                                value_str = value_str[:300] + "... (truncated)"
+                            phase_summary += f"  {field}: {value_str}\n"
             
-            # Include full generated content
+            # Include generated content with intelligent truncation
             if generated_content:
-                phase_summary += f"\nGenerated Content:\n{generated_content}\n"
+                str_content = str(generated_content)
+                # Truncate very long generated content (1000 chars max)
+                if len(str_content) > 1000:
+                    str_content = str_content[:1000] + "... (truncated)"
+                phase_summary += f"\nGenerated Content:\n{str_content}\n"
             
             context_parts.append(phase_summary)
         

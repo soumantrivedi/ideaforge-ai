@@ -296,14 +296,27 @@ async def stream_design_prompt_generation(
                     
                     conversation_summary = "\n".join(conversation_summary_parts) if conversation_summary_parts else ""
                     
+                    # Get RAG agent from orchestrator for knowledge base awareness
+                    rag_agent = None
+                    try:
+                        from backend.agents.agno_orchestrator import get_orchestrator
+                        orchestrator = get_orchestrator()
+                        if orchestrator and hasattr(orchestrator, 'coordinator') and hasattr(orchestrator.coordinator, 'rag_agent'):
+                            rag_agent = orchestrator.coordinator.rag_agent
+                            logger.info("rag_agent_retrieved_for_v0_stream", product_id=request.product_id)
+                    except Exception as e:
+                        logger.warning("rag_agent_retrieval_failed_v0_stream", error=str(e), product_id=request.product_id)
+                    
                     # Use Agno agent's process method which supports streaming via arun
-                    # Pass comprehensive context with all phases data, conversation summary, and design form data
+                    # Pass comprehensive context with all phases data, conversation summary, design form data, and RAG agent
                     prompt = await agno_v0_agent.generate_v0_prompt(
                         product_context=product_context,
                         phase_data=current_phase_data,
                         all_phases_data=all_phases_data,
                         conversation_summary=conversation_summary,
-                        design_form_data=design_form_data
+                        design_form_data=design_form_data,
+                        rag_agent=rag_agent,
+                        product_id=str(request.product_id)
                     )
                     
                     # Stream the prompt in chunks for smooth UX
@@ -400,14 +413,27 @@ async def stream_design_prompt_generation(
                            product_id=request.product_id)
                 product_context = {"context": full_context}
             
-            # Stream prompt generation
+            # Get RAG agent from orchestrator for knowledge base awareness
+            rag_agent = None
+            try:
+                from backend.agents.agno_orchestrator import get_orchestrator
+                orchestrator = get_orchestrator()
+                if orchestrator and hasattr(orchestrator, 'coordinator') and hasattr(orchestrator.coordinator, 'rag_agent'):
+                    rag_agent = orchestrator.coordinator.rag_agent
+                    logger.info("rag_agent_retrieved_for_lovable_stream", product_id=request.product_id)
+            except Exception as e:
+                logger.warning("rag_agent_retrieval_failed_lovable_stream", error=str(e), product_id=request.product_id)
+            
+            # Stream prompt generation with knowledge base awareness
             try:
                 prompt = await agno_lovable_agent.generate_lovable_prompt(
                     product_context=product_context,
                     phase_data=current_phase_data,
                     all_phases_data=all_phases_data,
                     conversation_summary=conversation_summary,
-                    design_form_data=design_form_data
+                    design_form_data=design_form_data,
+                    rag_agent=rag_agent,
+                    product_id=str(request.product_id)
                 )
                 
                 # Stream the prompt in chunks
@@ -663,13 +689,27 @@ async def generate_design_prompt(
                     
                     conversation_summary = "\n".join(conversation_summary_parts) if conversation_summary_parts else ""
                     
+                    # Get RAG agent from orchestrator for knowledge base awareness
+                    rag_agent = None
+                    try:
+                        from backend.agents.agno_orchestrator import get_orchestrator
+                        orchestrator = get_orchestrator()
+                        if orchestrator and hasattr(orchestrator, 'coordinator') and hasattr(orchestrator.coordinator, 'rag_agent'):
+                            rag_agent = orchestrator.coordinator.rag_agent
+                            logger.info("rag_agent_retrieved_for_v0", product_id=request.product_id)
+                    except Exception as e:
+                        logger.warning("rag_agent_retrieval_failed_v0", error=str(e), product_id=request.product_id)
+                    
                     # Optimized prompt generation with comprehensive context (uses fast model tier and optimized system prompt)
+                    # Includes knowledge base awareness via RAG agent
                     prompt = await agno_v0_agent.generate_v0_prompt(
                         product_context=product_context,
                         phase_data=current_phase_data,
                         all_phases_data=all_phases_data,
                         conversation_summary=conversation_summary,
-                        design_form_data=design_form_data
+                        design_form_data=design_form_data,
+                        rag_agent=rag_agent,
+                        product_id=str(request.product_id)
                     )
                 except Exception as e:
                     # If error mentions V0 API key, provide helpful message
@@ -770,13 +810,27 @@ async def generate_design_prompt(
                            product_id=request.product_id)
                 product_context = {"context": full_context}
             
+            # Get RAG agent from orchestrator for knowledge base awareness
+            rag_agent = None
+            try:
+                from backend.agents.agno_orchestrator import get_orchestrator
+                orchestrator = get_orchestrator()
+                if orchestrator and hasattr(orchestrator, 'coordinator') and hasattr(orchestrator.coordinator, 'rag_agent'):
+                    rag_agent = orchestrator.coordinator.rag_agent
+                    logger.info("rag_agent_retrieved_for_lovable", product_id=request.product_id)
+            except Exception as e:
+                logger.warning("rag_agent_retrieval_failed_lovable", error=str(e), product_id=request.product_id)
+            
             # Generate optimized prompt with all context (uses fast model tier and optimized system prompt)
+            # Includes knowledge base awareness via RAG agent
             prompt = await agno_lovable_agent.generate_lovable_prompt(
                 product_context=product_context,
                 phase_data=current_phase_data,
                 all_phases_data=all_phases_data,
                 conversation_summary=conversation_summary,
-                design_form_data=design_form_data
+                design_form_data=design_form_data,
+                rag_agent=rag_agent,
+                product_id=str(request.product_id)
             )
         else:
             raise HTTPException(status_code=400, detail="Invalid provider. Use 'v0' or 'lovable'")
