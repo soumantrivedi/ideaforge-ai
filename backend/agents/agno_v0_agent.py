@@ -27,57 +27,62 @@ class AgnoV0Agent(AgnoBaseAgent):
     """V0 (Vercel) Design Agent using Agno framework with platform access."""
     
     def __init__(self, enable_rag: bool = False):
-        # Enhanced system prompt emphasizing detailed, comprehensive prompts
-        system_prompt = """You are a V0 (Vercel) Design Specialist expert in creating detailed, comprehensive prompts for V0.dev.
+        # Optimized system prompt based on v0-prompt-guidance.txt for faster, focused generation
+        system_prompt = """You are an assistant whose ONLY job is to generate a single, high-quality prompt for v0.app to build a product/UX prototype.
 
-Your primary goal is to generate EXTENSIVE, DETAILED prompts that capture ALL aspects of the product design based on the complete context provided.
+You receive two inputs:
+1) A structured UX requirements form filled by the user (PRIMARY source of truth)
+2) A chatbot conversation history between the user and an assistant (used to enrich and clarify)
 
-CRITICAL: You MUST use ALL available information from:
-- ALL chatbot conversation history and context
-- ALL design form content and fields
-- ALL product lifecycle phase data (Ideation, Strategy, Research, PRD, Design, etc.)
-- ALL generated content from previous phases
-- ALL form data fields - do not skip any fields, include everything
+Your goal:
+- Combine both inputs into ONE clear, objective, and concise v0 prompt that v0.app can use to generate an accurate prototype
+- The UX form is the primary source of truth; the chat is used to enrich and clarify it
+- Preserve all critical facts, numbers, constraints, and edge cases that are relevant for the prototype
 
-IMPORTANT: When generating prompts (not submitting to V0):
-- You are ONLY generating the prompt text - do NOT call any tools or submit to V0
-- Do NOT use create_v0_project or generate_v0_code tools during prompt generation
-- Simply return the prompt text that the user can then use separately to submit to V0
-- The user will submit the prompt to V0 using a separate action/button
+General rules:
+- Be concise. Avoid long explanations or repetition
+- Be neutral and objective. Do not invent requirements not supported by the inputs
+- Ignore small talk and irrelevant parts of the conversation
+- If there are conflicts, prefer the latest and most explicit user instructions
+- Never mention the existence of "forms", "chat history", or "inputs" in the final prompt. Speak as if it is a single coherent specification
+- Keep the total length reasonably short but complete enough for a designer/developer to understand what to build
 
-Core Requirements:
-- Generate DETAILED, COMPREHENSIVE prompts (not concise - include all relevant information)
-- Include ALL form data, product context, and requirements from all lifecycle phases
-- Extract and use ALL information from chatbot conversations - every detail matters
-- Include ALL design form fields and their values - nothing should be omitted
-- Describe component types, layouts, Tailwind CSS styling, responsive breakpoints in detail
-- Specify ALL interaction states, accessibility (ARIA), and complete user flows
-- Reference shadcn/ui patterns, modern React practices, and Next.js App Router patterns
-- Include color schemes, typography, spacing, animations, and transitions
-- Describe data structures, state management, API integrations, and authentication flows
-- Output ONLY the prompt text - no instructions, notes, or meta-commentary
+Processing steps (internal to you):
+1) Read and interpret the UX form:
+   - Extract: product goal, target users, platforms (web/mobile/desktop), main flows, key screens, navigation, accessibility needs, branding/tone, tech constraints, and any performance/security considerations
+2) Summarise the chatbot conversation:
+   - Capture ONLY useful design/build details such as:
+     - Clarifications or changes to requirements
+     - Examples and scenarios the user cares about
+     - Important data fields, numbers, limits, and rules
+     - Edge cases and error states
+     - Preferences about look & feel, interactions, and wording
+   - Ignore greetings, meta talk, or irrelevant topics
+3) Merge both into a single coherent specification:
+   - Remove duplicates
+   - Resolve contradictions in favour of the most recent clear user intent
+   - Keep all important facts and constraints
 
-V0 Documentation Guidelines (Based on Official Vercel V0 Docs):
-- V0 uses v0-1.5-md model specialized for UI generation
-- Prompts should be detailed enough to generate complete, production-ready components
-- Include specific Tailwind CSS classes and responsive breakpoints (sm:, md:, lg:, xl:)
-- Specify component hierarchy, props, and state management patterns
-- Describe complete user interactions, form validations, and error handling
-- Include accessibility features: ARIA labels, keyboard navigation, focus management
-- Reference React patterns: hooks, context, server/client components
-- Describe animations, transitions, and micro-interactions
+Your OUTPUT:
+- A single v0 prompt written as an implementation brief
+- Do NOT explain your reasoning
+- Do NOT include any headings about "summary of chat" or "UX form"
+- Talk directly about the product, as if briefing a UX engineer and UI generator
 
-Guidelines:
-- Be EXTENSIVE and COMPREHENSIVE - include ALL relevant details from the product context
-- Use ALL form data fields, not just key fields - every detail matters
-- Extract and include ALL information from chatbot conversations - user discussions, requirements, preferences
-- Include ALL design form content - every field, every value, every specification
-- Include context from ALL lifecycle phases (Ideation, Strategy, Research, PRD, Design, etc.)
-- Synthesize information from chatbot content AND form content - combine everything
-- Generate prompts that are detailed enough to create complete, deployable React/Next.js components
-- The prompt should be ready for direct use in V0 API or UI without additional editing
-- If chatbot content mentions features, requirements, or preferences, include them in the prompt
-- If design form has specific styling, layout, or component requirements, include them all"""
+Recommended structure of the v0 prompt:
+1) Product overview - One or two sentences: what the product is, who it is for, and the main problem it solves
+2) Target users and context - Who will use it, in what environment, and on which devices/platforms
+3) Key user flows & use cases - Bullet list of the main tasks the user must be able to do, with important variations and edge cases
+4) Screens / components to design - List each screen or key component with purpose, main elements, and critical interactions
+5) Data, rules, and constraints - Important fields, data structures, key numbers, limits, business rules, validation rules, workflows
+6) Visual & UX style - Tone and branding cues, accessibility requirements, specific UX preferences
+7) Success criteria / acceptance hints - What a "good" prototype should definitely include
+
+Important:
+- Focus on relevance and clarity. Short is better, as long as all critical details are present
+- Capture and retain key numeric values and factual details whenever they influence design or flow
+- Output ONLY the final v0 prompt text. No comments, explanations, or meta-instructions
+- When generating prompts (not submitting to V0): You are ONLY generating the prompt text - do NOT call any tools or submit to V0"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -260,41 +265,30 @@ Guidelines:
         This method ONLY generates the prompt text - it does NOT submit to V0.
         Tools are disabled during prompt generation to prevent accidental submission.
         """
-        # Extract ALL context without aggressive truncation - include all phases
+        # Extract and optimize context - focus on relevant design/build details only
         context_summary = self._summarize_context(product_context, phase_data, all_phases_data)
         
-        # Detailed prompt emphasizing comprehensive output with ALL chatbot and form content
-        user_prompt = f"""Generate a DETAILED, COMPREHENSIVE V0 design prompt for this product. Include ALL relevant information from the context below.
+        # Optimized user prompt for faster processing - concise and focused
+        user_prompt = f"""Generate a single, high-quality v0 prompt by combining the UX form data (primary source) with relevant chatbot conversation details (enrichment).
 
-CRITICAL REQUIREMENTS:
-- Extract and use ALL information from chatbot conversations - every discussion, requirement, preference mentioned
-- Include ALL design form fields and their values - nothing should be omitted or skipped
-- Synthesize information from BOTH chatbot content AND form content - combine everything
-- Include ALL form data fields, product details, features, and requirements
-- Describe the complete UI/UX design in detail using ALL available information
-- Include all component specifications, layouts, styling, interactions, and user flows
-- Make the prompt EXTENSIVE and DETAILED - not concise
-- The prompt should be comprehensive enough to generate a complete, production-ready design
-- If chatbot mentions specific features, styling, or requirements, they MUST be included
-- If design form has any field values, they MUST all be incorporated
+UX Form Data (Primary Source of Truth):
+{self._extract_design_form_summary(design_form_data) if design_form_data else "No design form data provided"}
 
-IMPORTANT: You are ONLY generating the prompt text. Do NOT call any tools or submit to V0. Just return the prompt text.
-
-Product Context (includes ALL chatbot conversations, form data, and generated content):
+Product Context from All Phases:
 {context_summary}
 
-Generate a detailed V0 prompt that captures ALL aspects of this product design. Include:
-- Complete component architecture and hierarchy
-- Detailed layout specifications with responsive breakpoints
-- Full styling details (colors, typography, spacing, Tailwind CSS classes)
-- All interaction states and user flows
-- Accessibility features (ARIA labels, keyboard navigation)
-- State management and data flow
-- API integrations and data fetching patterns
-- Form validations and error handling
-- Animations and transitions
+Chatbot Conversation Summary (Use only relevant design/build details):
+{conversation_summary if conversation_summary else "No conversation history"}
 
-Output ONLY the prompt text - no instructions, notes, or explanations. The prompt should be ready to use directly in V0. Do NOT use any tools."""
+Instructions:
+- Combine UX form (primary) and chatbot (enrichment) into ONE clear, concise v0 prompt
+- Ignore small talk and irrelevant conversation parts
+- Preserve all critical facts, numbers, constraints, and edge cases
+- If conflicts exist, prefer the latest and most explicit user instructions
+- Never mention "forms", "chat history", or "inputs" in the final prompt
+- Follow the recommended structure: Product overview → Target users → Key flows → Screens/components → Data/rules → Visual style → Success criteria
+- Be concise but complete - focus on relevance and clarity
+- Output ONLY the final v0 prompt text - no explanations or meta-instructions"""
 
         message = AgentMessage(
             role="user",
@@ -454,6 +448,31 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                     context_parts.append(f"{key}: {value}")
         
         return "\n\n".join(context_parts)  # Include ALL context items
+    
+    def _extract_design_form_summary(self, design_form_data: Dict[str, Any]) -> str:
+        """Extract and format design form data in a concise, focused way for prompt generation."""
+        if not design_form_data:
+            return ""
+        
+        summary_parts = []
+        for field, value in design_form_data.items():
+            if value and str(value).strip():
+                # Format value concisely
+                if isinstance(value, (dict, list)):
+                    import json
+                    formatted = json.dumps(value, indent=2)
+                    # Truncate very long JSON to keep it concise
+                    if len(formatted) > 500:
+                        formatted = formatted[:500] + "... (truncated)"
+                    summary_parts.append(f"{field}: {formatted}")
+                else:
+                    value_str = str(value)
+                    # Truncate very long values to keep it concise
+                    if len(value_str) > 300:
+                        value_str = value_str[:300] + "... (truncated)"
+                    summary_parts.append(f"{field}: {value_str}")
+        
+        return "\n".join(summary_parts) if summary_parts else ""
     
     def _clean_v0_prompt(self, prompt: str) -> str:
         """

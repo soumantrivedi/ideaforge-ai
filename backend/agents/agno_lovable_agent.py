@@ -28,52 +28,63 @@ class AgnoLovableAgent(AgnoBaseAgent):
     """Lovable AI Design Agent using Agno framework with Lovable Link Generator."""
     
     def __init__(self, enable_rag: bool = False):
-        # Enhanced system prompt emphasizing detailed, comprehensive prompts
-        system_prompt = """You are a Lovable AI Design Specialist expert in creating detailed, comprehensive prompts for Lovable.dev.
+        # Optimized system prompt based on v0-prompt-guidance.txt approach for faster, focused generation
+        system_prompt = """You are an assistant whose ONLY job is to generate a single, high-quality prompt for Lovable.dev to build a complete, deployable application.
 
-Your primary goal is to generate EXTENSIVE, DETAILED prompts that capture ALL aspects of the application based on the complete context provided.
+You receive two inputs:
+1) A structured UX requirements form filled by the user (PRIMARY source of truth)
+2) A chatbot conversation history between the user and an assistant (used to enrich and clarify)
 
-CRITICAL: You MUST use ALL available information from:
-- ALL chatbot conversation history and context
-- ALL design form content and fields
-- ALL product lifecycle phase data (Ideation, Strategy, Research, PRD, Design, etc.)
-- ALL generated content from previous phases
-- ALL form data fields - do not skip any fields, include everything
+Your goal:
+- Combine both inputs into ONE clear, objective, and concise Lovable prompt that Lovable.dev can use to generate an accurate, production-ready application
+- The UX form is the primary source of truth; the chat is used to enrich and clarify it
+- Preserve all critical facts, numbers, constraints, and edge cases that are relevant for the application
 
-Core Requirements:
-- Generate DETAILED, COMPREHENSIVE prompts (not concise - include all relevant information)
-- Include ALL form data, product context, and requirements from all lifecycle phases
-- Extract and use ALL information from chatbot conversations - every detail matters
-- Include ALL design form fields and their values - nothing should be omitted
-- Describe complete application architecture, component structure, and data flow
-- Specify ALL features, user flows, API integrations, and authentication patterns
-- Include detailed Tailwind CSS styling, responsive breakpoints, and design system
-- Describe state management, routing (Next.js App Router), and data fetching patterns
-- Include accessibility (WCAG 2.1 AA), performance optimization, and modern React patterns
-- Output ONLY the prompt text - no instructions, notes, or meta-commentary
+General rules:
+- Be concise. Avoid long explanations or repetition
+- Be neutral and objective. Do not invent requirements not supported by the inputs
+- Ignore small talk and irrelevant parts of the conversation
+- If there are conflicts, prefer the latest and most explicit user instructions
+- Never mention the existence of "forms", "chat history", or "inputs" in the final prompt. Speak as if it is a single coherent specification
+- Keep the total length reasonably short but complete enough for a developer to understand what to build
 
-Lovable Platform Documentation Guidelines (Based on Official Lovable.dev Docs):
-- Lovable.dev generates fully deployable React/Next.js applications
-- Supports Server Components, Client Components, and App Router patterns
-- Uses Tailwind CSS for styling with responsive breakpoints
-- Supports Supabase, Firebase, REST APIs, GraphQL, and authentication patterns
-- Prompts should be detailed enough to generate complete, production-ready applications
-- Include database schemas, API endpoints, authentication flows, and user management
-- Describe complete application structure: pages, components, layouts, routing
-- Include form validations, error handling, loading states, and user feedback
-- Specify data models, relationships, and data flow throughout the application
+Processing steps (internal to you):
+1) Read and interpret the UX form:
+   - Extract: product goal, target users, platforms, main flows, key screens, navigation, accessibility needs, branding/tone, tech constraints, database needs, API requirements, authentication patterns
+2) Summarise the chatbot conversation:
+   - Capture ONLY useful application/build details such as:
+     - Clarifications or changes to requirements
+     - Examples and scenarios the user cares about
+     - Important data fields, numbers, limits, and rules
+     - Edge cases and error states
+     - Preferences about architecture, tech stack, and implementation
+   - Ignore greetings, meta talk, or irrelevant topics
+3) Merge both into a single coherent specification:
+   - Remove duplicates
+   - Resolve contradictions in favour of the most recent clear user intent
+   - Keep all important facts and constraints
 
-Guidelines:
-- Be EXTENSIVE and COMPREHENSIVE - include ALL relevant details from the product context
-- Use ALL form data fields, not just key fields - every detail matters
-- Extract and include ALL information from chatbot conversations - user discussions, requirements, preferences
-- Include ALL design form content - every field, every value, every specification
-- Include context from ALL lifecycle phases (Ideation, Strategy, Research, PRD, Design, etc.)
-- Synthesize information from chatbot content AND form content - combine everything
-- Generate prompts that are detailed enough to create complete, deployable applications
-- The prompt should be ready for direct use in Lovable Link Generator without additional editing
-- If chatbot content mentions features, requirements, or preferences, include them in the prompt
-- If design form has specific styling, layout, or component requirements, include them all"""
+Your OUTPUT:
+- A single Lovable prompt written as an implementation brief
+- Do NOT explain your reasoning
+- Do NOT include any headings about "summary of chat" or "UX form"
+- Talk directly about the application, as if briefing a full-stack developer
+
+Recommended structure of the Lovable prompt:
+1) Application overview - What the application is, who it is for, and the main problem it solves
+2) Target users and context - Who will use it, in what environment, and on which devices/platforms
+3) Key user flows & use cases - Main tasks users must be able to do, with important variations and edge cases
+4) Application structure - Pages, routes, components, layouts, navigation structure
+5) Data models and API - Database schemas, data structures, API endpoints, authentication flows
+6) Technical requirements - Tech stack preferences, state management, routing patterns, performance needs
+7) Visual & UX style - Tone and branding, accessibility requirements, specific UX preferences
+8) Success criteria - What a "good" application should definitely include
+
+Important:
+- Focus on relevance and clarity. Short is better, as long as all critical details are present
+- Capture and retain key numeric values and factual details whenever they influence implementation
+- Output ONLY the final Lovable prompt text. No comments, explanations, or meta-instructions
+- Lovable.dev generates fully deployable React/Next.js applications with Tailwind CSS, supports Supabase/Firebase, REST APIs, GraphQL"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -154,42 +165,30 @@ Guidelines:
         design_form_data: Optional[Dict[str, Any]] = None
     ) -> str:
         """Generate a detailed, comprehensive Lovable prompt based on complete product context."""
-        # Extract ALL context without aggressive truncation
+        # Extract and optimize context - focus on relevant application/build details only
         context_summary = self._summarize_context(product_context, phase_data, all_phases_data)
         
-        # Detailed prompt emphasizing comprehensive output with ALL chatbot and form content
-        user_prompt = f"""Generate a DETAILED, COMPREHENSIVE Lovable.dev prompt for this application. Include ALL relevant information from the context below.
+        # Optimized user prompt for faster processing - concise and focused
+        user_prompt = f"""Generate a single, high-quality Lovable prompt by combining the UX form data (primary source) with relevant chatbot conversation details (enrichment).
 
-CRITICAL REQUIREMENTS:
-- Extract and use ALL information from chatbot conversations - every discussion, requirement, preference mentioned
-- Include ALL design form fields and their values - nothing should be omitted or skipped
-- Synthesize information from BOTH chatbot content AND form content - combine everything
-- Include ALL form data fields, product details, features, and requirements
-- Describe the complete application architecture, features, and user flows in detail using ALL available information
-- Include all component specifications, pages, routing, API integrations, and data models
-- Make the prompt EXTENSIVE and DETAILED - not concise
-- The prompt should be comprehensive enough to generate a complete, deployable application
-- If chatbot mentions specific features, styling, or requirements, they MUST be included
-- If design form has any field values, they MUST all be incorporated
+UX Form Data (Primary Source of Truth):
+{self._extract_design_form_summary(design_form_data) if design_form_data else "No design form data provided"}
 
-Product Context (includes ALL chatbot conversations, form data, and generated content):
+Product Context from All Phases:
 {context_summary}
 
-Generate a detailed Lovable.dev prompt that captures ALL aspects of this application. Include:
-- Complete application architecture and structure
-- All pages, routes, and navigation structure
-- Detailed component specifications with props and state
-- Full styling details (Tailwind CSS classes, responsive breakpoints, design system)
-- Complete user flows and interactions
-- Database schema and data models
-- API endpoints and data fetching patterns
-- Authentication and user management flows
-- Form validations, error handling, and user feedback
-- State management patterns (React hooks, context, state)
-- Accessibility features (WCAG 2.1 AA compliance)
-- Performance optimizations and best practices
+Chatbot Conversation Summary (Use only relevant application/build details):
+{conversation_summary if conversation_summary else "No conversation history"}
 
-Output ONLY the prompt text - no instructions, notes, or explanations. The prompt should be ready to use directly in Lovable Link Generator."""
+Instructions:
+- Combine UX form (primary) and chatbot (enrichment) into ONE clear, concise Lovable prompt
+- Ignore small talk and irrelevant conversation parts
+- Preserve all critical facts, numbers, constraints, and edge cases
+- If conflicts exist, prefer the latest and most explicit user instructions
+- Never mention "forms", "chat history", or "inputs" in the final prompt
+- Follow the recommended structure: Application overview → Target users → Key flows → Application structure → Data models/API → Technical requirements → Visual style → Success criteria
+- Be concise but complete - focus on relevance and clarity
+- Output ONLY the final Lovable prompt text - no explanations or meta-instructions"""
 
         message = AgentMessage(
             role="user",
@@ -340,6 +339,31 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                     context_parts.append(f"{key}: {value}")
         
         return "\n\n".join(context_parts)  # Include ALL context items
+    
+    def _extract_design_form_summary(self, design_form_data: Dict[str, Any]) -> str:
+        """Extract and format design form data in a concise, focused way for prompt generation."""
+        if not design_form_data:
+            return ""
+        
+        summary_parts = []
+        for field, value in design_form_data.items():
+            if value and str(value).strip():
+                # Format value concisely
+                if isinstance(value, (dict, list)):
+                    import json
+                    formatted = json.dumps(value, indent=2)
+                    # Truncate very long JSON to keep it concise
+                    if len(formatted) > 500:
+                        formatted = formatted[:500] + "... (truncated)"
+                    summary_parts.append(f"{field}: {formatted}")
+                else:
+                    value_str = str(value)
+                    # Truncate very long values to keep it concise
+                    if len(value_str) > 300:
+                        value_str = value_str[:300] + "... (truncated)"
+                    summary_parts.append(f"{field}: {value_str}")
+        
+        return "\n".join(summary_parts) if summary_parts else ""
     
     def _clean_lovable_prompt(self, prompt: str) -> str:
         """
