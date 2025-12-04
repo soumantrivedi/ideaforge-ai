@@ -1885,12 +1885,66 @@ async def check_v0_project_status(
             
             v0_project_id, v0_chat_id, current_status, current_url = row
             
+            # If v0_project_id is NULL but we have a project_url, try to extract project_id from URL
+            # This handles cases where old records might have project_id stored in the URL
+            if not v0_project_id and current_url:
+                # Check if current_url is a project URL (not a chat URL)
+                if "/project/" in current_url:
+                    # Extract project ID from project URL: https://v0.dev/project/{project_id} or https://v0.app/project/{project_id}
+                    extracted_project_id = current_url.split("/project/")[-1].split("?")[0].split("#")[0]
+                    if extracted_project_id:
+                        logger.info("check_status_extracted_project_id_from_url",
+                                  product_id=product_id,
+                                  extracted_project_id=extracted_project_id,
+                                  original_url=current_url)
+                        v0_project_id = extracted_project_id
+                        # Update the database to store project_id in the correct field
+                        try:
+                            update_project_id_query = text("""
+                                UPDATE design_mockups
+                                SET v0_project_id = :v0_project_id
+                                WHERE product_id = :product_id 
+                                  AND user_id = :user_id 
+                                  AND provider = 'v0'
+                                  AND v0_project_id IS NULL
+                                ORDER BY created_at DESC
+                                LIMIT 1
+                            """)
+                            await db.execute(update_project_id_query, {
+                                "product_id": product_id,
+                                "user_id": str(current_user["id"]),
+                                "v0_project_id": extracted_project_id
+                            })
+                            await db.commit()
+                            logger.info("check_status_updated_project_id_in_db",
+                                      product_id=product_id,
+                                      v0_project_id=extracted_project_id)
+                        except Exception as update_error:
+                            logger.warning("check_status_failed_to_update_project_id",
+                                         error=str(update_error))
+                            await db.rollback()
+                elif "/chat/" in current_url:
+                    # If it's a chat URL, we can't extract project_id directly from the slug
+                    # The slug is not the actual chat ID that the API expects
+                    logger.error("check_status_chat_url_instead_of_project_id",
+                               product_id=product_id,
+                               chat_url=current_url,
+                               message="project_url contains chat URL instead of project URL - cannot extract project_id from chat slug")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid project URL format: {current_url}. "
+                               f"Chat URLs cannot be used to check project status. "
+                               f"Please provide projectId query parameter or create a new project. "
+                               f"Project URLs should be in format: https://v0.dev/project/{{project_id}}"
+                    )
+            
             if not v0_project_id:
                 logger.warning("check_status_no_project_id", 
                               product_id=product_id, 
                               user_id=str(current_user["id"]),
                               v0_chat_id=v0_chat_id,
-                              message="Record found but v0_project_id is NULL")
+                              current_url=current_url,
+                              message="Record found but v0_project_id is NULL and could not be extracted from URL")
                 raise HTTPException(
                     status_code=404, 
                     detail="No V0 project_id found in database. Please provide projectId query parameter or create a project first using /api/design/create-project"

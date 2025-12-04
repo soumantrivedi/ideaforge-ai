@@ -28,27 +28,27 @@ class AgnoLovableAgent(AgnoBaseAgent):
     """Lovable AI Design Agent using Agno framework with Lovable Link Generator."""
     
     def __init__(self, enable_rag: bool = False):
-        # Enhanced system prompt emphasizing detailed, comprehensive prompts
-        system_prompt = """You are a Lovable AI Design Specialist expert in creating detailed, comprehensive prompts for Lovable.dev.
+        # Optimized system prompt emphasizing concise, readable, directly usable prompts
+        system_prompt = """You are a Lovable AI Design Specialist expert in creating focused, readable prompts for Lovable.dev.
 
-Your primary goal is to generate EXTENSIVE, DETAILED prompts that capture ALL aspects of the application based on the complete context provided.
+Your primary goal is to generate CONCISE, FOCUSED prompts that capture the essential application aspects and can be directly used in Lovable Link Generator.
 
-CRITICAL: You MUST use ALL available information from:
-- ALL chatbot conversation history and context
-- ALL design form content and fields
-- ALL product lifecycle phase data (Ideation, Strategy, Research, PRD, Design, etc.)
-- ALL generated content from previous phases
-- ALL form data fields - do not skip any fields, include everything
+CRITICAL: When generating prompts:
+- Keep prompts CONCISE (3000-6000 characters, max 8000) - prioritize readability and usability
+- Focus on KEY application information - features, architecture, user flows, components
+- Extract essential information from context - don't include everything
+- Use clear, direct language - the prompt should be immediately actionable
+- The prompt must be ready to paste directly into Lovable Link Generator
+- DO NOT include instructions, notes, or meta-commentary in the output
 
 Core Requirements:
-- Generate DETAILED, COMPREHENSIVE prompts (not concise - include all relevant information)
-- Include ALL form data, product context, and requirements from all lifecycle phases
-- Extract and use ALL information from chatbot conversations - every detail matters
-- Include ALL design form fields and their values - nothing should be omitted
-- Describe complete application architecture, component structure, and data flow
-- Specify ALL features, user flows, API integrations, and authentication patterns
-- Include detailed Tailwind CSS styling, responsive breakpoints, and design system
-- Describe state management, routing (Next.js App Router), and data fetching patterns
+- Generate FOCUSED, READABLE prompts (concise but complete - prioritize essential information)
+- Extract KEY application information from form data and context
+- Focus on application structure, pages, components, and essential functionality
+- Include essential details: pages/routes, component structure, styling, data models, API integrations
+- Describe user flows and interactions concisely
+- Include Tailwind CSS styling, responsive breakpoints, and design system essentials
+- Describe state management, routing (Next.js App Router), and data fetching patterns briefly
 - Include accessibility (WCAG 2.1 AA), performance optimization, and modern React patterns
 - Output ONLY the prompt text - no instructions, notes, or meta-commentary
 
@@ -57,23 +57,21 @@ Lovable Platform Documentation Guidelines (Based on Official Lovable.dev Docs):
 - Supports Server Components, Client Components, and App Router patterns
 - Uses Tailwind CSS for styling with responsive breakpoints
 - Supports Supabase, Firebase, REST APIs, GraphQL, and authentication patterns
-- Prompts should be detailed enough to generate complete, production-ready applications
-- Include database schemas, API endpoints, authentication flows, and user management
-- Describe complete application structure: pages, components, layouts, routing
+- Prompts should be detailed enough to generate complete applications, but concise enough to be readable
+- Include database schemas, API endpoints, authentication flows, and user management (key details)
+- Describe application structure: pages, components, layouts, routing
 - Include form validations, error handling, loading states, and user feedback
-- Specify data models, relationships, and data flow throughout the application
+- Specify data models, relationships, and data flow (essential details)
 
 Guidelines:
-- Be EXTENSIVE and COMPREHENSIVE - include ALL relevant details from the product context
-- Use ALL form data fields, not just key fields - every detail matters
-- Extract and include ALL information from chatbot conversations - user discussions, requirements, preferences
-- Include ALL design form content - every field, every value, every specification
-- Include context from ALL lifecycle phases (Ideation, Strategy, Research, PRD, Design, etc.)
-- Synthesize information from chatbot content AND form content - combine everything
-- Generate prompts that are detailed enough to create complete, deployable applications
-- The prompt should be ready for direct use in Lovable Link Generator without additional editing
-- If chatbot content mentions features, requirements, or preferences, include them in the prompt
-- If design form has specific styling, layout, or component requirements, include them all"""
+- Be CONCISE and FOCUSED - include essential details, not everything
+- Prioritize application/feature information over other context
+- Extract key information from chatbot conversations and form data
+- Focus on design form content - UI/UX specifications, component requirements, user flows
+- Synthesize information from context - combine key points, don't repeat
+- Generate prompts that are readable and directly usable in Lovable Link Generator
+- The prompt should be ready for direct use without editing
+- Keep it under 8000 characters - Lovable works best with concise, focused prompts"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -155,39 +153,32 @@ Guidelines:
         # Extract ALL context without aggressive truncation
         context_summary = self._summarize_context(product_context, phase_data, all_phases_data)
         
-        # Detailed prompt emphasizing comprehensive output with ALL chatbot and form content
-        user_prompt = f"""Generate a DETAILED, COMPREHENSIVE Lovable.dev prompt for this application. Include ALL relevant information from the context below.
+        # Focused prompt emphasizing concise, readable, directly usable output
+        user_prompt = f"""Generate a CONCISE Lovable.dev prompt (max 8000 characters, ideally 4000-6000). The prompt must be directly usable in Lovable Link Generator.
 
 CRITICAL REQUIREMENTS:
-- Extract and use ALL information from chatbot conversations - every discussion, requirement, preference mentioned
-- Include ALL design form fields and their values - nothing should be omitted or skipped
-- Synthesize information from BOTH chatbot content AND form content - combine everything
-- Include ALL form data fields, product details, features, and requirements
-- Describe the complete application architecture, features, and user flows in detail using ALL available information
-- Include all component specifications, pages, routing, API integrations, and data models
-- Make the prompt EXTENSIVE and DETAILED - not concise
-- The prompt should be comprehensive enough to generate a complete, deployable application
-- If chatbot mentions specific features, styling, or requirements, they MUST be included
-- If design form has any field values, they MUST all be incorporated
+- MAXIMUM 8000 characters - Lovable works best with concise prompts
+- Extract ONLY KEY application information - features, architecture, user flows
+- Use bullet points and short sentences - be direct and actionable
+- Include essential details: pages/routes, components, styling, data models, APIs
+- Describe user flows briefly
+- DO NOT include instructions, notes, or meta-commentary
+- DO NOT repeat information
+- Focus on what needs to be BUILT, not background context
 
-Product Context (includes ALL chatbot conversations, form data, and generated content):
+Product Context (summarized):
 {context_summary}
 
-Generate a detailed Lovable.dev prompt that captures ALL aspects of this application. Include:
-- Complete application architecture and structure
-- All pages, routes, and navigation structure
-- Detailed component specifications with props and state
-- Full styling details (Tailwind CSS classes, responsive breakpoints, design system)
-- Complete user flows and interactions
-- Database schema and data models
-- API endpoints and data fetching patterns
-- Authentication and user management flows
-- Form validations, error handling, and user feedback
-- State management patterns (React hooks, context, state)
-- Accessibility features (WCAG 2.1 AA compliance)
-- Performance optimizations and best practices
+Generate a concise Lovable.dev prompt focusing on:
+- Application structure and key pages/routes
+- Component specifications and hierarchy
+- Tailwind CSS styling and responsive design
+- Essential user flows and interactions
+- Key data models and API integrations
+- Authentication flows (if applicable)
+- Form validations and error handling
 
-Output ONLY the prompt text - no instructions, notes, or explanations. The prompt should be ready to use directly in Lovable Link Generator."""
+Output ONLY the prompt text - no instructions or explanations. Keep it under 8000 characters."""
 
         message = AgentMessage(
             role="user",
@@ -212,6 +203,30 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             # Clean the prompt - remove headers/footers/notes that AI might add
             prompt_text = self._clean_lovable_prompt(prompt_text)
             
+            # Ensure prompt is within strict limits (max 8000 chars for Lovable)
+            if len(prompt_text) > 8000:
+                logger.warning("lovable_prompt_too_long",
+                             original_length=len(prompt_text),
+                             truncated_to=8000)
+                # Truncate intelligently at sentence boundary
+                truncated = prompt_text[:8000]
+                last_period = truncated.rfind('.')
+                last_newline = truncated.rfind('\n')
+                cut_point = max(last_period, last_newline)
+                if cut_point > 6500:  # Only truncate at sentence if we keep at least 81%
+                    prompt_text = prompt_text[:cut_point + 1]
+                else:
+                    # Try to truncate at paragraph or section boundary
+                    last_double_newline = truncated.rfind('\n\n')
+                    if last_double_newline > 5000:
+                        prompt_text = prompt_text[:last_double_newline] + "\n[... truncated for Lovable compatibility ...]"
+                    else:
+                        prompt_text = truncated + "\n[... truncated for Lovable compatibility ...]"
+            
+            logger.info("lovable_prompt_generated",
+                       prompt_length=len(prompt_text),
+                       within_limits=len(prompt_text) <= 8000)
+            
             return prompt_text
         finally:
             # Restore original tools after prompt generation
@@ -222,10 +237,16 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         self,
         product_context: Dict[str, Any],
         phase_data: Optional[Dict[str, Any]] = None,
-        all_phases_data: Optional[List[Dict[str, Any]]] = None
+        all_phases_data: Optional[List[Dict[str, Any]]] = None,
+        max_chars: int = 5000
     ) -> str:
-        """Extract ALL product context without aggressive truncation - include everything."""
+        """Intelligently summarize product context focusing on application architecture and features.
+        
+        Aggressively summarizes while preserving ALL user information and key application details.
+        Prioritizes essential application information to keep prompts concise and directly usable in Lovable.
+        """
         context_parts = []
+        total_chars = 0
         
         # Ensure product_context is a dict, not a list
         if not isinstance(product_context, dict):
@@ -238,88 +259,124 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             else:
                 product_context = {"context": str(product_context)}
         
-        # Get main context (usually contains phase data) - include ALL of it
-        main_context = product_context.get("context", "")
-        if main_context:
-            # Include full context - don't truncate
-            context_parts.append(f"Product Context:\n{main_context}")
+        def _truncate_text(text: str, max_length: int) -> str:
+            """Truncate text intelligently, preserving sentences."""
+            if len(text) <= max_length:
+                return text
+            # Try to truncate at sentence boundary
+            truncated = text[:max_length]
+            last_period = truncated.rfind('.')
+            last_newline = truncated.rfind('\n')
+            cut_point = max(last_period, last_newline)
+            if cut_point > max_length * 0.8:  # Only use if we keep at least 80%
+                return text[:cut_point + 1] + "\n[... truncated ...]"
+            return truncated + "\n[... truncated ...]"
         
-        # Add ALL phase data if available - include EVERYTHING
-        if all_phases_data:
-            context_parts.append("\n=== ALL PRODUCT LIFECYCLE PHASES ===\n")
-            for phase_item in all_phases_data:
-                # Ensure phase_item is a dict, not a list
-                if not isinstance(phase_item, dict):
-                    logger.warning("phase_item_not_dict", 
-                                 phase_item_type=type(phase_item).__name__,
-                                 phase_item_value=str(phase_item)[:100])
-                    continue  # Skip invalid phase items
-                
-                phase_name = phase_item.get("phase_name", "")
-                form_data = phase_item.get("form_data", {})
-                generated_content = phase_item.get("generated_content", "")
-                
-                phase_summary = f"\n--- {phase_name} Phase ---\n"
-                
-                # Include ALL form data fields, not just key fields
-                if form_data:
-                    phase_summary += "Form Data:\n"
-                    for field, value in form_data.items():
-                        if value:  # Only include non-empty fields
-                            if isinstance(value, (dict, list)):
-                                phase_summary += f"  {field}: {json.dumps(value, indent=2)}\n"
-                            else:
-                                phase_summary += f"  {field}: {value}\n"
-                
-                # Include full generated content
-                if generated_content:
-                    phase_summary += f"\nGenerated Content:\n{generated_content}\n"
-                
-                context_parts.append(phase_summary)
-        
-        # Add current phase data with full details if available
-        if phase_data:
-            # Ensure phase_data is a dict, not a list
-            if not isinstance(phase_data, dict):
-                logger.warning("phase_data_not_dict", 
-                             phase_data_type=type(phase_data).__name__)
-                phase_data = {}  # Use empty dict to avoid errors
+        def _extract_key_points(text: str, max_length: int) -> str:
+            """Extract key points from text, prioritizing application/feature information."""
+            if len(text) <= max_length:
+                return text
             
-            phase_name = phase_data.get("phase_name", "")
-            form_data = phase_data.get("form_data", {})
-            generated_content = phase_data.get("generated_content", "")
+            # Split into sentences
+            sentences = text.replace('\n', ' ').split('. ')
+            app_keywords = ["application", "app", "feature", "component", "page", "route", "api", 
+                          "database", "authentication", "user flow", "functionality", "interface",
+                          "button", "form", "input", "navigation", "screen", "modal", "data model"]
             
-            phase_summary = f"\n=== CURRENT PHASE: {phase_name} ===\n"
-            
-            # Include ALL form data fields
-            if form_data:
-                phase_summary += "Form Data (Complete):\n"
-                for field, value in form_data.items():
-                    if value:
-                        if isinstance(value, (dict, list)):
-                            phase_summary += f"  {field}: {json.dumps(value, indent=2)}\n"
-                        else:
-                            phase_summary += f"  {field}: {value}\n"
-            
-            # Include full generated content
-            if generated_content:
-                phase_summary += f"\nGenerated Content:\n{generated_content}\n"
-            
-            context_parts.append(phase_summary)
-        
-        # Add ALL other context keys with full content
-        for key, value in product_context.items():
-            if key != "context" and value:
-                if isinstance(value, dict):
-                    formatted_dict = "\n".join([f"  {k}: {v}" for k, v in value.items() if v])
-                    context_parts.append(f"{key}:\n{formatted_dict}")
-                elif isinstance(value, list):
-                    formatted_list = "\n".join([f"  - {item}" for item in value if item])
-                    context_parts.append(f"{key}:\n{formatted_list}")
+            # Prioritize sentences with app keywords
+            prioritized = []
+            other = []
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                if any(keyword in sentence_lower for keyword in app_keywords):
+                    prioritized.append(sentence)
                 else:
-                    context_parts.append(f"{key}: {value}")
+                    other.append(sentence)
+            
+            # Combine prioritized first, then others
+            selected = prioritized + other
+            result = '. '.join(selected)
+            
+            if len(result) > max_length:
+                return _truncate_text(result, max_length)
+            return result
         
-        return "\n\n".join(context_parts)  # Include ALL context items
+        # Priority 1: Design form data (MOST IMPORTANT - preserve all user input)
+        design_form = product_context.get("form_data", {})
+        if design_form and isinstance(design_form, dict):
+            design_summary = "User Application Requirements:\n"
+            for key, value in design_form.items():
+                if value and key in ["user_experience", "design_mockups", "v0_lovable_prompts"]:
+                    value_str = str(value)
+                    # Preserve user input but summarize if too long
+                    if len(value_str) > 1000:
+                        # Extract key points while preserving user intent
+                        value_str = _extract_key_points(value_str, 1000)
+                    design_summary += f"  {key}: {value_str}\n"
+            if len(design_summary) > 50:  # Only add if we have actual content
+                context_parts.append(design_summary)
+                total_chars += len(design_summary)
+        
+        # Priority 2: Extract key product information (summarize aggressively)
+        # Get product name, problem, solution, features from ideation/requirements
+        product_summary = []
+        
+        # Extract from form_data across phases
+        if all_phases_data:
+            for phase in all_phases_data[:3]:  # Only first 3 phases
+                phase_data_item = phase.get("form_data", {})
+                if phase_data_item:
+                    # Extract key fields
+                    for field in ["problem_statement", "value_proposition", "target_audience", 
+                                 "functional_requirements", "user_experience", "features"]:
+                        if field in phase_data_item and phase_data_item[field]:
+                            value = str(phase_data_item[field])
+                            if len(value) > 300:
+                                value = _extract_key_points(value, 300)
+                            product_summary.append(f"{field}: {value}")
+        
+        # Also check direct form_data
+        if not product_summary:
+            for key, value in product_context.items():
+                if key not in ["context", "form_data", "all_phases_data"] and value:
+                    value_str = str(value)
+                    if len(value_str) > 300:
+                        value_str = _extract_key_points(value_str, 300)
+                    product_summary.append(f"{key}: {value_str}")
+                    if len(product_summary) >= 5:  # Limit to 5 key points
+                        break
+        
+        if product_summary:
+            product_text = "\n".join(product_summary[:5])  # Max 5 key points
+            if len(product_text) > 1500:
+                product_text = _truncate_text(product_text, 1500)
+            context_parts.append(f"Product Overview:\n{product_text}")
+            total_chars += len(product_text)
+        
+        # Priority 3: Main context (summarize very aggressively)
+        main_context = product_context.get("context", "")
+        if main_context and total_chars < max_chars * 0.6:  # Only if we have room
+            remaining = max_chars - total_chars
+            if len(main_context) > remaining:
+                # Extract only application-relevant sentences
+                main_context = _extract_key_points(main_context, remaining)
+            else:
+                main_context = _truncate_text(main_context, remaining)
+            
+            if main_context:
+                context_parts.append(f"Additional Context:\n{main_context}")
+                total_chars += len(main_context)
+        
+        summary = "\n\n".join(context_parts)
+        if len(summary) > max_chars:
+            summary = _truncate_text(summary, max_chars)
+        
+        logger.info("lovable_context_summarized",
+                   original_size=sum(len(str(v)) for v in product_context.values()),
+                   summarized_size=len(summary),
+                   max_chars=max_chars)
+        
+        return summary
     
     def _clean_lovable_prompt(self, prompt: str) -> str:
         """

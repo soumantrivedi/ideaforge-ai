@@ -27,17 +27,18 @@ class AgnoV0Agent(AgnoBaseAgent):
     """V0 (Vercel) Design Agent using Agno framework with platform access."""
     
     def __init__(self, enable_rag: bool = False):
-        # Enhanced system prompt emphasizing detailed, comprehensive prompts
-        system_prompt = """You are a V0 (Vercel) Design Specialist expert in creating detailed, comprehensive prompts for V0.dev.
+        # Optimized system prompt emphasizing concise, readable, directly usable prompts
+        system_prompt = """You are a V0 (Vercel) Design Specialist expert in creating focused, readable prompts for V0.dev.
 
-Your primary goal is to generate EXTENSIVE, DETAILED prompts that capture ALL aspects of the product design based on the complete context provided.
+Your primary goal is to generate CONCISE, FOCUSED prompts that capture the essential design aspects and can be directly submitted to V0.
 
-CRITICAL: You MUST use ALL available information from:
-- ALL chatbot conversation history and context
-- ALL design form content and fields
-- ALL product lifecycle phase data (Ideation, Strategy, Research, PRD, Design, etc.)
-- ALL generated content from previous phases
-- ALL form data fields - do not skip any fields, include everything
+CRITICAL: When generating prompts:
+- Keep prompts CONCISE (1500-2500 characters, max 3000) - V0 cannot process larger prompts
+- Focus on KEY design information - UI/UX details, component structure, styling
+- Extract essential information from context - don't include everything
+- Use clear, direct language - the prompt should be immediately actionable
+- The prompt must be ready to paste directly into V0's submit prompt field
+- DO NOT include instructions, notes, or meta-commentary in the output
 
 IMPORTANT: When generating prompts (not submitting to V0):
 - You are ONLY generating the prompt text - do NOT call any tools or submit to V0
@@ -46,38 +47,34 @@ IMPORTANT: When generating prompts (not submitting to V0):
 - The user will submit the prompt to V0 using a separate action/button
 
 Core Requirements:
-- Generate DETAILED, COMPREHENSIVE prompts (not concise - include all relevant information)
-- Include ALL form data, product context, and requirements from all lifecycle phases
-- Extract and use ALL information from chatbot conversations - every detail matters
-- Include ALL design form fields and their values - nothing should be omitted
-- Describe component types, layouts, Tailwind CSS styling, responsive breakpoints in detail
-- Specify ALL interaction states, accessibility (ARIA), and complete user flows
+- Generate FOCUSED, READABLE prompts (concise but complete - prioritize essential information)
+- Extract KEY design information from form data and context
+- Focus on component structure, layout, styling, and user interactions
+- Include specific Tailwind CSS classes and responsive breakpoints (sm:, md:, lg:, xl:)
+- Specify essential interaction states, accessibility (ARIA), and user flows
 - Reference shadcn/ui patterns, modern React practices, and Next.js App Router patterns
-- Include color schemes, typography, spacing, animations, and transitions
-- Describe data structures, state management, API integrations, and authentication flows
+- Include color schemes, typography, spacing - but be concise
+- Describe state management and API integrations briefly
 - Output ONLY the prompt text - no instructions, notes, or meta-commentary
 
 V0 Documentation Guidelines (Based on Official Vercel V0 Docs):
 - V0 uses v0-1.5-md model specialized for UI generation
-- Prompts should be detailed enough to generate complete, production-ready components
-- Include specific Tailwind CSS classes and responsive breakpoints (sm:, md:, lg:, xl:)
+- Prompts should be detailed enough to generate complete components, but concise enough to be readable
+- Include specific Tailwind CSS classes and responsive breakpoints
 - Specify component hierarchy, props, and state management patterns
-- Describe complete user interactions, form validations, and error handling
+- Describe user interactions, form validations, and error handling concisely
 - Include accessibility features: ARIA labels, keyboard navigation, focus management
 - Reference React patterns: hooks, context, server/client components
-- Describe animations, transitions, and micro-interactions
 
 Guidelines:
-- Be EXTENSIVE and COMPREHENSIVE - include ALL relevant details from the product context
-- Use ALL form data fields, not just key fields - every detail matters
-- Extract and include ALL information from chatbot conversations - user discussions, requirements, preferences
-- Include ALL design form content - every field, every value, every specification
-- Include context from ALL lifecycle phases (Ideation, Strategy, Research, PRD, Design, etc.)
-- Synthesize information from chatbot content AND form content - combine everything
-- Generate prompts that are detailed enough to create complete, deployable React/Next.js components
-- The prompt should be ready for direct use in V0 API or UI without additional editing
-- If chatbot content mentions features, requirements, or preferences, include them in the prompt
-- If design form has specific styling, layout, or component requirements, include them all"""
+- Be CONCISE and FOCUSED - include essential details, not everything
+- Prioritize design/UI information over other context
+- Extract key information from chatbot conversations and form data
+- Focus on design form content - UI/UX specifications, component requirements
+- Synthesize information from context - combine key points, don't repeat
+- Generate prompts that are readable and directly usable in V0
+- The prompt should be ready for direct use in V0 submit prompt without editing
+- Keep it under 3000 characters - V0 cannot process larger prompts"""
 
         # Initialize base agent first (tools will be added after)
         super().__init__(
@@ -259,38 +256,32 @@ Guidelines:
         # Extract ALL context without aggressive truncation
         context_summary = self._summarize_context(product_context)
         
-        # Detailed prompt emphasizing comprehensive output with ALL chatbot and form content
-        user_prompt = f"""Generate a DETAILED, COMPREHENSIVE V0 design prompt for this product. Include ALL relevant information from the context below.
+        # Focused prompt emphasizing concise, readable, directly usable output
+        user_prompt = f"""Generate a CONCISE V0 design prompt (max 3000 characters, ideally 1500-2500). The prompt must be directly usable in V0's submit prompt feature.
 
 CRITICAL REQUIREMENTS:
-- Extract and use ALL information from chatbot conversations - every discussion, requirement, preference mentioned
-- Include ALL design form fields and their values - nothing should be omitted or skipped
-- Synthesize information from BOTH chatbot content AND form content - combine everything
-- Include ALL form data fields, product details, features, and requirements
-- Describe the complete UI/UX design in detail using ALL available information
-- Include all component specifications, layouts, styling, interactions, and user flows
-- Make the prompt EXTENSIVE and DETAILED - not concise
-- The prompt should be comprehensive enough to generate a complete, production-ready design
-- If chatbot mentions specific features, styling, or requirements, they MUST be included
-- If design form has any field values, they MUST all be incorporated
+- MAXIMUM 3000 characters - V0 cannot process larger prompts
+- Extract ONLY KEY design information - UI/UX, components, layout, styling
+- Use bullet points and short sentences - be direct and actionable
+- Include essential Tailwind CSS classes and responsive breakpoints
+- Describe key user interactions and flows briefly
+- DO NOT include instructions, notes, or meta-commentary
+- DO NOT repeat information
+- Focus on what needs to be BUILT, not background context
 
-IMPORTANT: You are ONLY generating the prompt text. Do NOT call any tools or submit to V0. Just return the prompt text.
+IMPORTANT: You are ONLY generating the prompt text. Do NOT call any tools or submit to V0.
 
-Product Context (includes ALL chatbot conversations, form data, and generated content):
+Product Context (summarized):
 {context_summary}
 
-Generate a detailed V0 prompt that captures ALL aspects of this product design. Include:
-- Complete component architecture and hierarchy
-- Detailed layout specifications with responsive breakpoints
-- Full styling details (colors, typography, spacing, Tailwind CSS classes)
-- All interaction states and user flows
-- Accessibility features (ARIA labels, keyboard navigation)
-- State management and data flow
-- API integrations and data fetching patterns
-- Form validations and error handling
-- Animations and transitions
+Generate a concise V0 prompt focusing on:
+- Component structure and hierarchy
+- Layout with responsive breakpoints
+- Tailwind CSS styling (colors, typography, spacing)
+- Key interactions and user flows
+- Essential accessibility features
 
-Output ONLY the prompt text - no instructions, notes, or explanations. The prompt should be ready to use directly in V0. Do NOT use any tools."""
+Output ONLY the prompt text - no instructions or explanations. Keep it under 3000 characters."""
 
         message = AgentMessage(
             role="user",
@@ -316,15 +307,45 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             # Clean the prompt - remove headers/footers that AI might add
             prompt_text = self._clean_v0_prompt(prompt_text)
             
+            # Ensure prompt is within strict limits (max 3000 chars for V0)
+            # V0 has issues with prompts that are too large
+            if len(prompt_text) > 3000:
+                logger.warning("v0_prompt_too_long",
+                             original_length=len(prompt_text),
+                             truncated_to=3000)
+                # Truncate intelligently at sentence boundary
+                truncated = prompt_text[:3000]
+                last_period = truncated.rfind('.')
+                last_newline = truncated.rfind('\n')
+                cut_point = max(last_period, last_newline)
+                if cut_point > 2500:  # Only truncate at sentence if we keep at least 83%
+                    prompt_text = prompt_text[:cut_point + 1]
+                else:
+                    # Try to truncate at paragraph or section boundary
+                    last_double_newline = truncated.rfind('\n\n')
+                    if last_double_newline > 2000:
+                        prompt_text = prompt_text[:last_double_newline] + "\n[... truncated for V0 compatibility ...]"
+                    else:
+                        prompt_text = truncated + "\n[... truncated for V0 compatibility ...]"
+            
+            logger.info("v0_prompt_generated",
+                       prompt_length=len(prompt_text),
+                       within_limits=len(prompt_text) <= 3000)
+            
             return prompt_text
         finally:
             # Restore original tools after prompt generation
             if original_tools is not None:
                 self.agno_agent.tools = original_tools
     
-    def _summarize_context(self, product_context: Dict[str, Any]) -> str:
-        """Extract ALL product context without aggressive truncation - include everything."""
+    def _summarize_context(self, product_context: Dict[str, Any], max_chars: int = 3000) -> str:
+        """Intelligently summarize product context focusing on design/UI relevant information.
+        
+        Aggressively summarizes while preserving ALL user information and key design details.
+        Prioritizes essential design information to keep prompts concise and directly usable in V0.
+        """
         context_parts = []
+        total_chars = 0
         
         # Ensure product_context is a dict, not a list
         if not isinstance(product_context, dict):
@@ -337,28 +358,125 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             else:
                 product_context = {"context": str(product_context)}
         
-        # Get main context (usually contains phase data) - include ALL of it
-        main_context = product_context.get("context", "")
-        if main_context:
-            # Include full context - don't truncate (let the model handle token limits)
-            context_parts.append(f"Product Context:\n{main_context}")
+        def _truncate_text(text: str, max_length: int) -> str:
+            """Truncate text intelligently, preserving sentences."""
+            if len(text) <= max_length:
+                return text
+            # Try to truncate at sentence boundary
+            truncated = text[:max_length]
+            last_period = truncated.rfind('.')
+            last_newline = truncated.rfind('\n')
+            cut_point = max(last_period, last_newline)
+            if cut_point > max_length * 0.8:  # Only use if we keep at least 80%
+                return text[:cut_point + 1] + "\n[... truncated ...]"
+            return truncated + "\n[... truncated ...]"
         
-        # Add ALL other context keys with full content
-        for key, value in product_context.items():
-            if key != "context" and value:
-                # Include full value - don't truncate
-                if isinstance(value, dict):
-                    # Format dict nicely
-                    formatted_dict = "\n".join([f"  {k}: {v}" for k, v in value.items() if v])
-                    context_parts.append(f"{key}:\n{formatted_dict}")
-                elif isinstance(value, list):
-                    # Format list nicely
-                    formatted_list = "\n".join([f"  - {item}" for item in value if item])
-                    context_parts.append(f"{key}:\n{formatted_list}")
+        def _extract_key_points(text: str, max_length: int) -> str:
+            """Extract key points from text, prioritizing design/UI information."""
+            if len(text) <= max_length:
+                return text
+            
+            # Split into sentences
+            sentences = text.replace('\n', ' ').split('. ')
+            design_keywords = ["design", "ui", "ux", "component", "layout", "styling", "interface", 
+                             "user experience", "button", "form", "input", "navigation", "page", 
+                             "screen", "modal", "dropdown", "menu", "card", "grid", "flex"]
+            
+            # Prioritize sentences with design keywords
+            prioritized = []
+            other = []
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                if any(keyword in sentence_lower for keyword in design_keywords):
+                    prioritized.append(sentence)
                 else:
-                    context_parts.append(f"{key}: {value}")
+                    other.append(sentence)
+            
+            # Combine prioritized first, then others
+            selected = prioritized + other
+            result = '. '.join(selected)
+            
+            if len(result) > max_length:
+                return _truncate_text(result, max_length)
+            return result
         
-        return "\n\n".join(context_parts)  # Include ALL context items
+        # Priority 1: Design form data (MOST IMPORTANT - preserve all user input)
+        design_form = product_context.get("form_data", {})
+        if design_form and isinstance(design_form, dict):
+            design_summary = "User Design Requirements:\n"
+            for key, value in design_form.items():
+                if value and key in ["user_experience", "design_mockups", "v0_lovable_prompts"]:
+                    value_str = str(value)
+                    # Preserve user input but summarize if too long
+                    if len(value_str) > 800:
+                        # Extract key points while preserving user intent
+                        value_str = _extract_key_points(value_str, 800)
+                    design_summary += f"  {key}: {value_str}\n"
+            if len(design_summary) > 50:  # Only add if we have actual content
+                context_parts.append(design_summary)
+                total_chars += len(design_summary)
+        
+        # Priority 2: Extract key product information (summarize aggressively)
+        # Get product name, problem, solution from ideation/requirements
+        product_summary = []
+        
+        # Extract from form_data across phases
+        all_phases = product_context.get("all_phases_data", [])
+        if all_phases:
+            for phase in all_phases[:3]:  # Only first 3 phases
+                phase_data = phase.get("form_data", {})
+                if phase_data:
+                    # Extract key fields
+                    for field in ["problem_statement", "value_proposition", "target_audience", 
+                                 "functional_requirements", "user_experience"]:
+                        if field in phase_data and phase_data[field]:
+                            value = str(phase_data[field])
+                            if len(value) > 200:
+                                value = _extract_key_points(value, 200)
+                            product_summary.append(f"{field}: {value}")
+        
+        # Also check direct form_data
+        if not product_summary:
+            for key, value in product_context.items():
+                if key not in ["context", "form_data", "all_phases_data"] and value:
+                    value_str = str(value)
+                    if len(value_str) > 200:
+                        value_str = _extract_key_points(value_str, 200)
+                    product_summary.append(f"{key}: {value_str}")
+                    if len(product_summary) >= 5:  # Limit to 5 key points
+                        break
+        
+        if product_summary:
+            product_text = "\n".join(product_summary[:5])  # Max 5 key points
+            if len(product_text) > 1000:
+                product_text = _truncate_text(product_text, 1000)
+            context_parts.append(f"Product Overview:\n{product_text}")
+            total_chars += len(product_text)
+        
+        # Priority 3: Main context (summarize very aggressively)
+        main_context = product_context.get("context", "")
+        if main_context and total_chars < max_chars * 0.6:  # Only if we have room
+            remaining = max_chars - total_chars
+            if len(main_context) > remaining:
+                # Extract only design-relevant sentences
+                main_context = _extract_key_points(main_context, remaining)
+            else:
+                main_context = _truncate_text(main_context, remaining)
+            
+            if main_context:
+                context_parts.append(f"Additional Context:\n{main_context}")
+                total_chars += len(main_context)
+        
+        summary = "\n\n".join(context_parts)
+        if len(summary) > max_chars:
+            summary = _truncate_text(summary, max_chars)
+        
+        logger.info("v0_context_summarized",
+                   original_size=sum(len(str(v)) for v in product_context.values()),
+                   summarized_size=len(summary),
+                   max_chars=max_chars)
+        
+        return summary
     
     def _clean_v0_prompt(self, prompt: str) -> str:
         """
@@ -1447,6 +1565,10 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         Check status of V0 project by getting latest chat and checking its status.
         This is used for the "Check Status" button - can be called multiple times.
         
+        Handles both project IDs and chat IDs/URLs:
+        - If project_id is a project ID: Gets project, finds latest chat, checks chat status
+        - If project_id is a chat URL/ID: Directly checks chat status
+        
         Returns:
             - projectId: The project ID (camelCase to match V0 API format)
             - project_id: The project ID (snake_case for backward compatibility)
@@ -1465,25 +1587,73 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         if not project_id:
             raise ValueError("project_id is required")
         
-        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+        # Detect if input is a chat URL or chat ID
+        # Chat URLs: https://v0.app/chat/{slug} or https://v0.dev/chat/{chat_id}
+        # Project URLs: https://v0.dev/project/{project_id} or https://v0.app/project/{project_id}
+        chat_id_from_input = None
+        actual_project_id = project_id
+        
+        # Extract chat ID or project ID from URL if it's a URL
+        if project_id.startswith("http"):
+            if "/chat/" in project_id:
+                # Extract chat ID from URL: https://v0.app/chat/{slug} or https://v0.dev/chat/{chat_id}
+                # NOTE: The slug in the URL might not be the actual chat ID - we'll need to get it from the chat response
+                chat_id_from_input = project_id.split("/chat/")[-1].split("?")[0].split("#")[0]
+                logger.warning("v0_chat_url_detected_in_project_id",
+                             original_input=project_id,
+                             extracted_chat_id=chat_id_from_input,
+                             message="Chat URL passed as project_id - will try to get project_id from chat data")
+                # Don't use chat_id_from_input directly - instead, we'll get the chat and extract project_id from it
+                # Set actual_project_id to None so we go through the chat lookup path
+                actual_project_id = None
+            elif "/project/" in project_id:
+                # Extract project ID from URL: https://v0.dev/project/{project_id} or https://v0.app/project/{project_id}
+                actual_project_id = project_id.split("/project/")[-1].split("?")[0].split("#")[0]
+                logger.info("v0_project_url_detected",
+                           original_input=project_id,
+                           extracted_project_id=actual_project_id)
+        
+        # Use longer timeout for chat status checks (60 seconds)
+        async with httpx.AsyncClient(timeout=60.0, verify=False) as client:
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             }
             
             try:
+                # If we detected a chat URL in the input, we need to get the project_id from the chat
+                # Chat URLs contain slugs, not actual chat IDs, so we can't use them directly
+                # Instead, we should look up the project using the project_id from the database
+                # If we don't have a project_id, we'll need to list chats or use a different approach
+                if chat_id_from_input and not actual_project_id:
+                    logger.warning("v0_chat_url_passed_as_project_id",
+                                 chat_url=project_id,
+                                 extracted_slug=chat_id_from_input,
+                                 user_id=user_id,
+                                 product_id=product_id,
+                                 message="Chat URL passed as project_id - cannot use slug directly with API. Need project_id from database.")
+                    # The slug in the URL is not the actual chat ID - we can't use it with the API
+                    # We need the actual project_id from the database
+                    raise ValueError(
+                        f"Chat URL passed as project_id: {project_id}. "
+                        f"The slug '{chat_id_from_input}' is not a valid chat ID for the V0 API. "
+                        f"Please ensure v0_project_id is stored in the database, not the chat URL. "
+                        f"Project URLs should be in format: https://v0.dev/project/{{project_id}}"
+                    )
+                
+                # Otherwise, treat as project_id and get project first
                 # Step 1: Get project to find latest chat
                 project_resp = await client.get(
-                    f"https://api.v0.dev/v1/projects/{project_id}",
+                    f"https://api.v0.dev/v1/projects/{actual_project_id}",
                     headers=headers
                 )
                 
                 if project_resp.status_code == 404:
                     # Even if project not found, construct project URL for reference
-                    project_url = f"https://v0.dev/project/{project_id}" if project_id else None
+                    project_url = f"https://v0.dev/project/{actual_project_id}" if actual_project_id else None
                     return {
-                        "projectId": project_id,  # Use projectId (camelCase)
-                        "project_id": project_id,  # Keep for backward compatibility
+                        "projectId": actual_project_id,  # Use projectId (camelCase)
+                        "project_id": actual_project_id,  # Keep for backward compatibility
                         "chat_id": None,
                         "project_status": "unknown",
                         "project_url": project_url,  # Return project URL even if not found
@@ -1501,13 +1671,17 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 
                 # Get project URL from project data (this is the project page, not the chat/prototype URL)
                 project_web_url = project_data.get("webUrl") or project_data.get("web_url")
-                # Construct project URL: https://v0.dev/project/{project_id} or use webUrl from API
-                project_url = project_web_url or f"https://v0.dev/project/{project_id}"
+                # Construct project URL: Use v0.dev for project URLs (consistent with API)
+                # Note: v0.app is the new frontend URL, but project URLs should use v0.dev
+                if project_web_url and "/project/" in project_web_url:
+                    project_url = project_web_url
+                else:
+                    project_url = f"https://v0.dev/project/{actual_project_id}"
                 
                 if not chats or len(chats) == 0:
                     return {
-                        "projectId": project_id,  # Use projectId (camelCase)
-                        "project_id": project_id,  # Keep for backward compatibility
+                        "projectId": actual_project_id,  # Use projectId (camelCase)
+                        "project_id": actual_project_id,  # Keep for backward compatibility
                         "chat_id": None,
                         "project_status": "pending",
                         "project_url": project_url,  # Return project URL, not chat URL
@@ -1523,8 +1697,8 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 
                 if not chat_id:
                     return {
-                        "projectId": project_id,  # Use projectId (camelCase)
-                        "project_id": project_id,  # Keep for backward compatibility
+                        "projectId": actual_project_id,  # Use projectId (camelCase)
+                        "project_id": actual_project_id,  # Keep for backward compatibility
                         "chat_id": None,
                         "project_status": "unknown",
                         "project_url": project_url,  # Return project URL, not chat URL
@@ -1534,7 +1708,7 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                         "error": "No chat ID found"
                     }
                 
-                # Step 2: Check chat status
+                # Step 2: Check chat status (with longer timeout)
                 chat_resp = await client.get(
                     f"https://api.v0.dev/v1/chats/{chat_id}",
                     headers=headers
@@ -1542,8 +1716,8 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 
                 if chat_resp.status_code != 200:
                     return {
-                        "projectId": project_id,  # Use projectId (camelCase)
-                        "project_id": project_id,  # Keep for backward compatibility
+                        "projectId": actual_project_id,  # Use projectId (camelCase)
+                        "project_id": actual_project_id,  # Keep for backward compatibility
                         "chat_id": chat_id,
                         "project_status": "unknown",
                         "project_url": project_url,  # Return project URL, not chat URL
@@ -1565,7 +1739,7 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 # Keep project_url as the project page, and return demo_url/web_url separately for the prototype
                 
                 logger.info("v0_status_checked",
-                           projectId=project_id,
+                           projectId=actual_project_id,
                            chat_id=chat_id,
                            status=project_status,
                            is_complete=is_complete,
@@ -1573,8 +1747,8 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                            product_id=product_id)
                 
                 return {
-                    "projectId": project_id,  # Use projectId (camelCase) to match V0 API format
-                    "project_id": project_id,  # Keep for backward compatibility
+                    "projectId": actual_project_id,  # Use projectId (camelCase) to match V0 API format
+                    "project_id": actual_project_id,  # Keep for backward compatibility
                     "chat_id": chat_id,
                     "project_status": project_status,
                     "project_url": project_url,  # This is the project page URL (https://v0.dev/project/{project_id})
@@ -1591,18 +1765,22 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                 if hasattr(e, 'request') and e.request:
                     error_msg += f" (URL: {e.request.url})"
                 logger.error("v0_status_check_error",
-                           projectId=project_id,
+                           projectId=actual_project_id or chat_id_from_input or project_id,
+                           chat_id=chat_id_from_input,
                            error=error_msg,
                            error_type=e.__class__.__name__,
-                           user_id=user_id)
+                           user_id=user_id,
+                           product_id=product_id)
                 raise ValueError(f"V0 API connection error: {error_msg}")
             except Exception as e:
                 error_msg = str(e) if str(e) else f"{e.__class__.__name__}: Unknown error occurred"
                 logger.error("v0_status_check_error",
-                           projectId=project_id,
+                           projectId=actual_project_id or chat_id_from_input or project_id,
+                           chat_id=chat_id_from_input,
                            error=error_msg,
                            error_type=type(e).__name__,
-                           user_id=user_id)
+                           user_id=user_id,
+                           product_id=product_id)
                 raise ValueError(f"V0 status check error: {error_msg}")
     
     async def poll_and_update_prototype_status(
