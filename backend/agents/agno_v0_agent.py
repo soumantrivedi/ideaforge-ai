@@ -1371,10 +1371,19 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
                     }
                 }
             except httpx.RequestError as e:
+                error_msg = str(e) if str(e) else f"{type(e).__name__}: Unable to connect to V0 API"
                 logger.error("v0_api_connection_error",
                            user_id=user_id,
-                           error=str(e))
-                raise ValueError(f"V0 API connection error: {str(e)}")
+                           error=error_msg,
+                           error_type=type(e).__name__)
+                raise ValueError(f"V0 API connection error: {error_msg}")
+            except httpx.HTTPStatusError as e:
+                error_msg = f"HTTP {e.response.status_code}: {e.response.text[:200]}" if e.response else str(e)
+                logger.error("v0_api_http_error",
+                           user_id=user_id,
+                           status_code=e.response.status_code if e.response else None,
+                           error=error_msg)
+                raise ValueError(f"V0 API HTTP error: {error_msg}")
             except ValueError:
                 # Re-raise ValueError as-is (these are our custom errors)
                 raise
