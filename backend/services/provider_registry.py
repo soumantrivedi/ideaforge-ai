@@ -297,7 +297,7 @@ class ProviderRegistry:
                 self._load_openai_keys()
             else:
                 # Fall back to single OPENAI_API_KEY
-                openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+            openai_key = os.getenv("OPENAI_API_KEY", "").strip()
                 # Remove quotes if present
                 if openai_key.startswith('"') and openai_key.endswith('"'):
                     openai_key = openai_key[1:-1]
