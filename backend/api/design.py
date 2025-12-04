@@ -386,7 +386,7 @@ async def stream_design_prompt_generation(
             for conv_row in conv_rows:
                 msg_type = conv_row[0]
                 agent_name = conv_row[1] or ""
-                content = conv_row[3] or ""
+                content = conv_row[2] or ""  # content is at index 2 (created_at is at index 3)
                 if content:
                     agent_label = f" ({agent_name})" if agent_name else ""
                     conversation_summary_parts.append(f"{msg_type.upper()}{agent_label}: {content[:500]}")
@@ -756,7 +756,7 @@ async def generate_design_prompt(
             for conv_row in conv_rows:
                 msg_type = conv_row[0]
                 agent_name = conv_row[1] or ""
-                content = conv_row[3] or ""
+                content = conv_row[2] or ""  # content is at index 2 (created_at is at index 3)
                 if content:
                     agent_label = f" ({agent_name})" if agent_name else ""
                     conversation_summary_parts.append(f"{msg_type.upper()}{agent_label}: {content[:500]}")
