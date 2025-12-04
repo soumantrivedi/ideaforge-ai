@@ -249,15 +249,17 @@ Guidelines:
     
     async def generate_v0_prompt(
         self,
-        product_context: Dict[str, Any]
+        product_context: Dict[str, Any],
+        phase_data: Optional[Dict[str, Any]] = None,
+        all_phases_data: Optional[List[Dict[str, Any]]] = None
     ) -> str:
         """Generate a detailed, comprehensive V0 prompt based on complete product context.
         
         This method ONLY generates the prompt text - it does NOT submit to V0.
         Tools are disabled during prompt generation to prevent accidental submission.
         """
-        # Extract ALL context without aggressive truncation
-        context_summary = self._summarize_context(product_context)
+        # Extract ALL context without aggressive truncation - include all phases
+        context_summary = self._summarize_context(product_context, phase_data, all_phases_data)
         
         # Detailed prompt emphasizing comprehensive output with ALL chatbot and form content
         user_prompt = f"""Generate a DETAILED, COMPREHENSIVE V0 design prompt for this product. Include ALL relevant information from the context below.
@@ -321,8 +323,18 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
             if original_tools is not None:
                 self.agno_agent.tools = original_tools
     
-    def _summarize_context(self, product_context: Dict[str, Any]) -> str:
-        """Extract ALL product context without aggressive truncation - include everything."""
+    def _summarize_context(
+        self,
+        product_context: Dict[str, Any],
+        phase_data: Optional[Dict[str, Any]] = None,
+        all_phases_data: Optional[List[Dict[str, Any]]] = None
+    ) -> str:
+        """Extract ALL product context without aggressive truncation - include everything.
+        
+        This method comprehensively includes ALL phases, form data, and generated content
+        to ensure the V0 prompt captures the complete product context.
+        """
+        import json
         context_parts = []
         
         # Ensure product_context is a dict, not a list
@@ -339,8 +351,72 @@ Output ONLY the prompt text - no instructions, notes, or explanations. The promp
         # Get main context (usually contains phase data) - include ALL of it
         main_context = product_context.get("context", "")
         if main_context:
-            # Include full context - don't truncate (let the model handle token limits)
+            # Include full context - don't truncate
             context_parts.append(f"Product Context:\n{main_context}")
+        
+        # Add ALL phase data if available - include EVERYTHING
+        # This is critical for comprehensive prompt generation
+        if all_phases_data:
+            context_parts.append("\n=== ALL PRODUCT LIFECYCLE PHASES ===\n")
+            for phase_item in all_phases_data:
+                # Ensure phase_item is a dict, not a list
+                if not isinstance(phase_item, dict):
+                    logger.warning("phase_item_not_dict", 
+                                 phase_item_type=type(phase_item).__name__,
+                                 phase_item_value=str(phase_item)[:100])
+                    continue  # Skip invalid phase items
+                
+                phase_name = phase_item.get("phase_name", "")
+                form_data = phase_item.get("form_data", {})
+                generated_content = phase_item.get("generated_content", "")
+                
+                phase_summary = f"\n--- {phase_name} Phase ---\n"
+                
+                # Include ALL form data fields, not just key fields
+                if form_data:
+                    phase_summary += "Form Data:\n"
+                    for field, value in form_data.items():
+                        if value:  # Only include non-empty fields
+                            if isinstance(value, (dict, list)):
+                                phase_summary += f"  {field}: {json.dumps(value, indent=2)}\n"
+                            else:
+                                phase_summary += f"  {field}: {value}\n"
+                
+                # Include full generated content
+                if generated_content:
+                    phase_summary += f"\nGenerated Content:\n{generated_content}\n"
+                
+                context_parts.append(phase_summary)
+        
+        # Add current phase data with full details if available
+        if phase_data:
+            # Ensure phase_data is a dict, not a list
+            if not isinstance(phase_data, dict):
+                logger.warning("phase_data_not_dict", 
+                             phase_data_type=type(phase_data).__name__)
+                phase_data = {}  # Use empty dict to avoid errors
+            
+            phase_name = phase_data.get("phase_name", "")
+            form_data = phase_data.get("form_data", {})
+            generated_content = phase_data.get("generated_content", "")
+            
+            phase_summary = f"\n=== CURRENT PHASE: {phase_name} ===\n"
+            
+            # Include ALL form data fields
+            if form_data:
+                phase_summary += "Form Data (Complete):\n"
+                for field, value in form_data.items():
+                    if value:
+                        if isinstance(value, (dict, list)):
+                            phase_summary += f"  {field}: {json.dumps(value, indent=2)}\n"
+                        else:
+                            phase_summary += f"  {field}: {value}\n"
+            
+            # Include full generated content
+            if generated_content:
+                phase_summary += f"\nGenerated Content:\n{generated_content}\n"
+            
+            context_parts.append(phase_summary)
         
         # Add ALL other context keys with full content
         for key, value in product_context.items():

@@ -228,8 +228,52 @@ async def stream_design_prompt_generation(
                                    product_id=request.product_id)
                         product_context = {"context": full_context}
                     
+                    # Get phase data efficiently (same as Lovable) for comprehensive context
+                    phase_submissions_query = text("""
+                        SELECT ps.form_data, ps.generated_content, plp.phase_name, plp.phase_order
+                        FROM phase_submissions ps
+                        JOIN product_lifecycle_phases plp ON ps.phase_id = plp.id
+                        WHERE ps.product_id = :product_id
+                        ORDER BY plp.phase_order ASC
+                    """)
+                    phase_result = await db.execute(phase_submissions_query, {"product_id": request.product_id})
+                    phase_rows = phase_result.fetchall()
+                    
+                    all_phases_data = []
+                    current_phase_data = None
+                    for row in phase_rows:
+                        form_data_raw = row[0]
+                        # Ensure form_data is a dict, not a list
+                        if isinstance(form_data_raw, dict):
+                            form_data = form_data_raw
+                        elif isinstance(form_data_raw, list):
+                            logger.warning("form_data_is_list_in_stream_v0", 
+                                         phase_name=row[2], 
+                                         product_id=request.product_id)
+                            form_data = {}  # Convert list to empty dict
+                        else:
+                            form_data = form_data_raw or {}
+                            if not isinstance(form_data, dict):
+                                form_data = {}
+                        
+                        phase_item = {
+                            "phase_name": row[2],
+                            "form_data": form_data,
+                            "generated_content": row[1] or "",
+                            "phase_order": row[3]
+                        }
+                        all_phases_data.append(phase_item)
+                        # If this is the Design phase, mark it as current
+                        if row[2] and "design" in row[2].lower():
+                            current_phase_data = phase_item
+                    
                     # Use Agno agent's process method which supports streaming via arun
-                    prompt = await agno_v0_agent.generate_v0_prompt(product_context=product_context)
+                    # Pass comprehensive context with all phases data
+                    prompt = await agno_v0_agent.generate_v0_prompt(
+                        product_context=product_context,
+                        phase_data=current_phase_data,
+                        all_phases_data=all_phases_data
+                    )
                     
                     # Stream the prompt in chunks for smooth UX
                     chunk_size = 50
@@ -491,9 +535,50 @@ async def generate_design_prompt(
                                    product_id=request.product_id)
                         product_context = {"context": full_context}
                     
-                    # Optimized prompt generation (uses fast model tier and optimized system prompt)
+                    # Get phase data efficiently (same as Lovable) for comprehensive context
+                    phase_submissions_query = text("""
+                        SELECT ps.form_data, ps.generated_content, plp.phase_name, plp.phase_order
+                        FROM phase_submissions ps
+                        JOIN product_lifecycle_phases plp ON ps.phase_id = plp.id
+                        WHERE ps.product_id = :product_id
+                        ORDER BY plp.phase_order ASC
+                    """)
+                    phase_result = await db.execute(phase_submissions_query, {"product_id": request.product_id})
+                    phase_rows = phase_result.fetchall()
+                    
+                    all_phases_data = []
+                    current_phase_data = None
+                    for row in phase_rows:
+                        form_data_raw = row[0]
+                        # Ensure form_data is a dict, not a list
+                        if isinstance(form_data_raw, dict):
+                            form_data = form_data_raw
+                        elif isinstance(form_data_raw, list):
+                            logger.warning("form_data_is_list_in_v0", 
+                                         phase_name=row[2], 
+                                         product_id=request.product_id)
+                            form_data = {}  # Convert list to empty dict
+                        else:
+                            form_data = form_data_raw or {}
+                            if not isinstance(form_data, dict):
+                                form_data = {}
+                        
+                        phase_item = {
+                            "phase_name": row[2],
+                            "form_data": form_data,
+                            "generated_content": row[1] or "",
+                            "phase_order": row[3]
+                        }
+                        all_phases_data.append(phase_item)
+                        # If this is the Design phase, mark it as current
+                        if row[2] and "design" in row[2].lower():
+                            current_phase_data = phase_item
+                    
+                    # Optimized prompt generation with comprehensive context (uses fast model tier and optimized system prompt)
                     prompt = await agno_v0_agent.generate_v0_prompt(
-                        product_context=product_context
+                        product_context=product_context,
+                        phase_data=current_phase_data,
+                        all_phases_data=all_phases_data
                     )
                 except Exception as e:
                     # If error mentions V0 API key, provide helpful message
