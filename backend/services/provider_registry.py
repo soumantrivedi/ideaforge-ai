@@ -297,7 +297,7 @@ class ProviderRegistry:
                 self._load_openai_keys()
             else:
                 # Fall back to single OPENAI_API_KEY
-            openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+                openai_key = os.getenv("OPENAI_API_KEY", "").strip()
                 # Remove quotes if present
                 if openai_key.startswith('"') and openai_key.endswith('"'):
                     openai_key = openai_key[1:-1]
@@ -325,9 +325,9 @@ class ProviderRegistry:
             # Update keys if they're different (OPENAI_API_KEYS already handled above)
             if not openai_keys_env:
                 # Only update if using single key and it's different
-            if openai_key and openai_key != self._openai_key:
-                self._openai_key = openai_key
-                self._load_openai_keys()  # Reload keys (handles multiple keys)
+                if openai_key and openai_key != self._openai_key:
+                    self._openai_key = openai_key
+                    self._load_openai_keys()  # Reload keys (handles multiple keys)
             if anthropic_key and anthropic_key != self._claude_key:
                 self._claude_key = anthropic_key
             if google_key and google_key != self._gemini_key:

@@ -1193,6 +1193,27 @@ Your response MUST show that you've used this context. Generic responses that ig
                         if isinstance(text, str) and "RunOutput" not in text:
                             response_content = text.strip()
             
+            # Try reasoning_content on RunOutput itself (for reasoning models like o1/o3)
+            if not response_content and hasattr(response, "reasoning_content") and response.reasoning_content:
+                reasoning = response.reasoning_content
+                if isinstance(reasoning, str) and reasoning.strip() and "RunOutput" not in reasoning:
+                    response_content = reasoning.strip()
+            
+            # Try reasoning_messages if available
+            if not response_content and hasattr(response, "reasoning_messages") and response.reasoning_messages:
+                for msg in reversed(response.reasoning_messages):
+                    if hasattr(msg, "role") and msg.role == "assistant":
+                        if hasattr(msg, "content") and msg.content:
+                            content = msg.content
+                            if isinstance(content, str) and content.strip() and "RunOutput" not in content:
+                                response_content = content.strip()
+                                break
+                        elif hasattr(msg, "text") and msg.text:
+                            text = msg.text
+                            if isinstance(text, str) and text.strip() and "RunOutput" not in text:
+                                response_content = text.strip()
+                                break
+            
             # Try model_provider_data if still no content (for cases where content is stored in model response)
             if not response_content and hasattr(response, "model_provider_data") and response.model_provider_data:
                 try:
@@ -1216,10 +1237,6 @@ Your response MUST show that you've used this context. Generic responses that ig
                                         response_content = content
                 except Exception as model_data_error:
                     self.logger.warning("model_provider_data_extraction_failed", error=str(model_data_error))
-            
-            # Fallback to string conversion
-            if not response_content:
-                response_content = str(response)
             
             # Final check: if response_content is a RunOutput string representation, try to extract from it
             # This should rarely happen now since we check messages early, but keep as fallback
@@ -1245,8 +1262,107 @@ Your response MUST show that you've used this context. Generic responses that ig
                                     response_content = text
                                     break
             
+            # CRITICAL: Don't use str(response) as fallback if it would result in RunOutput string representation
+            # Instead, check if we have a RunOutput object and try one more time to extract from messages
+            if not response_content or (isinstance(response_content, str) and "RunOutput" in response_content and "run_id=" in response_content):
+                # This is likely a RunOutput object - try harder to extract actual content
+                if hasattr(response, "messages") and response.messages:
+                    # Try all messages, not just assistant ones
+                    for msg in reversed(response.messages):
+                        # Try content first
+                        if hasattr(msg, "content") and msg.content:
+                            content = msg.content
+                            if isinstance(content, str) and content.strip() and len(content) > 50:  # Minimum length to avoid empty responses
+                                if "RunOutput" not in content and "run_id=" not in content:
+                                    response_content = content.strip()
+                                    self.logger.info("extracted_content_from_message_after_fallback", 
+                                                   agent=self.name,
+                                                   content_length=len(response_content))
+                                    break
+                        # Try reasoning_content
+                        if not response_content and hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                            reasoning = msg.reasoning_content
+                            if isinstance(reasoning, str) and reasoning.strip() and len(reasoning) > 50:
+                                if "RunOutput" not in reasoning and "run_id=" not in reasoning:
+                                    response_content = reasoning.strip()
+                                    self.logger.info("extracted_reasoning_from_message_after_fallback", 
+                                                   agent=self.name,
+                                                   content_length=len(response_content))
+                                    break
+                        # Try text
+                        if not response_content and hasattr(msg, "text") and msg.text:
+                            text = msg.text
+                            if isinstance(text, str) and text.strip() and len(text) > 50:
+                                if "RunOutput" not in text and "run_id=" not in text:
+                                    response_content = text.strip()
+                                    self.logger.info("extracted_text_from_message_after_fallback", 
+                                                   agent=self.name,
+                                                   content_length=len(response_content))
+                                    break
+                        # Try compressed_content (for compressed responses)
+                        if not response_content and hasattr(msg, "compressed_content") and msg.compressed_content:
+                            compressed = msg.compressed_content
+                            if isinstance(compressed, str) and compressed.strip() and len(compressed) > 50:
+                                if "RunOutput" not in compressed and "run_id=" not in compressed:
+                                    response_content = compressed.strip()
+                                    self.logger.info("extracted_compressed_content_from_message_after_fallback", 
+                                                   agent=self.name,
+                                                   content_length=len(response_content))
+                                    break
+                
+                # Last resort: Try to access agno_agent.last_run directly (similar to phase_form_help.py)
+                if (not response_content or (isinstance(response_content, str) and ("RunOutput" in response_content or "run_id=" in response_content))) and hasattr(self, "agno_agent") and self.agno_agent:
+                    try:
+                        if hasattr(self.agno_agent, "last_run") and self.agno_agent.last_run:
+                            last_run = self.agno_agent.last_run
+                            if hasattr(last_run, "messages") and last_run.messages:
+                                # Find the last assistant message with actual content
+                                for msg in reversed(last_run.messages):
+                                    if hasattr(msg, "role") and msg.role == "assistant":
+                                        content = None
+                                        if hasattr(msg, "content") and msg.content:
+                                            content = msg.content
+                                        elif hasattr(msg, "text") and msg.text:
+                                            content = msg.text
+                                        elif hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                                            content = msg.reasoning_content
+                                        elif hasattr(msg, "compressed_content") and msg.compressed_content:
+                                            content = msg.compressed_content
+                                        
+                                        if content:
+                                            if isinstance(content, str) and content.strip():
+                                                if "RunOutput" not in content and "run_id=" not in content and len(content) > 50:
+                                                    response_content = content.strip()
+                                                    self.logger.info("extracted_content_from_agno_last_run", 
+                                                                   agent=self.name,
+                                                                   content_length=len(response_content))
+                                                    break
+                    except Exception as last_run_error:
+                        self.logger.warning("failed_to_extract_from_last_run", 
+                                           agent=self.name,
+                                           error=str(last_run_error))
+                
+                # If still no valid content and we have a RunOutput string, don't return it
+                if isinstance(response_content, str) and ("RunOutput" in response_content or "run_id=" in response_content):
+                    self.logger.error("failed_to_extract_content_from_runoutput", 
+                                    agent=self.name,
+                                    response_type=type(response).__name__,
+                                    has_messages=hasattr(response, "messages") and bool(response.messages),
+                                    message_count=len(response.messages) if hasattr(response, "messages") and response.messages else 0,
+                                    has_last_run=hasattr(self, "agno_agent") and hasattr(self.agno_agent, "last_run") if hasattr(self, "agno_agent") else False)
+                    # Return empty string instead of RunOutput string representation
+                    response_content = ""
+            
             # Log if content is still empty after all attempts
             if not response_content or not response_content.strip():
+                # Check if tokens were generated (suggests content should exist)
+                output_tokens = 0
+                if hasattr(response, "metrics"):
+                    if isinstance(response.metrics, dict):
+                        output_tokens = response.metrics.get("output_tokens", 0)
+                    else:
+                        output_tokens = getattr(response.metrics, "output_tokens", getattr(response.metrics, "output", 0))
+                
                 self.logger.warning(
                     "agno_response_content_empty",
                     agent=self.name,
@@ -1255,8 +1371,23 @@ Your response MUST show that you've used this context. Generic responses that ig
                     response_str=str(response)[:500],
                     has_content=hasattr(response, "content"),
                     content_type=type(getattr(response, "content", None)).__name__ if hasattr(response, "content") else None,
-                    content_value=str(getattr(response, "content", None))[:200] if hasattr(response, "content") else None
+                    content_value=str(getattr(response, "content", None))[:200] if hasattr(response, "content") else None,
+                    output_tokens=output_tokens,
+                    has_messages=hasattr(response, "messages") and bool(response.messages),
+                    message_count=len(response.messages) if hasattr(response, "messages") and response.messages else 0,
+                    has_reasoning_content=hasattr(response, "reasoning_content") and bool(response.reasoning_content),
+                    has_reasoning_messages=hasattr(response, "reasoning_messages") and bool(response.reasoning_messages)
                 )
+                
+                # If tokens were generated but content is empty, this is a critical issue
+                if output_tokens > 0:
+                    self.logger.error(
+                        "agno_response_content_empty_but_tokens_generated",
+                        agent=self.name,
+                        output_tokens=output_tokens,
+                        response_type=type(response).__name__,
+                        message="Content extraction failed but tokens were generated - content may be in unexpected location"
+                    )
 
             # Collect metrics
             duration = time.time() - start_time

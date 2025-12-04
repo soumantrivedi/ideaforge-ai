@@ -71,6 +71,12 @@ spec:
               name: ideaforge-ai-secrets
               key: OPENAI_API_KEY
               optional: true
+        - name: OPENAI_API_KEYS
+          valueFrom:
+            secretKeyRef:
+              name: ideaforge-ai-secrets
+              key: OPENAI_API_KEYS
+              optional: true
         - name: ANTHROPIC_API_KEY
           valueFrom:
             secretKeyRef:
